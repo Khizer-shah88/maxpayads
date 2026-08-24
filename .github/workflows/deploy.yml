@@ -1,0 +1,45 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      APP_DIR: /home/deploy/maxpayads
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+      - name: Trust server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync repository to server
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'node_modules' \
+            --exclude '.next' \
+            --exclude 'ppc-backend/.env' \
+            --exclude 'ppc-backend/uploads' \
+            --exclude 'ppc-backend/GeoLite2-Country.mmdb' \
+            --exclude 'deployment/.env.production' \
+            --exclude 'deployment/certs/origin.crt' \
+            --exclude 'deployment/certs/origin.key' \
+            ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${APP_DIR}/"
+
+      - name: Deploy on server
+        run: |
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "cd ${APP_DIR} && bash deployment/2-deploy.sh"

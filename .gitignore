@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+._*    # macOS
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ppc-backend/.venv/
+ppc-backend/.venv-linux/
+
+
+# Backend runtime artifacts
+ppc-backend/.env
+ppc-backend/uploads/*
+!ppc-backend/uploads/.gitkeep
+ppc-backend/GeoLite2-Country.mmdb
+
+# Frontend build output
+ppc-frontend/.next/
+ppc-frontend/node_modules/
+
+# Deployment secrets
+deployment/.env.production
+deployment/certs/origin.crt
+deployment/certs/origin.key
+
+# Logs and archives
+*.log
+*.tgz
+*.tar.gz

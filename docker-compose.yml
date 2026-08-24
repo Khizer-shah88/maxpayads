@@ -1,0 +1,195 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PPC Ad Network — Full Stack Docker Compose
+# Starts: MongoDB, Redis, RabbitMQ, FastAPI, Celery, Next.js, Nginx
+# Usage:
+#   docker-compose up --build -d          # Start everything
+#   docker-compose logs -f fastapi        # Watch backend logs
+#   docker-compose logs -f nextjs         # Watch frontend logs
+#   docker-compose down -v                # Stop + delete volumes (fresh start)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7.0
+    container_name: ppc_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: ppc_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: ppc_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  # ── Backend ─────────────────────────────────────────────────────────────────
+  fastapi:
+    build:
+      context: ./ppc-backend
+      dockerfile: docker/Dockerfile
+    container_name: ppc_fastapi
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./ppc-backend/.env
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CORS_ORIGINS: http://localhost:3000,http://localhost:80,http://localhost
+      PYTHONPATH: /app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./ppc-backend/app/ml/models:/app/app/ml/models
+      - geoip_data:/app/geoip
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  celery_worker:
+    build:
+      context: ./ppc-backend
+      dockerfile: docker/Dockerfile
+    container_name: ppc_celery
+    # command is passed as args to entrypoint.sh which detects "celery" and execs directly
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+    env_file:
+      - ./ppc-backend/.env
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      PYTHONPATH: /app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./ppc-backend/app/ml/models:/app/app/ml/models
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  celery_beat:
+    build:
+      context: ./ppc-backend
+      dockerfile: docker/Dockerfile
+    container_name: ppc_celery_beat
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+    env_file:
+      - ./ppc-backend/.env
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      PYTHONPATH: /app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  nextjs:
+    build:
+      context: ./ppc-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_BACKEND_URL: http://fastapi:8000
+    container_name: ppc_nextjs
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_BACKEND_URL: http://fastapi:8000
+    depends_on:
+      - fastapi
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+  # ── Nginx reverse proxy ──────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: ppc_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - fastapi
+      - nextjs
+    restart: unless-stopped
+    networks:
+      - ppc_network
+
+volumes:
+  mongodb_data:
+  redis_data:
+  rabbitmq_data:
+  geoip_data:
+
+networks:
+  ppc_network:
+    driver: bridge

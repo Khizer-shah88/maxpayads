@@ -1,0 +1,10 @@
+.next/
+node_modules/
+.git/
+.github/
+coverage/
+*.log
+node_modules
+.next
+.git
+*.md

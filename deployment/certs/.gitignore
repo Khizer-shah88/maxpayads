@@ -1,0 +1,7 @@
+# Never commit the actual origin certificate / private key
+origin.crt
+origin.key
+*.pem
+*.key
+*.crt
+!README.md
