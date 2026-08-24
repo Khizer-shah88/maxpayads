@@ -118,7 +118,7 @@ function PublisherAuthContent() {
             <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center">
               <Zap className="w-5 h-5 text-primary" />
             </div>
-            <span className="text-xl font-bold text-white">Max Pay Ads</span>
+            <span className="text-xl font-bold text-white">vertexmonetize</span>
           </Link>
 
           {/* Center content */}
@@ -128,7 +128,7 @@ function PublisherAuthContent() {
               <span className="text-red-400"> consistent revenue</span>
             </h2>
             <p className="mt-4 text-gray-300 leading-relaxed">
-              Join thousands of publishers earning daily with our premium Max Pay Ads advertising platform.
+              Join thousands of publishers earning daily with our premium vertexmonetize advertising platform.
             </p>
 
             <div className="mt-10 space-y-4">
@@ -146,7 +146,7 @@ function PublisherAuthContent() {
           {/* Bottom testimonial */}
           <div className="glass-dark rounded-xl p-5 max-w-md">
             <p className="text-white/80 text-sm italic leading-relaxed">
-              &ldquo;Switched to Max Pay Ads 6 months ago and my ad revenue increased by 40%.
+              &ldquo;Switched to vertexmonetize 6 months ago and my ad revenue increased by 40%.
               The analytics dashboard is incredible.&rdquo;
             </p>
             <div className="mt-3 flex items-center gap-3">
@@ -171,7 +171,7 @@ function PublisherAuthContent() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white" />
               </div>
-              <span className="text-lg font-bold text-black">Max Pay Ads</span>
+              <span className="text-lg font-bold text-black">vertexmonetize</span>
             </Link>
           </div>
 

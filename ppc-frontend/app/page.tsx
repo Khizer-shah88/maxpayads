@@ -1,4 +1,4 @@
-'use client'
+ 'use client'
 
 import Link from 'next/link'
 import { BarChart3, DollarSign, Globe, Shield, Zap, TrendingUp, Users, MousePointer, ArrowRight, CheckCircle } from 'lucide-react'
@@ -61,7 +61,7 @@ export default function HomePage() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white" />
               </div>
-              <span className="text-lg font-bold text-black">Max Pay Ads</span>
+              <span className="text-lg font-bold text-black">vertexmonetize</span>
             </div>
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm text-text-secondary hover:text-black transition-colors">Features</a>
@@ -109,7 +109,7 @@ export default function HomePage() {
             </h1>
 
             <p className="animate-fade-in-up-delay-2 mt-6 text-lg sm:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed">
-              Join the premium Max Pay Ads advertising network. Embed our high-converting ad units,
+              Join the premium vertexmonetize advertising network. Embed our high-converting ad units,
               track performance in real-time, and earn competitive rates from global advertisers.
             </p>
 
@@ -145,7 +145,7 @@ export default function HomePage() {
                   <div className="w-3 h-3 rounded-full bg-red-500" />
                   <div className="w-3 h-3 rounded-full bg-yellow-500" />
                   <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="ml-3 text-xs text-gray-500">publisher.maxpayads.com/dashboard</span>
+                  <span className="ml-3 text-xs text-gray-500">publisher.vertexmonetize.com/dashboard</span>
                 </div>
                 <div className="bg-gray-50 rounded-xl p-6 m-1">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -267,7 +267,7 @@ export default function HomePage() {
             into revenue?
           </h2>
           <p className="mt-6 text-lg text-gray-300 max-w-2xl mx-auto">
-            Join thousands of publishers already earning with Max Pay Ads.
+            Join thousands of publishers already earning with vertexmonetize.
             Setup takes less than 5 minutes.
           </p>
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -296,9 +296,9 @@ export default function HomePage() {
               <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center">
                 <Zap className="w-3.5 h-3.5 text-white" />
               </div>
-              <span className="text-sm font-semibold text-white">Max Pay Ads</span>
+              <span className="text-sm font-semibold text-white">vertexmonetize</span>
             </div>
-            <p className="text-sm text-gray-500">&copy; {new Date().getFullYear()} Max Pay Ads. All rights reserved.</p>
+            <p className="text-sm text-gray-500">&copy; {new Date().getFullYear()} vertexmonetize. All rights reserved.</p>
             <div className="flex items-center gap-6">
               <a href="#features" className="text-sm text-gray-400 hover:text-white transition-colors">Features</a>
               <a href="#how-it-works" className="text-sm text-gray-400 hover:text-white transition-colors">How It Works</a>

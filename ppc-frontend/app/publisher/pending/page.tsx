@@ -69,7 +69,7 @@ export default function PendingApprovalPage() {
             <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center">
               <Zap className="w-5 h-5 text-primary" />
             </div>
-            <span className="text-xl font-bold text-white">Max Pay Ads</span>
+            <span className="text-xl font-bold text-white">vertexmonetize</span>
           </Link>
 
           <div className="max-w-md">
@@ -129,7 +129,7 @@ export default function PendingApprovalPage() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white" />
               </div>
-              <span className="text-lg font-bold text-gray-900">Max Pay Ads</span>
+              <span className="text-lg font-bold text-gray-900">vertexmonetize</span>
             </Link>
           </div>
 

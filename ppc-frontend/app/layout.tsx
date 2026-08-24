@@ -3,8 +3,8 @@ import { Toaster } from 'sonner'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Max Pay Ads - Premium Pay-Per-Click Advertising Platform',
-  description: 'Monetize your website traffic with the leading Max Pay Ads advertising network. High CPC rates, real-time analytics, and fast payouts.',
+  title: 'vertexmonetize - Premium Pay-Per-Click Advertising Platform',
+  description: 'Monetize your website traffic with the leading vertexmonetize advertising network. High CPC rates, real-time analytics, and fast payouts.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

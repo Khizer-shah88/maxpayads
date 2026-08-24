@@ -15,7 +15,8 @@ venv/
 env/
 ppc-backend/.venv/
 ppc-backend/.venv-linux/
-
+# Local Claude settings
+.claude/settings.local.json 
 
 # Backend runtime artifacts
 ppc-backend/.env

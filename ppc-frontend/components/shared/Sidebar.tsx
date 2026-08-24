@@ -64,7 +64,7 @@ export default function Sidebar() {
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <Zap className="w-4 h-4 text-white" />
               </div>
-              <span className="text-base font-bold text-white">Max Pay Ads</span>
+              <span className="text-base font-bold text-white">vertexmonetize</span>
             </div>
           )}
           {collapsed && (
