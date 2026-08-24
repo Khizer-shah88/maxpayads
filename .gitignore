@@ -37,3 +37,29 @@ deployment/certs/origin.key
 *.log
 *.tgz
 *.tar.gz
+
+
+# Production secrets
+.env.production
+deployment/.env.production
+deployment/certs/*.crt
+deployment/certs/*.key
+ppc-backend/.env
+
+# Runtime
+ppc-backend/uploads/*
+!ppc-backend/uploads/.gitkeep
+
+# Frontend
+node_modules/
+.next/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+._*

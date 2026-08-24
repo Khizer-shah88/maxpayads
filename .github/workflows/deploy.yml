@@ -2,13 +2,20 @@ name: Deploy Production
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     env:
-      APP_DIR: /home/deploy/maxpayads
+      APP_DIR: /home/deploy/maxpayads/fahad
 
     steps:
       - name: Checkout repository
@@ -24,6 +31,11 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Verify server access
+        run: |
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "echo 'SSH connection OK'; test -d '${APP_DIR}' && echo 'APP_DIR exists'"
+
       - name: Sync repository to server
         run: |
           rsync -az --delete \
@@ -32,7 +44,7 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.next' \
             --exclude 'ppc-backend/.env' \
-            --exclude 'ppc-backend/uploads' \
+            --exclude 'ppc-backend/uploads/' \
             --exclude 'ppc-backend/GeoLite2-Country.mmdb' \
             --exclude 'deployment/.env.production' \
             --exclude 'deployment/certs/origin.crt' \
@@ -42,4 +54,4 @@ jobs:
       - name: Deploy on server
         run: |
           ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            "cd ${APP_DIR} && bash deployment/2-deploy.sh"
+            "cd '${APP_DIR}' && bash deployment/2-deploy.sh"
