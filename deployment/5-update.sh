@@ -5,7 +5,7 @@
 # ============================================================================
 set -e
 
-APP_DIR="/home/deploy/maxpayads"
+APP_DIR="/home/deploy/maxpayads/fahad"
 cd "$APP_DIR"
 
 echo "========================================="
