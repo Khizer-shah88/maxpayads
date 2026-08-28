@@ -1,29 +1,21 @@
-name: Deploy Production
+      - name: Verify SSH secret is available
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "ERROR: SERVER_SSH_KEY is empty or unavailable"
+            exit 1
+          fi
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-concurrency:
-  group: production-deploy
-  cancel-in-progress: false
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    env:
-      APP_DIR: /home/deploy/maxpayads/fahad
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+          echo "SERVER_SSH_KEY is available"
+          echo "SSH key length: ${#SSH_KEY} characters"
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+
+
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
       - name: Trust server host key
