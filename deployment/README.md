@@ -107,8 +107,8 @@ docker compose -f docker-compose.prod.yml logs -f fastapi
 
 The public entry points are:
 
-1. `https://maxpayads.com`
-2. `https://maxpayads.com/admin/auth`
+1. `https://vertexmonetize.com`
+2. `https://vertexmonetize.com/admin/auth`
 
 ## Day-2 operations
 
