@@ -92,6 +92,8 @@ Add these repository secrets:
 
 If you store them in a GitHub Environment instead of repository secrets, use the `production` environment because the deploy workflow reads that environment.
 
+The workflow also falls back to GitHub Actions variables with the same names, so if you added the values under Variables by mistake, the deploy job can still read them.
+
 Recommended flow:
 
 1. Use the root password once to create the server user.
