@@ -8,7 +8,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
 
     env:
       APP_DIR: /home/deploy/maxpayads/fahad
@@ -16,36 +15,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Check deploy secrets
-        id: preflight
-        shell: bash
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST || vars.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER || vars.SERVER_USER }}
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY || vars.SERVER_SSH_KEY }}
-        run: |
-          missing=0
-
-          if [ -z "$SERVER_HOST" ]; then
-            echo "SERVER_HOST is missing"
-            missing=1
-          fi
-
-          if [ -z "$SERVER_USER" ]; then
-            echo "SERVER_USER is missing"
-            missing=1
-          fi
-
-          if [ -z "$SERVER_SSH_KEY" ]; then
-            echo "SERVER_SSH_KEY is missing"
-            missing=1
-          fi
-
-          if [ "$missing" -ne 0 ]; then
-            echo "Missing required deploy secrets."
-            exit 1
-          fi
 
       - name: Show deployment commit
         run: |
@@ -56,19 +25,18 @@ jobs:
           echo "========================================="
 
       - name: Start SSH agent
-        if: ${{ success() }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY || vars.SERVER_SSH_KEY }}
+          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
       - name: Trust server host key
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Verify server access
         run: |
-          ssh "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" \
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "echo 'SSH connection OK'; test -d '${APP_DIR}' && echo 'APP_DIR exists'"
 
       - name: Sync repository to server
@@ -84,11 +52,11 @@ jobs:
             --exclude 'deployment/.env.production' \
             --exclude 'deployment/certs/origin.crt' \
             --exclude 'deployment/certs/origin.key' \
-            ./ "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}:${APP_DIR}/"
+            ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${APP_DIR}/"
 
       - name: Verify files synchronized
         run: |
-          ssh "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" \
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "cd '${APP_DIR}' && \
              echo '=== Server verification ===' && \
              pwd && \
@@ -99,12 +67,12 @@ jobs:
 
       - name: Deploy on server
         run: |
-          ssh "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" \
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "cd '${APP_DIR}' && bash deployment/2-deploy.sh"
 
       - name: Verify production containers
         run: |
-          ssh "${{ secrets.SERVER_USER || vars.SERVER_USER }}@${{ secrets.SERVER_HOST || vars.SERVER_HOST }}" \
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "cd '${APP_DIR}' && \
              echo '=== Container status ===' && \
              docker compose -f docker-compose.prod.yml ps && \

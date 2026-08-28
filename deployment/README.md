@@ -90,9 +90,7 @@ Add these repository secrets:
 | `SERVER_USER` | Usually `deploy` |
 | `SERVER_SSH_KEY` | Private SSH key for GitHub Actions |
 
-If you store them in a GitHub Environment instead of repository secrets, use the `production` environment because the deploy workflow reads that environment.
-
-The workflow also falls back to GitHub Actions variables with the same names, so if you added the values under Variables by mistake, the deploy job can still read them.
+Store them as repository secrets in this repo. The deploy workflow reads these values directly.
 
 Recommended flow:
 
