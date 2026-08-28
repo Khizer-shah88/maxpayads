@@ -1,11 +1,6 @@
-name: Deploy
+name: Deploy Production
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**'
-      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:
@@ -20,59 +15,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check deploy secrets
-        id: preflight
-        shell: bash
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      - name: Show deployment commit
         run: |
-          missing=0
-
-          if [ -z "$SERVER_HOST" ]; then
-            echo "SERVER_HOST is missing"
-            missing=1
-          fi
-
-          if [ -z "$SERVER_USER" ]; then
-            echo "SERVER_USER is missing"
-            missing=1
-          fi
-
-          if [ -z "$SERVER_SSH_KEY" ]; then
-            echo "SERVER_SSH_KEY is missing"
-            missing=1
-          fi
-
-          if [ "$missing" -ne 0 ]; then
-            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping deploy because required secrets are not configured."
-            exit 0
-          fi
-
-          echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          echo "========================================="
+          echo "Deploying commit:"
+          git rev-parse HEAD
+          git log -1 --oneline
+          echo "========================================="
 
       - name: Start SSH agent
-        if: ${{ steps.preflight.outputs.has_secrets == 'true' }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
       - name: Trust server host key
-        if: ${{ steps.preflight.outputs.has_secrets == 'true' }}
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Verify server access
-        if: ${{ steps.preflight.outputs.has_secrets == 'true' }}
         run: |
           ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "echo 'SSH connection OK'; test -d '${APP_DIR}' && echo 'APP_DIR exists'"
 
       - name: Sync repository to server
-        if: ${{ steps.preflight.outputs.has_secrets == 'true' }}
         run: |
           rsync -az --delete \
             --exclude '.git' \
@@ -87,8 +53,35 @@ jobs:
             --exclude 'deployment/certs/origin.key' \
             ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${APP_DIR}/"
 
+      - name: Verify files synchronized
+        run: |
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "cd '${APP_DIR}' && \
+             echo '=== Server verification ===' && \
+             pwd && \
+             echo '2-deploy.sh:' && \
+             grep -n 'APP_DIR=' deployment/2-deploy.sh && \
+             echo '5-update.sh:' && \
+             grep -n 'APP_DIR=' deployment/5-update.sh"
+
       - name: Deploy on server
-        if: ${{ steps.preflight.outputs.has_secrets == 'true' }}
         run: |
           ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
             "cd '${APP_DIR}' && bash deployment/2-deploy.sh"
+
+      - name: Verify production containers
+        run: |
+          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
+            "cd '${APP_DIR}' && \
+             echo '=== Container status ===' && \
+             docker compose -f docker-compose.prod.yml ps && \
+             echo '=== Health check ===' && \
+             curl -fsS http://localhost/health"
+
+      - name: Deployment complete
+        run: |
+          echo "========================================="
+          echo "Production deployment completed"
+          echo "Commit:"
+          git rev-parse HEAD
+          echo "========================================="
