@@ -90,6 +90,8 @@ Add these repository secrets:
 | `SERVER_USER` | Usually `deploy` |
 | `SERVER_SSH_KEY` | Private SSH key for GitHub Actions |
 
+If you store them in a GitHub Environment instead of repository secrets, use the `production` environment because the deploy workflow reads that environment.
+
 Recommended flow:
 
 1. Use the root password once to create the server user.
