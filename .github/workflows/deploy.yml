@@ -1,6 +1,8 @@
 name: Deploy Production
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -15,6 +17,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check deploy secrets
+        id: preflight
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          missing=0
+
+          if [ -z "$SERVER_HOST" ]; then
+            echo "SERVER_HOST is missing"
+            missing=1
+          fi
+
+          if [ -z "$SERVER_USER" ]; then
+            echo "SERVER_USER is missing"
+            missing=1
+          fi
+
+          if [ -z "$SERVER_SSH_KEY" ]; then
+            echo "SERVER_SSH_KEY is missing"
+            missing=1
+          fi
+
+          if [ "$missing" -ne 0 ]; then
+            echo "Missing required deploy secrets."
+            exit 1
+          fi
+
       - name: Show deployment commit
         run: |
           echo "========================================="
@@ -24,6 +56,7 @@ jobs:
           echo "========================================="
 
       - name: Start SSH agent
+        if: ${{ success() }}
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
