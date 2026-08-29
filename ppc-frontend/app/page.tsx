@@ -73,7 +73,7 @@ export default function HomePage() {
                 href="/publisher/auth"
                 className="text-sm font-medium text-text-secondary hover:text-black transition-colors"
               >
-                Sign Innnn
+                Sign In
               </Link>
               <Link
                 href="/publisher/auth?tab=signup"
