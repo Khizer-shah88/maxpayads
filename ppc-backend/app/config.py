@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     # Redirection domains — public IP for DNS verification (A record target)
     SERVER_PUBLIC_IP: str = ""
+    # Redirection / Entry
+    ENTRY_FALLBACK_URL: str = "https://www.google.com/"
+    ALLOWED_ENTRY_DOMAINS: str = ""
+    ENTRY_SESSION_TTL: int = 900
+    ENTRY_SESSION_SECRET: str = ""
 
     @property
     def cors_origins_list(self) -> List[str]:
