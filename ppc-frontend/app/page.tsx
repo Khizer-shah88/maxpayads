@@ -79,7 +79,7 @@ export default function HomePage() {
                 href="/publisher/auth?tab=signup"
                 className="text-sm font-semibold bg-primary hover:bg-primary-dark text-white px-5 py-2 rounded-lg transition-all hover:shadow-glow"
               >
-                Get Startedddd
+                Get Started
               </Link>
             </div>
           </div>
