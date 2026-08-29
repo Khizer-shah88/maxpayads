@@ -8,14 +8,13 @@ logger = logging.getLogger(__name__)
 client: AsyncIOMotorClient = None
 db = None
 
-
 def _init_db_handles():
     """Initialize Mongo client/db handles if they are not ready yet."""
     global client, db
-    if db is None:
+
+    if client is None or db is None:
         client = AsyncIOMotorClient(settings.MONGODB_URL)
         db = client[settings.DB_NAME]
-
 
 async def connect_db():
     _init_db_handles()
@@ -27,11 +26,13 @@ async def connect_db():
         logger.warning("Legacy domain migration skipped: %s", e)
     logger.info("Connected to MongoDB")
 
-
 async def disconnect_db():
-    global client
+    global client, db
+
     if client:
         client.close()
+        client = None
+        db = None
         logger.info("Disconnected from MongoDB")
 
 
