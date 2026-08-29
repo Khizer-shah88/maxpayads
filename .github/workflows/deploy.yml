@@ -1,14 +1,11 @@
 name: Deploy Production
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
 
     env:
       APP_DIR: /home/deploy/maxpayads/fahad
@@ -16,14 +13,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Show deployment commit
-        run: |
-          echo "========================================="
-          echo "Deploying commit:"
-          git rev-parse HEAD
-          git log -1 --oneline
-          echo "========================================="
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -35,11 +24,6 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Verify server access
-        run: |
-          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            "echo 'SSH connection OK'; test -d '${APP_DIR}' && echo 'APP_DIR exists'"
-
       - name: Sync repository to server
         run: |
           rsync -az --delete \
@@ -48,42 +32,14 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.next' \
             --exclude 'ppc-backend/.env' \
-            --exclude 'ppc-backend/uploads/' \
+            --exclude 'ppc-backend/uploads' \
             --exclude 'ppc-backend/GeoLite2-Country.mmdb' \
             --exclude 'deployment/.env.production' \
             --exclude 'deployment/certs/origin.crt' \
             --exclude 'deployment/certs/origin.key' \
             ./ "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${APP_DIR}/"
 
-      - name: Verify files synchronized
-        run: |
-          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            "cd '${APP_DIR}' && \
-             echo '=== Server verification ===' && \
-             pwd && \
-             echo '2-deploy.sh:' && \
-             grep -n 'APP_DIR=' deployment/2-deploy.sh && \
-             echo '5-update.sh:' && \
-             grep -n 'APP_DIR=' deployment/5-update.sh"
-
       - name: Deploy on server
         run: |
           ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            "cd '${APP_DIR}' && bash deployment/2-deploy.sh"
-
-      - name: Verify production containers
-        run: |
-          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" \
-            "cd '${APP_DIR}' && \
-             echo '=== Container status ===' && \
-             docker compose -f docker-compose.prod.yml ps && \
-             echo '=== Health check ===' && \
-             curl -fsS http://localhost/health"
-
-      - name: Deployment complete
-        run: |
-          echo "========================================="
-          echo "Production deployment completed"
-          echo "Commit:"
-          git rev-parse HEAD
-          echo "========================================="
+            "cd ${APP_DIR} && bash deployment/2-deploy.sh"
