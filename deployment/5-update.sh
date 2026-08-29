@@ -18,10 +18,22 @@ git pull origin main
 # ── Export entry guard env vars so docker-compose picks them up ──────────────
 ENV_FILE="$APP_DIR/deployment/.env.production"
 if [ -f "$ENV_FILE" ]; then
-  set -o allexport
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +o allexport
+  _load_env_safe() {
+    local file="$1"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+        local key="${BASH_REMATCH[1]}"
+        local val="${BASH_REMATCH[2]}"
+        if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+          val="${BASH_REMATCH[1]}"
+        fi
+        export "$key=$val"
+      fi
+    done < "$file"
+  }
+  _load_env_safe "$ENV_FILE"
 fi
 
 # ── Rebuild and restart ──────────────────────────────────────────────────────

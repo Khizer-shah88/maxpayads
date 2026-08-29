@@ -49,14 +49,30 @@ chmod 600 "$APP_DIR/ppc-backend/.env"
 
 # Export entry guard variables from .env.production so that docker-compose
 # can substitute them into the nextjs service's environment block.
-# Only the four ENTRY_* and ALLOWED_ENTRY_DOMAINS vars are exported — the
-# backend's JWT secrets and DB credentials stay inside the backend container.
-set -o allexport
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +o allexport
+# We parse the file safely instead of using `source` to avoid executing
+# comment lines or values with shell metacharacters (spaces, slashes, etc.).
+_load_env_safe() {
+  local file="$1"
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Skip blank lines and comments
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    # Must look like KEY=VALUE (KEY is alphanumeric + underscore)
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+      # Strip surrounding double-quotes from value if present
+      if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+        val="${BASH_REMATCH[1]}"
+      fi
+      export "$key=$val"
+    fi
+  done < "$file"
+}
 
-# Verify the secret is configured (not a placeholder)
+_load_env_safe "$ENV_FILE"
+
+# Verify the entry guard secret is configured (not a placeholder)
 if [ -z "${ENTRY_SESSION_SECRET:-}" ] || \
    echo "${ENTRY_SESSION_SECRET}" | grep -qi "CHANGE_ME"; then
   echo "WARNING: ENTRY_SESSION_SECRET is not set or is a placeholder."
