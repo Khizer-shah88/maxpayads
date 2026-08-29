@@ -1,4 +1,4 @@
- 'use client'
+'use client'
 
 import Link from 'next/link'
 import { BarChart3, DollarSign, Globe, Shield, Zap, TrendingUp, Users, MousePointer, ArrowRight, CheckCircle } from 'lucide-react'
@@ -79,7 +79,7 @@ export default function HomePage() {
                 href="/publisher/auth?tab=signup"
                 className="text-sm font-semibold bg-primary hover:bg-primary-dark text-white px-5 py-2 rounded-lg transition-all hover:shadow-glow"
               >
-                Get Started
+                Get Startedddd
               </Link>
             </div>
           </div>

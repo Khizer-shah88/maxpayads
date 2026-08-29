@@ -1,106 +1,263 @@
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+/**
+ * middleware.ts — Next.js Edge Middleware
+ *
+ * Responsibilities (in order):
+ *  1. Conditional Entry Access Guard  — protects the landing page (/) so that
+ *     only visitors who arrive from an allowed referrer (or already hold a valid
+ *     session cookie) can see it.  Everyone else is redirected to the configured
+ *     fallback URL.
+ *  2. Admin route protection          — requires admin_token + admin_user cookies.
+ *  3. Publisher route protection      — requires publisher_token + publisher_user
+ *     cookies; enforces account status.
+ *
+ * Environment variables consumed here (all server-side only):
+ *   ALLOWED_ENTRY_DOMAINS   e.g. "https://browsmac.org,https://www.browsmac.org"
+ *   ENTRY_FALLBACK_URL      e.g. "https://www.google.com/"
+ *   ENTRY_SESSION_TTL       seconds, default 900
+ *   ENTRY_SESSION_SECRET    ≥32 random chars, e.g. from `openssl rand -hex 32`
+ */
 
-const PUBLIC_PATHS = ['/', '/admin/auth', '/publisher/auth', '/publisher/pending']
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
-export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+// ─── Routes exempt from the entry guard ──────────────────────────────────────
+// (auth, pending, and prelander pages must always be reachable so publishers
+//  can log in and so prelander slugs work on other domains)
+const ENTRY_GUARD_EXEMPT_PATHS: ReadonlyArray<string> = [
+  '/publisher/auth',
+  '/publisher/pending',
+  '/admin/auth',
+  '/prelander',
+];
 
-  // Allow public pages without any checks
-  if (PUBLIC_PATHS.includes(pathname)) {
-    // If already logged in as admin and hitting /admin/auth, redirect to dashboard
-    if (pathname === '/admin/auth') {
-      const adminToken = request.cookies.get('admin_token')?.value
-      const adminUserCookie = request.cookies.get('admin_user')?.value
-      if (adminToken && adminUserCookie) {
-        return NextResponse.redirect(new URL('/admin/dashboard', request.url))
+// Prefix-based exemptions (all sub-paths also exempt)
+const ENTRY_GUARD_EXEMPT_PREFIXES: ReadonlyArray<string> = ['/d/'];
+
+/**
+ * Returns true when the request path must be protected by the entry guard.
+ * We protect ONLY the root landing page (/) by default.  If you need to
+ * protect additional paths, add them to ENTRY_GUARD_PROTECTED_PATHS below.
+ */
+const ENTRY_GUARD_PROTECTED_PATHS: ReadonlyArray<string> = ['/'];
+
+function isEntryGuardProtected(pathname: string): boolean {
+  // Never guard explicitly exempt paths
+  if (ENTRY_GUARD_EXEMPT_PATHS.includes(pathname)) return false;
+  for (const prefix of ENTRY_GUARD_EXEMPT_PREFIXES) {
+    if (pathname.startsWith(prefix)) return false;
+  }
+  // Only guard the explicitly protected paths
+  return ENTRY_GUARD_PROTECTED_PATHS.includes(pathname);
+}
+
+function requestUsesHttps(request: NextRequest): boolean {
+  if (request.nextUrl.protocol === 'https:') return true;
+  const forwarded = request.headers.get('x-forwarded-proto');
+  if (forwarded?.split(',')[0]?.trim().toLowerCase() === 'https') return true;
+  const cfVisitor = request.headers.get('cf-visitor');
+  if (cfVisitor?.includes('"scheme":"https"')) return true;
+  return false;
+}
+
+function clientIp(request: NextRequest): string {
+  return (
+    request.headers.get('cf-connecting-ip') ??
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    'unknown'
+  );
+}
+
+function referrerHostname(referrer: string | undefined): string {
+  if (!referrer) return '(none)';
+  try {
+    return new URL(referrer).hostname;
+  } catch {
+    return '(malformed)';
+  }
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 1.  ENTRY GUARD — only active when ENTRY_SESSION_SECRET is configured
+  // ════════════════════════════════════════════════════════════════════════════
+  if (isEntryGuardProtected(pathname) && process.env.ENTRY_SESSION_SECRET) {
+    const sessionCookie = request.cookies.get('entry_session')?.value;
+    const referrer = request.headers.get('referer') ?? undefined;
+    const secret = getSessionSecret();
+    const ttl = getSessionTtl();
+    const ip = clientIp(request);
+
+    if (sessionCookie) {
+      const sessionState = await validateSessionToken(sessionCookie, secret, ttl);
+      if (sessionState === 'expired') {
+        console.log(
+          `[ENTRY_SESSION_EXPIRED] path=${pathname} ip=${ip}`,
+        );
       }
     }
-    // If already logged in as publisher and hitting /publisher/auth, redirect appropriately
+
+    const decision = await evaluateEntryAccess({
+      sessionCookie,
+      referrer,
+      secureCookie: requestUsesHttps(request),
+    });
+
+    if (decision.result === 'DENY') {
+      if (referrer && !isReferrerAllowed(referrer, getAllowedHostnames())) {
+        console.log(
+          `[ENTRY_INVALID_REFERRER] path=${pathname} referrer=${referrerHostname(referrer)} ip=${ip}`,
+        );
+      }
+
+      console.log(
+        `[ENTRY_ACCESS_DENIED] path=${pathname} ` +
+          `referrer=${referrerHostname(referrer)} ` +
+          `session=${sessionCookie ? 'present_but_invalid' : 'absent'} ` +
+          `ip=${ip}`,
+      );
+
+      // Redirect — make sure we never redirect to ourselves (loop guard)
+      const fallbackUrl = decision.fallbackUrl;
+      const requestHost = request.nextUrl.hostname.toLowerCase();
+      try {
+        const fallbackHost = new URL(fallbackUrl).hostname.toLowerCase();
+        if (fallbackHost === requestHost) {
+          // Misconfigured fallback points at ourselves — serve 403 instead
+          return new NextResponse('Forbidden', { status: 403 });
+        }
+      } catch {
+        return new NextResponse('Forbidden', { status: 403 });
+      }
+
+      return NextResponse.redirect(fallbackUrl, { status: 302 });
+    }
+
+    if (decision.result === 'ALLOW_VALID_REFERRER') {
+      console.log(
+        `[ENTRY_SESSION_CREATED] path=${pathname} referrer=${referrerHostname(referrer)} ip=${ip}`,
+      );
+
+      const response = NextResponse.next();
+      // Set the HttpOnly session cookie on the response
+      response.headers.set('Set-Cookie', decision.setCookie);
+      return response;
+    }
+
+    // ALLOW_SESSION_EXISTS
+    console.log(
+      `[ENTRY_ACCESS_GRANTED] path=${pathname} reason=valid_session ip=${ip}`,
+    );
+    // Fall through — let existing auth middleware logic run below
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 2.  EXISTING AUTH MIDDLEWARE (unchanged behaviour)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  const PUBLIC_PATHS = ['/', '/admin/auth', '/publisher/auth', '/publisher/pending'];
+
+  // Allow public pages without any further checks
+  if (PUBLIC_PATHS.includes(pathname)) {
+    // Already-logged-in admin hitting /admin/auth → dashboard
+    if (pathname === '/admin/auth') {
+      const adminToken = request.cookies.get('admin_token')?.value;
+      const adminUserCookie = request.cookies.get('admin_user')?.value;
+      if (adminToken && adminUserCookie) {
+        return NextResponse.redirect(new URL('/admin/dashboard', request.url));
+      }
+    }
+    // Already-logged-in publisher hitting /publisher/auth → appropriate page
     if (pathname === '/publisher/auth') {
-      const publisherToken = request.cookies.get('publisher_token')?.value
-      const publisherUserCookie = request.cookies.get('publisher_user')?.value
+      const publisherToken = request.cookies.get('publisher_token')?.value;
+      const publisherUserCookie = request.cookies.get('publisher_user')?.value;
       if (publisherToken && publisherUserCookie) {
         try {
-          const pu = JSON.parse(publisherUserCookie)
+          const pu = JSON.parse(publisherUserCookie);
           if (pu?.status === 'active') {
-            return NextResponse.redirect(new URL('/publisher/dashboard', request.url))
+            return NextResponse.redirect(new URL('/publisher/dashboard', request.url));
           } else {
-            return NextResponse.redirect(new URL('/publisher/pending', request.url))
+            return NextResponse.redirect(new URL('/publisher/pending', request.url));
           }
         } catch {
-          return NextResponse.redirect(new URL('/publisher/dashboard', request.url))
+          return NextResponse.redirect(new URL('/publisher/dashboard', request.url));
         }
       }
     }
-    // If logged-in publisher hitting /publisher/pending and already active, send to dashboard
+    // Logged-in active publisher on /publisher/pending → dashboard
     if (pathname === '/publisher/pending') {
-      const publisherToken = request.cookies.get('publisher_token')?.value
-      const publisherUserCookie = request.cookies.get('publisher_user')?.value
+      const publisherToken = request.cookies.get('publisher_token')?.value;
+      const publisherUserCookie = request.cookies.get('publisher_user')?.value;
       if (publisherToken && publisherUserCookie) {
         try {
-          const pu = JSON.parse(publisherUserCookie)
+          const pu = JSON.parse(publisherUserCookie);
           if (pu?.status === 'active') {
-            return NextResponse.redirect(new URL('/publisher/dashboard', request.url))
+            return NextResponse.redirect(new URL('/publisher/dashboard', request.url));
           }
         } catch {}
       } else {
-        return NextResponse.redirect(new URL('/publisher/auth', request.url))
+        return NextResponse.redirect(new URL('/publisher/auth', request.url));
       }
     }
-    return NextResponse.next()
+    return NextResponse.next();
   }
 
-  // ── Protect /admin/* routes ──────────────────────────────────────────────
+  // ── Protect /admin/* routes ────────────────────────────────────────────────
   if (pathname.startsWith('/admin')) {
-    const adminToken = request.cookies.get('admin_token')?.value
-    const adminUserCookie = request.cookies.get('admin_user')?.value
+    const adminToken = request.cookies.get('admin_token')?.value;
+    const adminUserCookie = request.cookies.get('admin_user')?.value;
 
     if (!adminToken || !adminUserCookie) {
-      return NextResponse.redirect(new URL('/admin/auth', request.url))
+      return NextResponse.redirect(new URL('/admin/auth', request.url));
     }
 
     try {
-      const adminUser = JSON.parse(adminUserCookie)
+      const adminUser = JSON.parse(adminUserCookie);
       if (adminUser?.role !== 'admin') {
-        return NextResponse.redirect(new URL('/admin/auth', request.url))
+        return NextResponse.redirect(new URL('/admin/auth', request.url));
       }
     } catch {
-      return NextResponse.redirect(new URL('/admin/auth', request.url))
+      return NextResponse.redirect(new URL('/admin/auth', request.url));
     }
 
-    return NextResponse.next()
+    return NextResponse.next();
   }
 
-  // ── Protect /publisher/* routes ──────────────────────────────────────────
+  // ── Protect /publisher/* routes ────────────────────────────────────────────
   if (pathname.startsWith('/publisher')) {
-    const publisherToken = request.cookies.get('publisher_token')?.value
-    const publisherUserCookie = request.cookies.get('publisher_user')?.value
+    const publisherToken = request.cookies.get('publisher_token')?.value;
+    const publisherUserCookie = request.cookies.get('publisher_user')?.value;
 
     if (!publisherToken || !publisherUserCookie) {
-      return NextResponse.redirect(new URL('/publisher/auth', request.url))
+      return NextResponse.redirect(new URL('/publisher/auth', request.url));
     }
 
     try {
-      const publisherUser = JSON.parse(publisherUserCookie)
+      const publisherUser = JSON.parse(publisherUserCookie);
       if (publisherUser?.role === 'admin') {
-        // Admin accidentally hitting publisher route → go to admin auth
-        return NextResponse.redirect(new URL('/admin/auth', request.url))
+        return NextResponse.redirect(new URL('/admin/auth', request.url));
       }
-      // Block non-active publishers from accessing the portal
       if (publisherUser?.status && publisherUser.status !== 'active') {
-        return NextResponse.redirect(new URL('/publisher/pending', request.url))
+        return NextResponse.redirect(new URL('/publisher/pending', request.url));
       }
     } catch {
-      return NextResponse.redirect(new URL('/publisher/auth', request.url))
+      return NextResponse.redirect(new URL('/publisher/auth', request.url));
     }
 
-    return NextResponse.next()
+    return NextResponse.next();
   }
 
-  return NextResponse.next()
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api).*)'],
-}
+  matcher: [
+    /*
+     * Run middleware on all routes except static assets, API proxy, and SEO files.
+     * Entry guard only protects `/` — other matched paths use auth middleware only.
+     */
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|api).*)',
+  ],
+};

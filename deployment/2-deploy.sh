@@ -47,6 +47,22 @@ echo "Preparing backend environment..."
 cp "$ENV_FILE" "$APP_DIR/ppc-backend/.env"
 chmod 600 "$APP_DIR/ppc-backend/.env"
 
+# Export entry guard variables from .env.production so that docker-compose
+# can substitute them into the nextjs service's environment block.
+# Only the four ENTRY_* and ALLOWED_ENTRY_DOMAINS vars are exported — the
+# backend's JWT secrets and DB credentials stay inside the backend container.
+set -o allexport
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +o allexport
+
+# Verify the secret is configured (not a placeholder)
+if [ -z "${ENTRY_SESSION_SECRET:-}" ] || \
+   echo "${ENTRY_SESSION_SECRET}" | grep -qi "CHANGE_ME"; then
+  echo "WARNING: ENTRY_SESSION_SECRET is not set or is a placeholder."
+  echo "         The entry guard will be DISABLED until a real secret is configured."
+fi
+
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
 

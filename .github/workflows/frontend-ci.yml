@@ -22,6 +22,11 @@ jobs:
 
     env:
       NEXT_BACKEND_URL: http://localhost:8000
+      # Entry guard — disabled in CI (blank secret disables the guard)
+      ALLOWED_ENTRY_DOMAINS: ""
+      ENTRY_FALLBACK_URL: https://www.google.com/
+      ENTRY_SESSION_TTL: "900"
+      ENTRY_SESSION_SECRET: ""
 
     steps:
       - name: Checkout repository

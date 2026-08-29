@@ -15,6 +15,15 @@ echo "========================================="
 # ── Pull latest code ─────────────────────────────────────────────────────────
 git pull origin main
 
+# ── Export entry guard env vars so docker-compose picks them up ──────────────
+ENV_FILE="$APP_DIR/deployment/.env.production"
+if [ -f "$ENV_FILE" ]; then
+  set -o allexport
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +o allexport
+fi
+
 # ── Rebuild and restart ──────────────────────────────────────────────────────
 echo "Rebuilding containers..."
 docker compose -f docker-compose.prod.yml build
