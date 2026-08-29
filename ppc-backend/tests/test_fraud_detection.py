@@ -1,14 +1,8 @@
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bot_ua_detection():
     """Bot user agents should be detected as fraud."""
     from app.services.fraud_service import check_fraud
@@ -32,7 +26,7 @@ async def test_bot_ua_detection():
     assert reason == "bot_user_agent"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_datacenter_ip_detection():
     """Datacenter IPs should be flagged as fraud."""
     from app.services.fraud_service import check_fraud
@@ -56,7 +50,7 @@ async def test_datacenter_ip_detection():
     assert reason == "datacenter_ip"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_rate_limit_detection():
     """IPs exceeding rate limit should be flagged."""
     from app.services.fraud_service import check_fraud
