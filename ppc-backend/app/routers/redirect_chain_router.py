@@ -129,7 +129,8 @@ async def create_redirect_chain(
     
     result = await db.redirect_chains.insert_one(chain_data)
     chain_data["id"] = str(result.inserted_id)
-    del chain_data["_id"] if "_id" in chain_data else None
+    if "_id" in chain_data:
+        del chain_data["_id"]
     
     return {
         "success": True,

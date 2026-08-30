@@ -195,8 +195,31 @@ export const directLinkApi = {
   }) => api.get('/direct-links/conversions', { params }),
   recordConversion: (data: { slug: string; metadata?: object }) =>
     api.post('/direct-links/conversions', data),
+  // Manual conversion override endpoints
+  createManualOverride: (data: {
+    date: string
+    publisher_id: string
+    link_id?: string
+    manual_conversions: number
+    reason: string
+  }) => api.post('/direct-links/conversions/manual-override', data),
+  getConversionOverrides: (params?: {
+    publisher_id?: string
+    date_from?: string
+    date_to?: string
+  }) => api.get('/direct-links/conversions/overrides', { params }),
+  deleteConversionOverride: (id: string) =>
+    api.delete(`/direct-links/conversions/overrides/${id}`),
+  // White-label stats token generation
+  generateStatsToken: (data: { publisher_id: string; domain?: string }) =>
+    api.post('/direct-links/generate-stats-token', data),
 }
 
+// ==================== PUBLIC STATS (NO AUTH) ====================
+export const publicStatsApi = {
+  getPublisherStats: (publisherId: string, token: string) =>
+    api.get(`/public-stats/${publisherId}`, { params: { token } }),
+}
 
 export const offerApi = {
   getAll: () => api.get('/offers'),

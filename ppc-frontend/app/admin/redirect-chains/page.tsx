@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi } from '@/lib/api'
+import { adminApi, redirectChainApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -123,28 +123,7 @@ export default function RedirectChainsPage() {
     setLoading(true)
     try {
       const [chainsRes, domainsRes] = await Promise.all([
-        // Mock API calls for now - replace with actual endpoints
-        Promise.resolve({ 
-          data: { 
-            chains: [
-              {
-                id: '1',
-                name: 'High Security Chain',
-                anchor_domain: 'click.secure-ads.com',
-                intermediate_domain: 'verify.traffic-gate.net',
-                pre_lander_pool: ['lp1.offers-hub.com', 'lp2.deals-zone.net', 'lp3.promo-center.org'],
-                session_validation: true,
-                cookie_lifetime: 60,
-                status: 'active' as const,
-                created_at: new Date().toISOString(),
-                total_sessions: 12543,
-                valid_sessions: 11892,
-                blocked_sessions: 651,
-                conversion_rate: 4.2,
-              }
-            ] 
-          } 
-        }),
+        redirectChainApi.getAll(),
         adminApi.getRedirectionDomains()
       ])
       
@@ -216,7 +195,6 @@ export default function RedirectChainsPage() {
 
     setSaving(true)
     try {
-      // Mock save - replace with actual API call
       const payload = {
         ...form,
         name: form.name.trim(),
@@ -225,15 +203,15 @@ export default function RedirectChainsPage() {
       }
 
       if (modal === 'edit' && editTarget) {
-        // await redirectChainApi.update(editTarget.id, payload)
+        await redirectChainApi.update(editTarget.id, payload)
         toast.success('Redirect chain updated')
       } else {
-        // await redirectChainApi.create(payload)
+        await redirectChainApi.create(payload)
         toast.success('Redirect chain created')
       }
 
       setModal(null)
-      // loadData() // Uncomment when real API is ready
+      loadData()
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to save redirect chain')
     } finally {
@@ -245,9 +223,9 @@ export default function RedirectChainsPage() {
     if (!confirm(`Delete redirect chain "${chain.name}"?`)) return
     
     try {
-      // await redirectChainApi.delete(chain.id)
+      await redirectChainApi.delete(chain.id)
       toast.success('Redirect chain deleted')
-      // loadData() // Uncomment when real API is ready
+      loadData()
     } catch {
       toast.error('Failed to delete redirect chain')
     }

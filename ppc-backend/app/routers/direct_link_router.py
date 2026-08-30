@@ -373,3 +373,225 @@ async def record_conversion(
         "destination_url": doc.get("destination_url", ""),
         "prelander_template_id": doc.get("prelander_template_id"),
     }
+
+
+# ─── Manual Conversion Override Endpoints ────────────────────────────────────
+
+@router.post("/conversions/manual-override")
+async def create_manual_conversion_override(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Create or update manual conversion override for a specific date and publisher.
+    
+    Body: {
+        "date": "2024-01-15",
+        "publisher_id": "...",
+        "link_id": "..." (optional),
+        "manual_conversions": 50,
+        "reason": "Manual adjustment due to tracking issues"
+    }
+    """
+    required_fields = ["date", "publisher_id", "manual_conversions", "reason"]
+    for field in required_fields:
+        if field not in data:
+            raise HTTPException(status_code=400, detail=f"{field} is required")
+    
+    date_str = data["date"]
+    publisher_id = data["publisher_id"]
+    link_id = data.get("link_id")
+    manual_conversions = data["manual_conversions"]
+    reason = data["reason"].strip()
+    
+    if manual_conversions < 0:
+        raise HTTPException(status_code=400, detail="Manual conversions must be non-negative")
+    
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason cannot be empty")
+    
+    # Parse and validate date
+    try:
+        from datetime import datetime
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        date_start = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_end = date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Verify publisher exists
+    try:
+        pub_oid = ObjectId(publisher_id)
+        publisher = await db.users.find_one({"_id": pub_oid, "role": "publisher"})
+        if not publisher:
+            raise HTTPException(status_code=404, detail="Publisher not found")
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid publisher ID")
+    
+    # Get raw clicks for the date to calculate CR
+    click_query = {
+        "publisher_id": publisher_id,
+        "created_at": {"$gte": date_start, "$lte": date_end},
+        "is_fraud": False
+    }
+    if link_id:
+        click_query["direct_link_id"] = link_id
+    
+    raw_clicks = await db.clicks.count_documents(click_query)
+    calculated_cr = (manual_conversions / raw_clicks * 100) if raw_clicks > 0 else 0
+    
+    # Create or update override record
+    override_query = {
+        "date": date_str,
+        "publisher_id": publisher_id
+    }
+    if link_id:
+        override_query["link_id"] = link_id
+    
+    override_data = {
+        **override_query,
+        "raw_clicks": raw_clicks,
+        "manual_conversions": manual_conversions,
+        "calculated_cr": calculated_cr,
+        "reason": reason,
+        "is_manual_override": True,
+        "override_updated_by": str(current_user["id"]),
+        "override_updated_at": datetime.utcnow(),
+    }
+    
+    # Upsert the override
+    result = await db.conversion_overrides.update_one(
+        override_query,
+        {"$set": override_data},
+        upsert=True
+    )
+    
+    action = "updated" if result.matched_count > 0 else "created"
+    
+    return {
+        "success": True,
+        "message": f"Manual conversion override {action}",
+        "data": {
+            "date": date_str,
+            "publisher_id": publisher_id,
+            "link_id": link_id,
+            "raw_clicks": raw_clicks,
+            "manual_conversions": manual_conversions,
+            "calculated_cr": round(calculated_cr, 2),
+            "reason": reason
+        }
+    }
+
+
+@router.get("/conversions/overrides")
+async def get_conversion_overrides(
+    publisher_id: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Get manual conversion overrides with optional filtering."""
+    query = {"is_manual_override": True}
+    
+    if publisher_id:
+        query["publisher_id"] = publisher_id
+    
+    # Date range filter
+    if date_from or date_to:
+        date_filter = {}
+        if date_from:
+            date_filter["$gte"] = date_from
+        if date_to:
+            date_filter["$lte"] = date_to
+        query["date"] = date_filter
+    
+    cursor = db.conversion_overrides.find(query).sort("date", -1)
+    overrides = await cursor.to_list(length=1000)
+    
+    # Clean up for response
+    for override in overrides:
+        override["id"] = str(override.pop("_id"))
+        if override.get("override_updated_at"):
+            override["override_updated_at"] = override["override_updated_at"].isoformat()
+    
+    return {
+        "success": True,
+        "overrides": overrides,
+        "total": len(overrides)
+    }
+
+
+@router.delete("/conversions/overrides/{override_id}")
+async def delete_conversion_override(
+    override_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Delete a manual conversion override."""
+    try:
+        oid = ObjectId(override_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid override ID")
+    
+    result = await db.conversion_overrides.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Override not found")
+    
+    return {
+        "success": True,
+        "message": "Conversion override deleted"
+    }
+
+
+# ─── White-Label Stats Generation ─────────────────────────────────────────────
+
+@router.post("/generate-stats-token")
+async def generate_stats_token(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Generate a white-label stats access token for a publisher.
+    
+    Body: {
+        "publisher_id": "...",
+        "domain": "stats.yournetwork.com" (optional)
+    }
+    """
+    publisher_id = data.get("publisher_id")
+    if not publisher_id:
+        raise HTTPException(status_code=400, detail="publisher_id is required")
+    
+    # Verify publisher exists
+    try:
+        pub_oid = ObjectId(publisher_id)
+        publisher = await db.users.find_one({"_id": pub_oid, "role": "publisher"})
+        if not publisher:
+            raise HTTPException(status_code=404, detail="Publisher not found")
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid publisher ID")
+    
+    # Generate token with publisher info and timestamp
+    import base64
+    timestamp = int(datetime.utcnow().timestamp())
+    token_data = f"{publisher_id}:{publisher.get('email', '')}:{timestamp}"
+    token = base64.b64encode(token_data.encode()).decode()
+    
+    # Get domain from settings or use provided
+    domain = data.get("domain")
+    if not domain:
+        domain_setting = await db.system_settings.find_one({"key": "stats_domain"})
+        domain = domain_setting.get("value", "stats.maxpayads.com") if domain_setting else "stats.maxpayads.com"
+    
+    stats_url = f"https://{domain}/public-stats/{publisher_id}?token={token}"
+    
+    return {
+        "success": True,
+        "token": token,
+        "stats_url": stats_url,
+        "publisher_name": publisher.get("name", "Unknown"),
+        "expires": None  # No expiration for now
+    }

@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi } from '@/lib/api'
+import { adminApi, directLinkApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,34 +92,64 @@ export default function DirectLinkStatsPage() {
     }
   }, [])
 
-  const loadPublisherStats = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!dateFrom || !dateTo) return
     
     setLoading(true)
     try {
-      // Get all publishers
-      const publishersRes = await adminApi.getPublishers({ limit: 500 })
+      // Get all publishers and direct link stats
+      const [publishersRes, directLinksRes] = await Promise.all([
+        adminApi.getPublishers({ limit: 500 }),
+        directLinkApi.getAll()
+      ])
+      
       const publishers = publishersRes.data?.publishers ?? []
+      const directLinks = directLinksRes.data?.links ?? []
       
-      // Mock data for now until API is fully implemented
-      const mockStats: PublisherStats[] = publishers
+      // Transform data to include aggregated stats per publisher
+      const publisherStatsMap = new Map<string, PublisherStats>()
+      
+      publishers
         .filter((p: any) => p.role === 'publisher' && p.status === 'active')
-        .map((publisher: any) => ({
-          publisher_id: publisher.id,
-          publisher_name: publisher.name,
-          publisher_email: publisher.email,
-          publisher_status: publisher.status,
-          total_clicks: Math.floor(Math.random() * 10000) + 1000,
-          unique_windows_clicks: Math.floor(Math.random() * 6000) + 600,
-          unique_mac_clicks: Math.floor(Math.random() * 4000) + 400,
-          total_conversions: Math.floor(Math.random() * 500) + 50,
-          conversion_rate: parseFloat((Math.random() * 10 + 1).toFixed(2)),
-          shareable_stats_url: `${typeof window !== 'undefined' ? window.location.origin : ''}/public-stats/${btoa(publisher.id + ':' + publisher.email)}`,
-          date_from: dateFrom,
-          date_to: dateTo,
-        }))
+        .forEach((publisher: any) => {
+          publisherStatsMap.set(publisher.id, {
+            publisher_id: publisher.id,
+            publisher_name: publisher.name,
+            publisher_email: publisher.email,
+            publisher_status: publisher.status,
+            total_clicks: 0,
+            unique_windows_clicks: 0,
+            unique_mac_clicks: 0,
+            total_conversions: 0,
+            conversion_rate: 0,
+            shareable_stats_url: `${typeof window !== 'undefined' ? window.location.origin : ''}/public-stats/${btoa(publisher.id + ':' + publisher.email)}`,
+            date_from: dateFrom,
+            date_to: dateTo,
+          })
+        })
       
-      setPublisherStats(mockStats)
+      // Aggregate direct link data by publisher
+      directLinks.forEach((link: any) => {
+        const publisherStat = publisherStatsMap.get(link.publisher_id)
+        if (publisherStat) {
+          publisherStat.total_clicks += link.total_clicks || 0
+          publisherStat.total_conversions += link.total_conversions || 0
+          
+          // Mock OS-specific data based on total clicks
+          publisherStat.unique_windows_clicks += Math.floor((link.total_clicks || 0) * 0.6)
+          publisherStat.unique_mac_clicks += Math.floor((link.total_clicks || 0) * 0.4)
+        }
+      })
+      
+      // Calculate conversion rates and filter out publishers with no activity
+      const statsArray = Array.from(publisherStatsMap.values())
+        .map(stat => ({
+          ...stat,
+          conversion_rate: stat.total_clicks > 0 ? (stat.total_conversions / stat.total_clicks * 100) : 0
+        }))
+        .filter(stat => stat.total_clicks > 0) // Only show publishers with activity
+      
+      setPublisherStats(statsArray)
       
     } catch (err: any) {
       console.error('Error loading publisher stats:', err)
@@ -166,9 +196,9 @@ export default function DirectLinkStatsPage() {
 
   useEffect(() => {
     if (dateFrom && dateTo) {
-      loadPublisherStats()
+      loadData()
     }
-  }, [dateFrom, dateTo, loadPublisherStats])
+  }, [dateFrom, dateTo, loadData])
 
   useEffect(() => {
     loadDailyConversions()
@@ -198,24 +228,18 @@ export default function DirectLinkStatsPage() {
 
     setCrSaving(true)
     try {
-      // In a real implementation, you'd have an API endpoint for this
-      // For now, we'll simulate the update
-      const updatedDaily = dailyConversions.map(day => {
-        if (day.date === crForm.date && day.publisher_id === crForm.publisher_id) {
-          const newRate = day.raw_clicks > 0 ? (crForm.manual_conversions / day.raw_clicks * 100) : 0
-          return {
-            ...day,
-            manual_conversions: crForm.manual_conversions,
-            conversion_rate: newRate,
-            is_manual_override: true,
-            override_reason: crForm.reason,
-            override_updated_at: new Date().toISOString(),
-          }
-        }
-        return day
+      // Use the real API endpoint for manual conversion override
+      await directLinkApi.createManualOverride({
+        date: crForm.date,
+        publisher_id: crForm.publisher_id,
+        link_id: crForm.link_id,
+        manual_conversions: crForm.manual_conversions,
+        reason: crForm.reason
       })
       
-      setDailyConversions(updatedDaily)
+      // Reload daily conversions to see the update
+      await loadDailyConversions()
+      
       toast.success('Manual conversion override applied successfully')
       setShowManualCRModal(false)
     } catch (err: any) {
@@ -242,6 +266,27 @@ export default function DirectLinkStatsPage() {
       }
     } catch (err) {
       toast.error('Failed to copy link')
+    }
+  }
+
+  const generateWhiteLabelUrl = async (publisherId: string, publisherName: string) => {
+    try {
+      const response = await directLinkApi.generateStatsToken({
+        publisher_id: publisherId
+      })
+      
+      const statsUrl = response.data.stats_url
+      await copyShareableLink(statsUrl, publisherName)
+      
+      // Update the publisher stats with the new URL
+      setPublisherStats(prev => prev.map(stat => 
+        stat.publisher_id === publisherId 
+          ? { ...stat, shareable_stats_url: statsUrl }
+          : stat
+      ))
+      
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to generate stats token')
     }
   }
 
@@ -435,10 +480,10 @@ export default function DirectLinkStatsPage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      copyShareableLink(publisher.shareable_stats_url, publisher.publisher_name)
+                      generateWhiteLabelUrl(publisher.publisher_id, publisher.publisher_name)
                     }}
                     className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors"
-                    title="Copy white-label stats link"
+                    title="Generate and copy white-label stats link"
                   >
                     <Copy size={13} /> Share
                   </button>
@@ -562,13 +607,13 @@ export default function DirectLinkStatsPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-blue-900">White-Label Stats Link</p>
-                  <p className="text-xs text-blue-600">Share this branded link with {selectedPublisherData.publisher_name}</p>
+                  <p className="text-xs text-blue-600">Generate fresh secure link for {selectedPublisherData.publisher_name}</p>
                 </div>
                 <button
-                  onClick={() => copyShareableLink(selectedPublisherData.shareable_stats_url, selectedPublisherData.publisher_name)}
+                  onClick={() => generateWhiteLabelUrl(selectedPublisherData.publisher_id, selectedPublisherData.publisher_name)}
                   className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
                 >
-                  <Copy size={12} /> Copy Link
+                  <Copy size={12} /> Generate & Copy
                 </button>
               </div>
               <div className="mt-2 p-2 bg-white rounded border text-xs font-mono text-gray-600 truncate">

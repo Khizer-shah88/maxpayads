@@ -14,6 +14,7 @@ from app.core.exceptions import (
 )
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.redirect_chain_middleware import RedirectChainMiddleware
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
@@ -21,7 +22,7 @@ from app.routers import (
 )
 from app.routers import offer_router, landing_page_router, prelander_router, redirection_domain_router
 from app.routers import prelander_template_router
-from app.routers import direct_link_router, redirect_chain_router
+from app.routers import direct_link_router, redirect_chain_router, public_stats_router
 
 from fastapi.exceptions import HTTPException
 
@@ -66,6 +67,7 @@ app.add_middleware(
 )
 
 # Custom middleware
+app.add_middleware(RedirectChainMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
@@ -94,6 +96,7 @@ app.include_router(redirection_domain_router.router)
 app.include_router(prelander_template_router.router)
 app.include_router(direct_link_router.router)
 app.include_router(redirect_chain_router.router)
+app.include_router(public_stats_router.router)
 
 
 @app.get("/health", tags=["System"])
