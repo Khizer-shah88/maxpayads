@@ -181,24 +181,6 @@ export const directLinkApi = {
     api.post('/direct-links/conversions', data),
 }
 
-// ==================== TEMPLATE ANALYTICS ====================
-export const templateAnalyticsApi = {
-  getDailyAnalytics: (templateId: string, params?: { date_from?: string; date_to?: string }) =>
-    api.get(`/template-analytics/templates/${templateId}/daily`, { params }),
-  updateManualCR: (templateId: string, data: { 
-    template_id: string; 
-    date: string; 
-    manual_conversions?: number; 
-    manual_cr?: number; 
-    reason: string;
-  }) => api.post(`/template-analytics/templates/${templateId}/manual-cr`, data),
-  getPerformanceSummary: (templateId: string, days: number = 30) =>
-    api.get(`/template-analytics/templates/${templateId}/performance`, { params: { days } }),
-  getOverview: () => api.get('/template-analytics/overview'),
-  removeManualCROverride: (templateId: string, date: string) =>
-    api.delete(`/template-analytics/templates/${templateId}/manual-cr`, { params: { date } }),
-}
-
 // ==================== REDIRECT CHAINS ====================
 export const redirectChainApi = {
   getAll: (params?: { status?: string; entry_domain?: string }) =>

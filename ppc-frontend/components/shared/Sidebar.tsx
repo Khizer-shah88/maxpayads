@@ -19,7 +19,6 @@ const navItems = [
   { label: 'Prelander Templates', href: '/admin/prelander-templates', icon: LayoutTemplate },
   { label: 'Direct Links', href: '/admin/direct-links', icon: Link2 },
   { label: 'Redirection Domains', href: '/admin/redirection-domains', icon: Globe2 },
-  { label: 'Template Analytics', href: '/admin/template-analytics', icon: BarChart3 },
   { label: 'Redirect Chains', href: '/admin/redirect-chains', icon: GitBranch },
   { label: 'CPC Settings', href: '/admin/cpc', icon: DollarSign },
   { label: 'Fraud Detection', href: '/admin/fraud', icon: ShieldAlert },
