@@ -196,6 +196,7 @@ async def admin_add_publisher_website(
     }
 
 
+@router.get("/publishers")
 async def list_publishers(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),

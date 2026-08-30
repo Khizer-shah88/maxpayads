@@ -100,7 +100,7 @@ export default function RedirectionDomainsPage() {
     try {
       const [domRes, pubRes] = await Promise.all([
         adminApi.getRedirectionDomains(),
-        adminApi.getPublishers({ limit: 500 }),
+        adminApi.getPublishers({ limit: 200 }),
       ])
       setDomains(domRes.data?.domains ?? [])
       setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')

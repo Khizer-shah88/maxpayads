@@ -56,6 +56,9 @@ async def get_all_publishers(db, status: Optional[str] = None, skip: int = 0, li
     for p in publishers:
         p["id"] = str(p.pop("_id"))
         p.pop("password_hash", None)
+        for key in ("created_at", "updated_at"):
+            if isinstance(p.get(key), datetime):
+                p[key] = p[key].isoformat()
     return publishers
 
 
