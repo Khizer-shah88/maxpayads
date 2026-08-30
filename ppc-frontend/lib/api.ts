@@ -160,6 +160,22 @@ export const prlanderTemplateApi = {
   delete: (id: string) => api.delete(`/prelander-templates/${id}`),
 }
 
+// ==================== REDIRECT CHAINS ====================
+export const redirectChainApi = {
+  getAll: (params?: { status?: string; page?: number; limit?: number }) =>
+    api.get('/admin/redirect-chains', { params }),
+  get: (id: string) => api.get(`/admin/redirect-chains/${id}`),
+  create: (data: object) => api.post('/admin/redirect-chains', data),
+  update: (id: string, data: object) => api.put(`/admin/redirect-chains/${id}`, data),
+  delete: (id: string) => api.delete(`/admin/redirect-chains/${id}`),
+  getStats: (id: string, params?: { days?: number }) =>
+    api.get(`/admin/redirect-chains/${id}/stats`, { params }),
+  createSession: (id: string, data: { visitor_ip: string; user_agent: string }) =>
+    api.post(`/admin/redirect-chains/${id}/sessions`, data),
+  validateSession: (id: string, data: { session_token: string; step: string; visitor_ip: string; user_agent: string }) =>
+    api.post(`/admin/redirect-chains/${id}/validate`, data),
+}
+
 // ==================== DIRECT LINKS ====================
 export const directLinkApi = {
   getAll: (params?: { publisher_id?: string; campaign_id?: string; status?: string }) =>
