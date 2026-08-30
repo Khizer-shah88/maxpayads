@@ -6,9 +6,19 @@ import secrets
 import random
 from datetime import datetime, timedelta
 from typing import Optional
+import logging
 
-from app.database import get_database
-from app.cache.redis_client import get_redis
+# Make imports more defensive for startup
+try:
+    from app.database import get_database
+    from app.cache.redis_client import get_redis
+except ImportError as e:
+    logging.warning(f"Import error in redirect chain middleware: {e}")
+    # Create dummy functions to prevent startup errors
+    def get_database():
+        return None
+    def get_redis():
+        return None
 
 
 class RedirectChainMiddleware(BaseHTTPMiddleware):
@@ -23,27 +33,36 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next):
-        host = request.headers.get("host", "").lower()
-        
-        # Check if this is a redirect chain domain
-        db = get_database()
-        redis = get_redis()
-        
-        # Look up if this domain is part of any redirect chain
-        chain = await self._get_chain_for_domain(db, host)
-        if not chain:
-            # Not a redirect chain domain, continue normally
-            return await call_next(request)
-        
-        # Handle the redirect chain flow
-        if host == chain["anchor_domain"]:
-            return await self._handle_anchor_step(request, chain, db, redis)
-        elif host == chain["intermediate_domain"]:
-            return await self._handle_intermediate_step(request, chain, db, redis)
-        elif host in chain["pre_lander_pool"]:
-            return await self._handle_prelander_step(request, chain, db, redis)
-        else:
-            # Unknown domain in chain, continue normally
+        try:
+            host = request.headers.get("host", "").lower()
+            
+            # Check if this is a redirect chain domain
+            db = get_database()
+            redis = get_redis()
+            
+            # Skip if database/redis not available (startup phase)
+            if not db or not redis:
+                return await call_next(request)
+            
+            # Look up if this domain is part of any redirect chain
+            chain = await self._get_chain_for_domain(db, host)
+            if not chain:
+                # Not a redirect chain domain, continue normally
+                return await call_next(request)
+            
+            # Handle the redirect chain flow
+            if host == chain["anchor_domain"]:
+                return await self._handle_anchor_step(request, chain, db, redis)
+            elif host == chain["intermediate_domain"]:
+                return await self._handle_intermediate_step(request, chain, db, redis)
+            elif host in chain["pre_lander_pool"]:
+                return await self._handle_prelander_step(request, chain, db, redis)
+            else:
+                # Unknown domain in chain, continue normally
+                return await call_next(request)
+        except Exception as e:
+            # Log error but don't break the request
+            logging.error(f"RedirectChainMiddleware error: {e}")
             return await call_next(request)
     
     async def _get_chain_for_domain(self, db, domain: str):

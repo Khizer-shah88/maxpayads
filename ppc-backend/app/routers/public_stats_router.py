@@ -1,8 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
 from datetime import datetime, timedelta
 import base64
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import get_database
 
@@ -14,7 +13,7 @@ router = APIRouter(prefix="/public-stats", tags=["Public Stats"])
 async def get_publisher_stats(
     publisher_id: str,
     token: str = Query(...),
-    db: AsyncIOMotorDatabase = get_database()
+    db = Depends(get_database)
 ):
     """Get white-label publisher statistics (no authentication required)"""
     
@@ -140,8 +139,13 @@ async def get_publisher_stats(
     
     # Try to get conversions from direct link conversions collection
     conversion_stats = []
-    if await db.list_collection_names().__anext__() and "direct_link_conversions" in await db.list_collection_names().to_list(length=None):
-        conversion_stats = await db.direct_link_conversions.aggregate(conversion_pipeline).to_list(length=1)
+    try:
+        collections = await db.list_collection_names()
+        if "direct_link_conversions" in collections:
+            conversion_stats = await db.direct_link_conversions.aggregate(conversion_pipeline).to_list(length=1)
+    except Exception:
+        # Fallback if collection doesn't exist
+        pass
     
     total_conversions = conversion_stats[0]["total_conversions"] if conversion_stats else 0
     

@@ -3,7 +3,6 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import secrets
 import random
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import get_database
 from app.dependencies import get_current_admin_user
@@ -11,7 +10,12 @@ from app.models.redirect_chain import (
     RedirectChain, CreateRedirectChainRequest, UpdateRedirectChainRequest,
     RedirectChainSession, RedirectChainStatus
 )
-from app.models.user import User
+
+try:
+    from app.models.user import User
+except ImportError:
+    # Fallback if User model has different path
+    User = dict
 
 
 router = APIRouter(prefix="/admin/redirect-chains", tags=["Redirect Chains"])
@@ -22,8 +26,8 @@ async def get_redirect_chains(
     status: Optional[RedirectChainStatus] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Get all redirect chains with optional filtering"""
     
@@ -59,8 +63,8 @@ async def get_redirect_chains(
 @router.post("/", response_model=dict)
 async def create_redirect_chain(
     request: CreateRedirectChainRequest,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Create a new redirect chain"""
     
@@ -124,7 +128,7 @@ async def create_redirect_chain(
         "conversion_rate": 0.0,
         "created_at": now,
         "updated_at": now,
-        "created_by": str(current_user.id)
+        "created_by": str(current_user.get("id", current_user.get("_id", "")))
     }
     
     result = await db.redirect_chains.insert_one(chain_data)
@@ -142,8 +146,8 @@ async def create_redirect_chain(
 @router.get("/{chain_id}", response_model=dict)
 async def get_redirect_chain(
     chain_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Get a specific redirect chain by ID"""
     
@@ -167,8 +171,8 @@ async def get_redirect_chain(
 async def update_redirect_chain(
     chain_id: str,
     request: UpdateRedirectChainRequest,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Update an existing redirect chain"""
     
@@ -269,8 +273,8 @@ async def update_redirect_chain(
 @router.delete("/{chain_id}", response_model=dict)
 async def delete_redirect_chain(
     chain_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Delete a redirect chain"""
     
@@ -302,7 +306,7 @@ async def create_chain_session(
     chain_id: str,
     visitor_ip: str,
     user_agent: str,
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    db = Depends(get_database)
 ):
     """Create a new session for a redirect chain (called from anchor domain)"""
     
@@ -363,7 +367,7 @@ async def validate_chain_session(
     step: str,  # "intermediate" or "prelander"
     visitor_ip: str,
     user_agent: str,
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    db = Depends(get_database)
 ):
     """Validate session token and return next step (called from intermediate/prelander domains)"""
     
@@ -437,8 +441,8 @@ async def validate_chain_session(
 async def get_chain_stats(
     chain_id: str,
     days: int = Query(30, ge=1, le=365),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(get_current_admin_user)
+    db = Depends(get_database),
+    current_user = Depends(get_current_admin_user)
 ):
     """Get detailed statistics for a redirect chain"""
     
