@@ -94,7 +94,108 @@ async def admin_dashboard(
     }
 
 
-@router.get("/publishers")
+@router.post("/publishers", status_code=201)
+async def admin_create_publisher(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Admin: directly create a publisher account (optionally with a website)."""
+    from app.services.publisher_service import create_publisher, get_publisher_by_email
+
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "").strip()
+    website_domain = (data.get("website_domain") or "").strip()
+
+    if not name or not email or not password:
+        raise HTTPException(status_code=400, detail="name, email, and password are required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = await get_publisher_by_email(email, db)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    status_val = data.get("status", "active")
+    if status_val not in ("active", "pending", "suspended"):
+        status_val = "active"
+
+    publisher_data = {"name": name, "email": email, "password": password}
+    publisher_id = await create_publisher(publisher_data, db)
+
+    # Override status immediately (create_publisher always sets "pending")
+    await db.publishers.update_one(
+        {"_id": ObjectId(publisher_id)},
+        {"$set": {
+            "status": status_val,
+            "revenue_share": float(data.get("revenue_share", 0.80)),
+            "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
+        }},
+    )
+
+    # Optionally create the first website
+    if website_domain:
+        domain = website_domain.lower().replace("https://", "").replace("http://", "").strip("/")
+        await db.websites.insert_one({
+            "publisher_id": publisher_id,
+            "domain": domain,
+            "name": domain,
+            "status": "active",
+            "assigned_campaign_id": None,
+            "total_clicks": 0,
+            "valid_clicks": 0,
+            "invalid_clicks": 0,
+            "total_earnings": 0.0,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        })
+
+    return {
+        "success": True,
+        "publisher_id": publisher_id,
+        "message": "Publisher created successfully",
+    }
+
+
+@router.post("/publishers/{publisher_id}/websites", status_code=201)
+async def admin_add_publisher_website(
+    publisher_id: str,
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Admin: add a website directly under a publisher account."""
+    domain = (data.get("domain") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    name = (data.get("name") or domain).strip()
+
+    if not domain:
+        raise HTTPException(status_code=400, detail="domain is required")
+
+    publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)})
+    if not publisher:
+        raise NotFoundError("Publisher")
+
+    result = await db.websites.insert_one({
+        "publisher_id": publisher_id,
+        "domain": domain,
+        "name": name,
+        "status": "active",
+        "assigned_campaign_id": None,
+        "total_clicks": 0,
+        "valid_clicks": 0,
+        "invalid_clicks": 0,
+        "total_earnings": 0.0,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    })
+    return {
+        "success": True,
+        "website_id": str(result.inserted_id),
+        "message": "Website added",
+    }
+
+
 async def list_publishers(
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),

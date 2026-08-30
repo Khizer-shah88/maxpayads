@@ -93,6 +93,9 @@ export const adminApi = {
   verifyRedirectionDomainDns: (id: string) => api.post(`/admin/redirection-domains/${id}/verify-dns`),
   changePassword: (current_password: string, new_password: string) =>
     api.post('/admin/change-password', { current_password, new_password }),
+  createPublisher: (data: object) => api.post('/admin/publishers', data),
+  addPublisherWebsite: (publisherId: string, data: object) =>
+    api.post(`/admin/publishers/${publisherId}/websites`, data),
 }
 
 // ==================== CAMPAIGNS ====================
@@ -145,7 +148,40 @@ export const publisherApi = {
     api.post('/publisher/videos/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
 }
 
-// ==================== OFFERS ====================
+// ==================== PRELANDER TEMPLATES ====================
+export const prlanderTemplateApi = {
+  getAll: (params?: { status?: string; os_type?: string }) =>
+    api.get('/prelander-templates', { params }),
+  get: (id: string) => api.get(`/prelander-templates/${id}`),
+  create: (data: object) => api.post('/prelander-templates', data),
+  update: (id: string, data: object) => api.put(`/prelander-templates/${id}`, data),
+  setStatus: (id: string, status: string) =>
+    api.patch(`/prelander-templates/${id}/status`, { status }),
+  delete: (id: string) => api.delete(`/prelander-templates/${id}`),
+}
+
+// ==================== DIRECT LINKS ====================
+export const directLinkApi = {
+  getAll: (params?: { publisher_id?: string; campaign_id?: string; status?: string }) =>
+    api.get('/direct-links', { params }),
+  get: (id: string) => api.get(`/direct-links/${id}`),
+  create: (data: object) => api.post('/direct-links', data),
+  update: (id: string, data: object) => api.put(`/direct-links/${id}`, data),
+  delete: (id: string) => api.delete(`/direct-links/${id}`),
+  regenerateSlug: (id: string) => api.post(`/direct-links/${id}/regenerate-slug`),
+  getConversions: (params?: {
+    link_id?: string
+    publisher_id?: string
+    date_from?: string
+    date_to?: string
+    page?: number
+    limit?: number
+  }) => api.get('/direct-links/conversions', { params }),
+  recordConversion: (data: { slug: string; metadata?: object }) =>
+    api.post('/direct-links/conversions', data),
+}
+
+
 export const offerApi = {
   getAll: () => api.get('/offers'),
   get: (id: string) => api.get(`/offers/${id}`),

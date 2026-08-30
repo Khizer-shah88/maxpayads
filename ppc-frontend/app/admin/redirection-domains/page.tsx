@@ -102,11 +102,11 @@ export default function RedirectionDomainsPage() {
         adminApi.getRedirectionDomains(),
         adminApi.getPublishers({ limit: 500 }),
       ])
-      setDomains(domRes.data.domains || [])
-      setServerIp(domRes.data.dns_instructions?.server_ip || '')
-      setPublishers((pubRes.data.publishers || []).filter((p: Publisher) => p.role !== 'admin'))
-    } catch {
-      toast.error('Failed to load redirection domains')
+      setDomains(domRes.data?.domains ?? [])
+      setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')
+      setPublishers(((pubRes.data?.publishers) ?? []).filter((p: Publisher) => p.role !== 'admin'))
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to load redirection domains')
     } finally {
       setLoading(false)
     }

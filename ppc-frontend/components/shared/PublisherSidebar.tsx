@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard, User, BarChart3, Globe, Code2, CreditCard, Wallet, FolderOpen, LogOut, ChevronLeft, Menu, Zap,
+  LayoutDashboard, User, BarChart3, Globe, Code2, CreditCard, Wallet, LogOut, ChevronLeft, Menu, Zap,
 } from 'lucide-react'
 import { removePublisherTokens, getPublisherUser } from '@/lib/auth'
 import type { AuthUser } from '@/types'
@@ -15,7 +15,6 @@ const navItems = [
   { label: 'Statistics', href: '/publisher/statistics', icon: BarChart3 },
   { label: 'Websites', href: '/publisher/websites', icon: Globe },
   { label: 'Ad Units / Ad Code', href: '/publisher/ad-units', icon: Code2 },
-  { label: 'Resources', href: '/publisher/videos', icon: FolderOpen },
   { label: 'Payment Methods', href: '/publisher/payment-methods', icon: Wallet },
   { label: 'Withdrawals', href: '/publisher/withdrawals', icon: CreditCard },
 ]

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Megaphone, Tag, FileText, DollarSign,
-  ShieldAlert, BarChart3, CreditCard, ClipboardList, FolderOpen, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2,
+  ShieldAlert, BarChart3, CreditCard, ClipboardList, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2, LayoutTemplate,
 } from 'lucide-react'
 import { removeAdminTokens, getAdminUser } from '@/lib/auth'
 import type { AuthUser } from '@/types'
@@ -16,11 +16,11 @@ const navItems = [
   { label: 'Campaigns', href: '/admin/campaigns', icon: Megaphone },
   { label: 'Offers', href: '/admin/offers', icon: Tag },
   { label: 'Landing Pages', href: '/admin/landing-pages', icon: FileText },
+  { label: 'Prelander Templates', href: '/admin/prelander-templates', icon: LayoutTemplate },
   { label: 'Redirection Domains', href: '/admin/redirection-domains', icon: Globe2 },
   { label: 'CPC Settings', href: '/admin/cpc', icon: DollarSign },
   { label: 'Fraud Detection', href: '/admin/fraud', icon: ShieldAlert },
   { label: 'Statistics', href: '/admin/statistics', icon: BarChart3 },
-  { label: 'Resources', href: '/admin/videos', icon: FolderOpen },
   { label: 'Withdrawals', href: '/admin/withdrawals', icon: CreditCard },
   { label: 'Records', href: '/admin/records', icon: ClipboardList },
   { label: 'Change Password', href: '/admin/change-password', icon: KeyRound },

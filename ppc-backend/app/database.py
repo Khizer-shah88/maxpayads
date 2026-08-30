@@ -86,6 +86,25 @@ async def create_indexes():
     await db.redirection_domains.create_index("publisher_ids")
     await db.redirection_domains.create_index([("domain_type", ASCENDING), ("is_default", DESCENDING)])
 
+    # Prelander templates
+    await db.prelander_templates.create_index("status")
+    await db.prelander_templates.create_index("os_type")
+    await db.prelander_templates.create_index([("created_at", DESCENDING)])
+
+    # Direct links
+    await db.direct_links.create_index("slug", unique=True)
+    await db.direct_links.create_index("publisher_id")
+    await db.direct_links.create_index("campaign_id")
+    await db.direct_links.create_index("status")
+    await db.direct_links.create_index([("created_at", DESCENDING)])
+
+    # Direct link events (conversions)
+    await db.direct_link_events.create_index("link_id")
+    await db.direct_link_events.create_index("publisher_id")
+    await db.direct_link_events.create_index("slug")
+    await db.direct_link_events.create_index([("created_at", DESCENDING)])
+    await db.direct_link_events.create_index([("link_id", ASCENDING), ("created_at", DESCENDING)])
+
     logger.info("Database indexes created")
 
 
