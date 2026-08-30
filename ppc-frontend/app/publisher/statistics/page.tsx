@@ -27,10 +27,9 @@ export default function PublisherStatisticsPage() {
   useEffect(() => { initialize() }, [])
 
   useEffect(() => {
-    // Default: show today's stats
+    // Default: show today's stats (date_to = today, inclusive of full day via backend)
     const today = new Date().toISOString().split('T')[0]
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
-    setFilters(f => ({ ...f, date_from: today, date_to: tomorrow }))
+    setFilters(f => ({ ...f, date_from: today, date_to: today }))
   }, [])
 
   useEffect(() => {
@@ -186,8 +185,8 @@ export default function PublisherStatisticsPage() {
             <button onClick={() => { setPage(1); load() }} className="bg-primary hover:bg-primary-dark text-white px-3 py-1.5 rounded-lg text-xs font-medium">
               Apply
             </button>
-            <button onClick={() => { const today = new Date().toISOString().split('T')[0]; const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]; setFilters(p => ({...p, date_from: today, date_to: tomorrow})); setPage(1) }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${filters.date_from === new Date().toISOString().split('T')[0] && filters.date_to === new Date(Date.now() + 86400000).toISOString().split('T')[0] ? 'bg-primary text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            <button onClick={() => { const today = new Date().toISOString().split('T')[0]; setFilters(p => ({...p, date_from: today, date_to: today})); setPage(1) }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${filters.date_from === new Date().toISOString().split('T')[0] && filters.date_to === new Date().toISOString().split('T')[0] ? 'bg-primary text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               Today
             </button>
             <button onClick={() => { setFilters(p => ({...p, date_from: '', date_to: ''})); setPage(1) }} className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">

@@ -103,6 +103,7 @@ export function logout() {
   removeAdminTokens()
   removePublisherTokens()
   if (typeof window !== 'undefined') {
-    window.location.href = '/'
+    const isAdmin = window.location.pathname.startsWith('/admin')
+    window.location.href = isAdmin ? '/admin/auth' : '/publisher/auth'
   }
 }

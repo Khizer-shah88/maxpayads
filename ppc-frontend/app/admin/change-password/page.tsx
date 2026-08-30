@@ -21,8 +21,8 @@ export default function ChangePasswordPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (newPassword.length < 6) {
-      toast.error('New password must be at least 6 characters')
+    if (newPassword.length < 8) {
+      toast.error('New password must be at least 8 characters')
       return
     }
     if (newPassword !== confirmPassword) {
@@ -85,7 +85,7 @@ export default function ChangePasswordPage() {
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={8}
                   className={inputClass}
                   placeholder="Enter new password"
                 />
@@ -107,7 +107,7 @@ export default function ChangePasswordPage() {
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={8}
                   className={inputClass}
                   placeholder="Confirm new password"
                 />

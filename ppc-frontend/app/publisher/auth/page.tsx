@@ -85,8 +85,8 @@ function PublisherAuthContent() {
       toast.error('Passwords do not match')
       return
     }
-    if (signupPassword.length < 6) {
-      toast.error('Password must be at least 6 characters')
+    if (signupPassword.length < 8) {
+      toast.error('Password must be at least 8 characters')
       return
     }
     setLoading(true)

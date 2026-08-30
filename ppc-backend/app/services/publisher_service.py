@@ -48,7 +48,7 @@ async def get_publisher_by_id(publisher_id: str, db) -> Optional[dict]:
 
 
 async def get_all_publishers(db, status: Optional[str] = None, skip: int = 0, limit: int = 50) -> List[dict]:
-    query = {}
+    query = {"role": "publisher"}  # never return admin accounts in the publisher list
     if status:
         query["status"] = status
     cursor = db.publishers.find(query).skip(skip).limit(limit).sort("created_at", -1)
@@ -60,7 +60,7 @@ async def get_all_publishers(db, status: Optional[str] = None, skip: int = 0, li
 
 
 async def count_publishers(db, status: Optional[str] = None) -> int:
-    query = {}
+    query = {"role": "publisher"}
     if status:
         query["status"] = status
     return await db.publishers.count_documents(query)

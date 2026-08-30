@@ -581,15 +581,23 @@ async def change_password(
     new_password = data.get("new_password", "")
     if not current_password or not new_password:
         raise HTTPException(status_code=400, detail="Current and new password are required")
-    if len(new_password) < 6:
-        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
 
-    if not verify_password(current_password, current_user.get("password_hash", "")):
+    # Re-fetch the full publisher document to get password_hash
+    # (get_current_user strips password_hash before returning)
+    full_user = await db.publishers.find_one(
+        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
+    )
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(current_password, full_user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     new_hash = hash_password(new_password)
     await db.publishers.update_one(
-        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]},
+        {"_id": full_user["_id"]},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}},
     )
     return {"success": True, "message": "Password changed successfully"}

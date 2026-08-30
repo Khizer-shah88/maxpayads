@@ -107,12 +107,12 @@ async def process_withdrawal(withdrawal_id: str, action: str, transaction_id: Op
             pid = ObjectId(withdrawal["publisher_id"])
         except Exception:
             pid = withdrawal["publisher_id"]
-        await db.publishers.update_one(
+        result_refund = await db.publishers.update_one(
             {"_id": pid},
             {"$inc": {"balance": withdrawal["amount"]}, "$set": {"updated_at": datetime.utcnow()}},
         )
-        # Try string fallback
-        if not await db.publishers.find_one({"_id": pid}):
+        # Fallback to string ID if ObjectId matched nothing
+        if result_refund.matched_count == 0:
             await db.publishers.update_one(
                 {"_id": withdrawal["publisher_id"]},
                 {"$inc": {"balance": withdrawal["amount"]}, "$set": {"updated_at": datetime.utcnow()}},

@@ -32,7 +32,7 @@ export default function PublishersPage() {
     setLoading(true)
     try {
       const res = await adminApi.getPublishers({ status: statusFilter || undefined, page, limit: 20 })
-      setPublishers(res.data.publishers.filter((p: Publisher) => p.role !== 'admin'))
+      setPublishers(res.data.publishers)
       setTotal(res.data.total)
     } catch { toast.error('Failed to load publishers') }
     finally { setLoading(false) }

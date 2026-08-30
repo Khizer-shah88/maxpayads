@@ -284,9 +284,9 @@ async def publisher_clicks_trend(
 
 @router.get("/websites")
 async def get_websites(
+    request: Request,
     current_user: dict = Depends(get_current_active_publisher),
     db=Depends(get_db),
-    request: Request = None,
 ):
     cursor = db.websites.find({"publisher_id": current_user["id"]})
     websites = await cursor.to_list(length=None)

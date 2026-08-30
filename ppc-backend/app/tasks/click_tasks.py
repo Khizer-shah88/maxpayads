@@ -96,29 +96,19 @@ async def _process_click_async(click_id: str, click_data: dict):
             # Check if there's a matching offer with custom payout
             offer_payout = None
             try:
-                # Find the best matching offer for this click's campaign
-                destination_url = click_data.get("destination_url") or ""
-                # Look for offers that match this click context
                 from app.services.traffic_router import find_matching_offer
-                # Get the campaign that was matched for this click
                 click_doc = await db.clicks.find_one({"_id": oid})
-                if click_doc and click_doc.get("destination_url"):
-                    # Try to find any active offer matching the destination
-                    offer_cursor = db.offers.find({"status": "active", "offer_url": {"$exists": True}})
-                    async for offer in offer_cursor:
-                        if offer.get("payout") and offer["payout"] > 0:
-                            # Check if this offer's targeting matches the click
-                            os_types = offer.get("os_types", [])
-                            if os_types and click_data.get("os", "").lower() not in [t.lower() for t in os_types]:
-                                continue
-                            country_codes = offer.get("country_codes", [])
-                            if country_codes and (click_data.get("country_code") or "").upper() not in [c.upper() for c in country_codes]:
-                                continue
-                            pub_ids = offer.get("publisher_ids", [])
-                            if pub_ids and click_data.get("publisher_id") not in pub_ids:
-                                continue
-                            offer_payout = float(offer["payout"])
-                            break
+                if click_doc:
+                    matched_offer = await find_matching_offer(
+                        campaign_id=click_doc.get("campaign_id", ""),
+                        publisher_id=click_data.get("publisher_id"),
+                        website_id=click_data.get("website_id"),
+                        os_name=click_data.get("os"),
+                        country_code=click_data.get("country_code"),
+                        db=db,
+                    )
+                    if matched_offer and matched_offer.get("payout", 0) > 0:
+                        offer_payout = float(matched_offer["payout"])
             except Exception as e:
                 logger.debug(f"Offer payout lookup failed: {e}")
 
@@ -131,14 +121,16 @@ async def _process_click_async(click_id: str, click_data: dict):
                     click_data.get("device_type"),
                     db,
                 )
-            publisher = await db.publishers.find_one({"_id": click_data["publisher_id"]})
+            # Try ObjectId first (correct for new publishers), fall back to string
+            publisher = None
+            try:
+                publisher = await db.publishers.find_one(
+                    {"_id": ObjectId(click_data["publisher_id"])}
+                )
+            except Exception:
+                pass
             if not publisher:
-                try:
-                    publisher = await db.publishers.find_one(
-                        {"_id": ObjectId(click_data["publisher_id"])}
-                    )
-                except Exception:
-                    pass
+                publisher = await db.publishers.find_one({"_id": click_data["publisher_id"]})
             revenue_share = publisher.get("revenue_share", 0.80) if publisher else 0.80
             earnings = calculate_earnings(cpc, revenue_share)
 
