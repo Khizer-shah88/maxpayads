@@ -86,7 +86,7 @@ export default function PrlanderTemplatesPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { initialize() }, [])
+  useEffect(() => { initialize() }, [initialize])
 
   const load = useCallback(async () => {
     setLoading(true)

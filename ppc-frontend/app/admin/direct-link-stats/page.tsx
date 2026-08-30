@@ -67,7 +67,7 @@ export default function DirectLinkStatsPage() {
   })
   const [crSaving, setCrSaving] = useState(false)
 
-  useEffect(() => { initialize() }, [])
+  useEffect(() => { initialize() }, [initialize])
 
   // Set default date range (last 30 days)
   useEffect(() => {
@@ -110,7 +110,7 @@ export default function DirectLinkStatsPage() {
               const conversions = conversionsRes.data?.events ?? []
               
               totalClicks += conversions.length
-              totalConversions += conversions.filter(c => c.converted).length
+              totalConversions += conversions.filter((c: any) => c.converted).length
               
               // OS-specific clicks (simplified - would need OS detection in actual conversions)
               uniqueWindowsClicks += Math.floor(conversions.length * 0.6) // 60% Windows assumption
@@ -169,7 +169,7 @@ export default function DirectLinkStatsPage() {
       // Group by date
       const dailyMap = new Map<string, DailyConversion>()
       
-      conversions.forEach(conv => {
+      conversions.forEach((conv: any) => {
         const date = conv.created_at.split('T')[0]
         if (!dailyMap.has(date)) {
           dailyMap.set(date, {
@@ -211,7 +211,7 @@ export default function DirectLinkStatsPage() {
     if (dateFrom && dateTo) {
       loadPublisherStats()
     }
-  }, [loadPublisherStats])
+  }, [dateFrom, dateTo, loadPublisherStats])
 
   useEffect(() => {
     loadDailyConversions()

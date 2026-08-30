@@ -105,7 +105,7 @@ export default function RedirectChainsPage() {
   const [saving, setSaving] = useState(false)
   const [executing, setExecuting] = useState<string | null>(null)
 
-  useEffect(() => { initialize() }, [])
+  useEffect(() => { initialize() }, [initialize])
 
   const load = useCallback(async () => {
     setLoading(true)
