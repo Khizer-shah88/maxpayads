@@ -181,21 +181,6 @@ export const directLinkApi = {
     api.post('/direct-links/conversions', data),
 }
 
-// ==================== REDIRECT CHAINS ====================
-export const redirectChainApi = {
-  getAll: (params?: { status?: string; entry_domain?: string }) =>
-    api.get('/redirect-chains', { params }),
-  get: (id: string) => api.get(`/redirect-chains/${id}`),
-  create: (data: object) => api.post('/redirect-chains', data),
-  update: (id: string, data: object) => api.put(`/redirect-chains/${id}`, data),
-  delete: (id: string) => api.delete(`/redirect-chains/${id}`),
-  execute: (id: string) => api.post(`/redirect-chains/${id}/execute`),
-  getExecutions: (id: string, params?: { limit?: number; status?: string }) =>
-    api.get(`/redirect-chains/${id}/executions`, { params }),
-  getAnalytics: (id: string, days: number = 7) =>
-    api.get(`/redirect-chains/${id}/analytics`, { params: { days } }),
-}
-
 
 export const offerApi = {
   getAll: () => api.get('/offers'),

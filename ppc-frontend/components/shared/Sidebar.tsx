@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Megaphone, Tag, FileText, DollarSign,
-  ShieldAlert, BarChart3, CreditCard, ClipboardList, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2, LayoutTemplate, Link2, GitBranch,
+  ShieldAlert, BarChart3, CreditCard, ClipboardList, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2, LayoutTemplate, Link2,
 } from 'lucide-react'
 import { removeAdminTokens, getAdminUser } from '@/lib/auth'
 import type { AuthUser } from '@/types'
@@ -20,7 +20,6 @@ const navItems = [
   { label: 'Direct Links', href: '/admin/direct-links', icon: Link2 },
   { label: 'Direct Link Stats', href: '/admin/direct-link-stats', icon: BarChart3 },
   { label: 'Redirection Domains', href: '/admin/redirection-domains', icon: Globe2 },
-  { label: 'Redirect Chains', href: '/admin/redirect-chains', icon: GitBranch },
   { label: 'CPC Settings', href: '/admin/cpc', icon: DollarSign },
   { label: 'Fraud Detection', href: '/admin/fraud', icon: ShieldAlert },
   { label: 'Statistics', href: '/admin/statistics', icon: BarChart3 },

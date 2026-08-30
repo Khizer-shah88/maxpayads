@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  BarChart3, Users, Monitor, Apple, Link2, ExternalLink,
+  BarChart3, Monitor, Apple,
   Calendar, Edit3, Eye, Copy, CheckCircle, TrendingUp,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -67,7 +67,9 @@ export default function DirectLinkStatsPage() {
   })
   const [crSaving, setCrSaving] = useState(false)
 
-  useEffect(() => { initialize() }, [initialize])
+  useEffect(() => { 
+    initialize() 
+  }, [initialize])
 
   // Set default date range (last 30 days)
   useEffect(() => {
@@ -217,7 +219,7 @@ export default function DirectLinkStatsPage() {
     loadDailyConversions()
   }, [loadDailyConversions])
 
-  const openManualCRModal = (date: string, publisherId: string, linkId?: string, rawClicks?: number) => {
+  const openManualCRModal = (date: string, publisherId: string, linkId?: string) => {
     setCrForm({
       date,
       publisher_id: publisherId,
@@ -500,7 +502,7 @@ export default function DirectLinkStatsPage() {
                           </td>
                           <td className="py-3 px-2 text-center">
                             <button
-                              onClick={() => openManualCRModal(day.date, day.publisher_id, day.link_id, day.raw_clicks)}
+                              onClick={() => openManualCRModal(day.date, day.publisher_id, day.link_id)}
                               className="p-1.5 rounded-lg text-primary hover:bg-primary/10 transition-colors"
                               title="Manual Conversion Override"
                             >
