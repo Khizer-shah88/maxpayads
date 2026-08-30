@@ -181,6 +181,39 @@ export const directLinkApi = {
     api.post('/direct-links/conversions', data),
 }
 
+// ==================== TEMPLATE ANALYTICS ====================
+export const templateAnalyticsApi = {
+  getDailyAnalytics: (templateId: string, params?: { date_from?: string; date_to?: string }) =>
+    api.get(`/template-analytics/templates/${templateId}/daily`, { params }),
+  updateManualCR: (templateId: string, data: { 
+    template_id: string; 
+    date: string; 
+    manual_conversions?: number; 
+    manual_cr?: number; 
+    reason: string;
+  }) => api.post(`/template-analytics/templates/${templateId}/manual-cr`, data),
+  getPerformanceSummary: (templateId: string, days: number = 30) =>
+    api.get(`/template-analytics/templates/${templateId}/performance`, { params: { days } }),
+  getOverview: () => api.get('/template-analytics/overview'),
+  removeManualCROverride: (templateId: string, date: string) =>
+    api.delete(`/template-analytics/templates/${templateId}/manual-cr`, { params: { date } }),
+}
+
+// ==================== REDIRECT CHAINS ====================
+export const redirectChainApi = {
+  getAll: (params?: { status?: string; entry_domain?: string }) =>
+    api.get('/redirect-chains', { params }),
+  get: (id: string) => api.get(`/redirect-chains/${id}`),
+  create: (data: object) => api.post('/redirect-chains', data),
+  update: (id: string, data: object) => api.put(`/redirect-chains/${id}`, data),
+  delete: (id: string) => api.delete(`/redirect-chains/${id}`),
+  execute: (id: string) => api.post(`/redirect-chains/${id}/execute`),
+  getExecutions: (id: string, params?: { limit?: number; status?: string }) =>
+    api.get(`/redirect-chains/${id}/executions`, { params }),
+  getAnalytics: (id: string, days: number = 7) =>
+    api.get(`/redirect-chains/${id}/analytics`, { params: { days } }),
+}
+
 
 export const offerApi = {
   getAll: () => api.get('/offers'),

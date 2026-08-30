@@ -28,6 +28,12 @@ interface PrlanderTemplate {
   video_url?: string | null
   tags: string[]
   notes?: string | null
+  // Custom code fields
+  custom_html?: string | null
+  custom_css?: string | null
+  custom_js?: string | null
+  head_tracking_code?: string | null
+  body_tracking_code?: string | null
   usage_count: number
   created_at?: string | null
   updated_at?: string | null
@@ -47,6 +53,12 @@ const EMPTY_FORM = {
   video_url: '',
   tags: '',
   notes: '',
+  // Custom code fields
+  custom_html: '',
+  custom_css: '',
+  custom_js: '',
+  head_tracking_code: '',
+  body_tracking_code: '',
 }
 
 // ─── Os chip ──────────────────────────────────────────────────────────────────
@@ -124,6 +136,12 @@ export default function PrlanderTemplatesPage() {
       video_url: t.video_url || '',
       tags: t.tags.join(', '),
       notes: t.notes || '',
+      // Custom code fields
+      custom_html: t.custom_html || '',
+      custom_css: t.custom_css || '',
+      custom_js: t.custom_js || '',
+      head_tracking_code: t.head_tracking_code || '',
+      body_tracking_code: t.body_tracking_code || '',
     })
     setModal('edit')
   }
@@ -435,6 +453,75 @@ export default function PrlanderTemplatesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Internal Notes</label>
                   <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
                     rows={2} placeholder="Optional admin notes" className={inp} />
+                </div>
+
+                {/* Custom Code Section */}
+                <div className="border border-gray-200 rounded-xl p-4 space-y-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Custom Code & Tracking</p>
+                  
+                  {/* Custom HTML */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom HTML</label>
+                    <textarea 
+                      value={form.custom_html} 
+                      onChange={e => setForm(p => ({ ...p, custom_html: e.target.value }))}
+                      rows={3} 
+                      placeholder="<div>Custom HTML content...</div>"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  {/* Custom CSS */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom CSS</label>
+                    <textarea 
+                      value={form.custom_css} 
+                      onChange={e => setForm(p => ({ ...p, custom_css: e.target.value }))}
+                      rows={3} 
+                      placeholder=".custom-class { color: #333; }"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  {/* Custom JavaScript */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom JavaScript</label>
+                    <textarea 
+                      value={form.custom_js} 
+                      onChange={e => setForm(p => ({ ...p, custom_js: e.target.value }))}
+                      rows={3} 
+                      placeholder="console.log('Custom script');"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  {/* Head Tracking Code */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Head Tracking Code <span className="text-xs text-gray-400">(inserted in &lt;head&gt;)</span>
+                    </label>
+                    <textarea 
+                      value={form.head_tracking_code} 
+                      onChange={e => setForm(p => ({ ...p, head_tracking_code: e.target.value }))}
+                      rows={3} 
+                      placeholder="<!-- Analytics, pixels, meta tags -->"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+
+                  {/* Body Tracking Code */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Body Tracking Code <span className="text-xs text-gray-400">(inserted before &lt;/body&gt;)</span>
+                    </label>
+                    <textarea 
+                      value={form.body_tracking_code} 
+                      onChange={e => setForm(p => ({ ...p, body_tracking_code: e.target.value }))}
+                      rows={3} 
+                      placeholder="<!-- Conversion tracking, pixels -->"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
                 </div>
               </div>
 

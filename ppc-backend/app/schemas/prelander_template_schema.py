@@ -30,6 +30,13 @@ class PrlanderTemplateCreate(BaseModel):
     tags: List[str] = Field(default_factory=list)
     # Internal notes
     notes: Optional[str] = None
+    # Custom code injection fields
+    custom_html: Optional[str] = None
+    custom_css: Optional[str] = None
+    custom_js: Optional[str] = None
+    # Tracking codes (pixels, analytics, etc.)
+    head_tracking_code: Optional[str] = None
+    body_tracking_code: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -58,6 +65,13 @@ class PrlanderTemplateUpdate(BaseModel):
     video_url: Optional[str] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
+    # Custom code injection fields
+    custom_html: Optional[str] = None
+    custom_css: Optional[str] = None
+    custom_js: Optional[str] = None
+    # Tracking codes (pixels, analytics, etc.)
+    head_tracking_code: Optional[str] = None
+    body_tracking_code: Optional[str] = None
 
     @field_validator("name")
     @classmethod

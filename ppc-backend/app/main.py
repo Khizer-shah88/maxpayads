@@ -22,6 +22,8 @@ from app.routers import (
 from app.routers import offer_router, landing_page_router, prelander_router, redirection_domain_router
 from app.routers import prelander_template_router
 from app.routers import direct_link_router
+from app.routers.template_analytics_router import router as template_analytics_router
+from app.routers.redirect_chain_router import router as redirect_chain_router
 
 from fastapi.exceptions import HTTPException
 
@@ -93,6 +95,8 @@ app.include_router(prelander_router.router)
 app.include_router(redirection_domain_router.router)
 app.include_router(prelander_template_router.router)
 app.include_router(direct_link_router.router)
+app.include_router(template_analytics_router)
+app.include_router(redirect_chain_router)
 
 
 @app.get("/health", tags=["System"])

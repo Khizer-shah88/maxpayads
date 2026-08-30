@@ -105,6 +105,25 @@ async def create_indexes():
     await db.direct_link_events.create_index([("created_at", DESCENDING)])
     await db.direct_link_events.create_index([("link_id", ASCENDING), ("created_at", DESCENDING)])
 
+    # Template analytics
+    await db.template_analytics.create_index([("template_id", ASCENDING), ("date", ASCENDING)], unique=True)
+    await db.template_analytics.create_index("template_id")
+    await db.template_analytics.create_index("date")
+    await db.template_analytics.create_index([("template_id", ASCENDING), ("date", DESCENDING)])
+
+    # Redirect chains
+    await db.redirect_chains.create_index("entry_domain", unique=True)
+    await db.redirect_chains.create_index("status")
+    await db.redirect_chains.create_index("created_by")
+    await db.redirect_chains.create_index([("created_at", DESCENDING)])
+
+    # Redirect chain executions
+    await db.redirect_chain_executions.create_index("chain_id")
+    await db.redirect_chain_executions.create_index("execution_id")
+    await db.redirect_chain_executions.create_index("status")
+    await db.redirect_chain_executions.create_index([("started_at", DESCENDING)])
+    await db.redirect_chain_executions.create_index([("chain_id", ASCENDING), ("started_at", DESCENDING)])
+
     logger.info("Database indexes created")
 
 
