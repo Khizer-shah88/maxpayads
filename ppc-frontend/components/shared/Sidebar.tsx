@@ -18,6 +18,7 @@ const navItems = [
   { label: 'Landing Pages', href: '/admin/landing-pages', icon: FileText },
   { label: 'Prelander Templates', href: '/admin/prelander-templates', icon: LayoutTemplate },
   { label: 'Direct Links', href: '/admin/direct-links', icon: Link2 },
+  { label: 'Direct Link Stats', href: '/admin/direct-link-stats', icon: BarChart3 },
   { label: 'Redirection Domains', href: '/admin/redirection-domains', icon: Globe2 },
   { label: 'Redirect Chains', href: '/admin/redirect-chains', icon: GitBranch },
   { label: 'CPC Settings', href: '/admin/cpc', icon: DollarSign },

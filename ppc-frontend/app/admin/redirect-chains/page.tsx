@@ -114,7 +114,7 @@ export default function RedirectChainsPage() {
         redirectChainApi.getAll({ status: statusFilter || undefined }),
         prlanderTemplateApi.getAll({ status: 'active' }),
       ])
-      setChains(chainsRes.data ?? [])
+      setChains(chainsRes.data?.chains ?? [])
       setTemplates(templatesRes.data?.templates ?? [])
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to load redirect chains')

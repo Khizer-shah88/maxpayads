@@ -28,12 +28,8 @@ interface PrlanderTemplate {
   video_url?: string | null
   tags: string[]
   notes?: string | null
-  // Custom code fields
-  custom_html?: string | null
-  custom_css?: string | null
-  custom_js?: string | null
-  head_tracking_code?: string | null
-  body_tracking_code?: string | null
+  // Full source code template
+  full_html_template?: string | null
   usage_count: number
   created_at?: string | null
   updated_at?: string | null
@@ -53,12 +49,8 @@ const EMPTY_FORM = {
   video_url: '',
   tags: '',
   notes: '',
-  // Custom code fields
-  custom_html: '',
-  custom_css: '',
-  custom_js: '',
-  head_tracking_code: '',
-  body_tracking_code: '',
+  // Full HTML template
+  full_html_template: '',
 }
 
 // ─── Os chip ──────────────────────────────────────────────────────────────────
@@ -136,12 +128,8 @@ export default function PrlanderTemplatesPage() {
       video_url: t.video_url || '',
       tags: t.tags.join(', '),
       notes: t.notes || '',
-      // Custom code fields
-      custom_html: t.custom_html || '',
-      custom_css: t.custom_css || '',
-      custom_js: t.custom_js || '',
-      head_tracking_code: t.head_tracking_code || '',
-      body_tracking_code: t.body_tracking_code || '',
+      // Full HTML template
+      full_html_template: t.full_html_template || '',
     })
     setModal('edit')
   }
@@ -455,72 +443,104 @@ export default function PrlanderTemplatesPage() {
                     rows={2} placeholder="Optional admin notes" className={inp} />
                 </div>
 
-                {/* Custom Code Section */}
+                {/* Full Source Code Editor */}
                 <div className="border border-gray-200 rounded-xl p-4 space-y-4">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Custom Code & Tracking</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-gray-700">Full Source Code Template</p>
+                    <span className="text-xs text-gray-400">Complete HTML/CSS/JS</span>
+                  </div>
                   
-                  {/* Custom HTML */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom HTML</label>
-                    <textarea 
-                      value={form.custom_html} 
-                      onChange={e => setForm(p => ({ ...p, custom_html: e.target.value }))}
-                      rows={3} 
-                      placeholder="<div>Custom HTML content...</div>"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                    <p className="font-semibold mb-1">⚠️ Advanced Template Editor</p>
+                    <p>Paste your complete HTML template below. This replaces all default styling and layout. 
+                    Ensure you include click-tracking parameters and platform link handling.</p>
                   </div>
-
-                  {/* Custom CSS */}
+                  
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom CSS</label>
-                    <textarea 
-                      value={form.custom_css} 
-                      onChange={e => setForm(p => ({ ...p, custom_css: e.target.value }))}
-                      rows={3} 
-                      placeholder=".custom-class { color: #333; }"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                  </div>
-
-                  {/* Custom JavaScript */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom JavaScript</label>
-                    <textarea 
-                      value={form.custom_js} 
-                      onChange={e => setForm(p => ({ ...p, custom_js: e.target.value }))}
-                      rows={3} 
-                      placeholder="console.log('Custom script');"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                  </div>
-
-                  {/* Head Tracking Code */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Head Tracking Code <span className="text-xs text-gray-400">(inserted in &lt;head&gt;)</span>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Complete HTML Template
                     </label>
                     <textarea 
-                      value={form.head_tracking_code} 
-                      onChange={e => setForm(p => ({ ...p, head_tracking_code: e.target.value }))}
-                      rows={3} 
-                      placeholder="<!-- Analytics, pixels, meta tags -->"
+                      value={form.full_html_template} 
+                      onChange={e => setForm(p => ({ ...p, full_html_template: e.target.value }))}
+                      rows={20} 
+                      placeholder={`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}}</title>
+    <style>
+        /* Your custom CSS here */
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0; 
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 40px;
+            border-radius: 10px;
+        }
+        .btn { 
+            background: #007bff; 
+            color: white; 
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{TITLE}}</h1>
+        <p>{{SUBTITLE}}</p>
+        
+        <!-- Your custom content here -->
+        <div class="download-section">
+            <input type="password" placeholder="Enter password" id="password" />
+            <button class="btn" onclick="handleClick()">{{BUTTON_TEXT}}</button>
+        </div>
+    </div>
+    
+    <script>
+        // REQUIRED: Platform click tracking
+        function handleClick() {
+            // Your custom logic here
+            console.log('Template clicked');
+            
+            // IMPORTANT: Include platform tracking
+            window.location.href = '{{CLICK_URL}}';
+        }
+        
+        // IMPORTANT: OS detection and platform parameters
+        const platform = navigator.platform.toLowerCase();
+        const isWindows = platform.includes('win');
+        const isMac = platform.includes('mac');
+        
+        // Apply OS-specific logic if needed
+        if (isWindows) {
+            document.body.classList.add('windows');
+        } else if (isMac) {
+            document.body.classList.add('mac');
+        }
+    </script>
+</body>
+</html>`}
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
-                  </div>
-
-                  {/* Body Tracking Code */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Body Tracking Code <span className="text-xs text-gray-400">(inserted before &lt;/body&gt;)</span>
-                    </label>
-                    <textarea 
-                      value={form.body_tracking_code} 
-                      onChange={e => setForm(p => ({ ...p, body_tracking_code: e.target.value }))}
-                      rows={3} 
-                      placeholder="<!-- Conversion tracking, pixels -->"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
+                    <div className="mt-2 text-xs text-gray-500 space-y-1">
+                      <p><strong>Available Variables:</strong></p>
+                      <p>• <code>&#123;&#123;TITLE&#125;&#125;</code> - Template title</p>
+                      <p>• <code>&#123;&#123;SUBTITLE&#125;&#125;</code> - Template subtitle</p>
+                      <p>• <code>&#123;&#123;BUTTON_TEXT&#125;&#125;</code> - Button text</p>
+                      <p>• <code>&#123;&#123;CLICK_URL&#125;&#125;</code> - Platform click tracking URL</p>
+                      <p><strong>Note:</strong> Click tracking and OS detection must be preserved</p>
+                    </div>
                   </div>
                 </div>
               </div>

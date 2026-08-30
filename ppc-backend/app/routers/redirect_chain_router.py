@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/redirect-chains", tags=["Redirect Chains"])
 
 
-@router.get("/", response_model=List[RedirectChain])
+@router.get("/")
 async def get_redirect_chains(
     status: Optional[str] = Query(None, description="Filter by status"),
     entry_domain: Optional[str] = Query(None, description="Filter by entry domain"),
@@ -48,6 +48,14 @@ async def get_redirect_chains(
             chain["id"] = str(chain.pop("_id", ""))
             if chain.get("created_at"):
                 chain["created_at"] = chain["created_at"].isoformat()
+            if chain.get("updated_at"):
+                chain["updated_at"] = chain["updated_at"].isoformat()
+        
+        return {"success": True, "chains": chains}
+    
+    except Exception as e:
+        logger.error(f"Error fetching redirect chains: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch redirect chains")
             if chain.get("updated_at"):
                 chain["updated_at"] = chain["updated_at"].isoformat()
         
