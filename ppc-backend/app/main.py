@@ -14,7 +14,7 @@ from app.core.exceptions import (
 )
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-# from app.middleware.redirect_chain_middleware import RedirectChainMiddleware
+from app.middleware.redirect_chain_middleware import RedirectChainMiddleware
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
@@ -67,7 +67,7 @@ app.add_middleware(
 )
 
 # Custom middleware
-# app.add_middleware(RedirectChainMiddleware)  # Temporarily disabled for startup
+app.add_middleware(RedirectChainMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
 

@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 import base64
 
-from app.database import get_database
+from app.dependencies import get_db
 
 
 router = APIRouter(prefix="/public-stats", tags=["Public Stats"])
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/public-stats", tags=["Public Stats"])
 async def get_publisher_stats(
     publisher_id: str,
     token: str = Query(...),
-    db = Depends(get_database)
+    db = Depends(get_db)
 ):
     """Get white-label publisher statistics (no authentication required)"""
     
@@ -39,7 +39,7 @@ async def get_publisher_stats(
     except:
         raise HTTPException(status_code=404, detail="Publisher not found")
     
-    publisher = await db.users.find_one({
+    publisher = await db.publishers.find_one({
         "_id": object_id,
         "role": "publisher"
     })

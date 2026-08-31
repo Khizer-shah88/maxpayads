@@ -423,7 +423,7 @@ async def create_manual_conversion_override(
     # Verify publisher exists
     try:
         pub_oid = ObjectId(publisher_id)
-        publisher = await db.users.find_one({"_id": pub_oid, "role": "publisher"})
+        publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
         if not publisher:
             raise HTTPException(status_code=404, detail="Publisher not found")
     except InvalidId:
@@ -568,7 +568,7 @@ async def generate_stats_token(
     # Verify publisher exists
     try:
         pub_oid = ObjectId(publisher_id)
-        publisher = await db.users.find_one({"_id": pub_oid, "role": "publisher"})
+        publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
         if not publisher:
             raise HTTPException(status_code=404, detail="Publisher not found")
     except InvalidId:

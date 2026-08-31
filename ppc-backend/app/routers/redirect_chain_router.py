@@ -5,7 +5,7 @@ import secrets
 import random
 
 from app.database import get_database
-from app.dependencies import get_current_admin_user
+from app.dependencies import get_db, get_current_admin
 from app.models.redirect_chain import (
     RedirectChain, CreateRedirectChainRequest, UpdateRedirectChainRequest,
     RedirectChainSession, RedirectChainStatus
@@ -26,8 +26,8 @@ async def get_redirect_chains(
     status: Optional[RedirectChainStatus] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Get all redirect chains with optional filtering"""
     
@@ -63,8 +63,8 @@ async def get_redirect_chains(
 @router.post("/", response_model=dict)
 async def create_redirect_chain(
     request: CreateRedirectChainRequest,
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Create a new redirect chain"""
     
@@ -146,8 +146,8 @@ async def create_redirect_chain(
 @router.get("/{chain_id}", response_model=dict)
 async def get_redirect_chain(
     chain_id: str,
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Get a specific redirect chain by ID"""
     
@@ -171,8 +171,8 @@ async def get_redirect_chain(
 async def update_redirect_chain(
     chain_id: str,
     request: UpdateRedirectChainRequest,
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Update an existing redirect chain"""
     
@@ -273,8 +273,8 @@ async def update_redirect_chain(
 @router.delete("/{chain_id}", response_model=dict)
 async def delete_redirect_chain(
     chain_id: str,
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Delete a redirect chain"""
     
@@ -306,7 +306,7 @@ async def create_chain_session(
     chain_id: str,
     visitor_ip: str,
     user_agent: str,
-    db = Depends(get_database)
+    db = Depends(get_db)
 ):
     """Create a new session for a redirect chain (called from anchor domain)"""
     
@@ -367,7 +367,7 @@ async def validate_chain_session(
     step: str,  # "intermediate" or "prelander"
     visitor_ip: str,
     user_agent: str,
-    db = Depends(get_database)
+    db = Depends(get_db)
 ):
     """Validate session token and return next step (called from intermediate/prelander domains)"""
     
@@ -441,8 +441,8 @@ async def validate_chain_session(
 async def get_chain_stats(
     chain_id: str,
     days: int = Query(30, ge=1, le=365),
-    db = Depends(get_database),
-    current_user = Depends(get_current_admin_user)
+    db = Depends(get_db),
+    current_user = Depends(get_current_admin)
 ):
     """Get detailed statistics for a redirect chain"""
     
