@@ -97,11 +97,16 @@ export default function DirectLinkStatsPage() {
     
     setLoading(true)
     try {
+      console.log('Loading direct link stats data...')
+      
       // Get all publishers and direct link stats
       const [publishersRes, directLinksRes] = await Promise.all([
         adminApi.getPublishers({ limit: 500 }),
         directLinkApi.getAll()
       ])
+      
+      console.log('Publishers loaded:', publishersRes.data?.publishers?.length)
+      console.log('Direct links loaded:', directLinksRes.data?.links?.length)
       
       const publishers = publishersRes.data?.publishers ?? []
       const directLinks = directLinksRes.data?.links ?? []
@@ -149,11 +154,13 @@ export default function DirectLinkStatsPage() {
         }))
         .filter(stat => stat.total_clicks > 0) // Only show publishers with activity
       
+      console.log('Final stats array:', statsArray.length, 'publishers')
       setPublisherStats(statsArray)
       
     } catch (err: any) {
       console.error('Error loading publisher stats:', err)
       toast.error(err?.response?.data?.detail || 'Failed to load publisher stats')
+      setError('Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -229,13 +236,15 @@ export default function DirectLinkStatsPage() {
     setCrSaving(true)
     try {
       // Use the real API endpoint for manual conversion override
-      await directLinkApi.createManualOverride({
+      const result = await directLinkApi.createManualOverride({
         date: crForm.date,
         publisher_id: crForm.publisher_id,
-        link_id: crForm.link_id,
+        link_id: crForm.link_id || undefined,
         manual_conversions: crForm.manual_conversions,
         reason: crForm.reason
       })
+      
+      console.log('Manual override result:', result)
       
       // Reload daily conversions to see the update
       await loadDailyConversions()
@@ -243,6 +252,7 @@ export default function DirectLinkStatsPage() {
       toast.success('Manual conversion override applied successfully')
       setShowManualCRModal(false)
     } catch (err: any) {
+      console.error('Manual override error:', err)
       toast.error(err?.response?.data?.detail || 'Failed to update manual conversions')
     } finally {
       setCrSaving(false)
@@ -271,9 +281,13 @@ export default function DirectLinkStatsPage() {
 
   const generateWhiteLabelUrl = async (publisherId: string, publisherName: string) => {
     try {
+      console.log('Generating stats token for publisher:', publisherId)
+      
       const response = await directLinkApi.generateStatsToken({
         publisher_id: publisherId
       })
+      
+      console.log('Stats token response:', response)
       
       const statsUrl = response.data.stats_url
       await copyShareableLink(statsUrl, publisherName)
@@ -286,6 +300,7 @@ export default function DirectLinkStatsPage() {
       ))
       
     } catch (err: any) {
+      console.error('Stats token error:', err)
       toast.error(err?.response?.data?.detail || 'Failed to generate stats token')
     }
   }

@@ -116,13 +116,23 @@ export default function DirectLinksPage() {
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [regenerating, setRegenerating] = useState<string | null>(null)
 
-  useEffect(() => { initialize() }, [])
+  useEffect(() => { 
+    try {
+      initialize()
+    } catch (err) {
+      console.error('Auth initialization error:', err)
+      toast.error('Authentication initialization failed')
+    }
+  }, [initialize])
 
   // ── Load publishers once ───────────────────────────────────────────────────
   useEffect(() => {
     adminApi.getPublishers({ limit: 200 }).then(r => {
       setPublishers((r.data?.publishers ?? []).filter((p: Publisher) => p.role !== 'admin'))
-    }).catch(() => {})
+    }).catch((err) => {
+      console.error('Failed to load publishers:', err)
+      toast.error('Failed to load publishers')
+    })
   }, [])
 
   // ── Load links ─────────────────────────────────────────────────────────────
@@ -145,16 +155,42 @@ export default function DirectLinksPage() {
 
   // ── Load daily summary chart (last 30 days) ────────────────────────────────
   useEffect(() => {
+    // Try to call API endpoints to check if they're available
     directLinkApi.getConversions({ limit: 1 }).then(() => {
-      // fetch summary separately
-    }).catch(() => {})
+      // Conversions API is working, try to get daily summary
+      const fetchSummary = async () => {
+        try {
+          // Use fetch with proper authentication
+          const token = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('admin_token='))
+            ?.split('=')[1]
+          
+          if (!token) {
+            console.warn('No admin token found for daily summary')
+            return
+          }
 
-    // Use the summary endpoint
-    fetch('/api/direct-links/conversions/daily-summary?days=30', {
-      headers: { Authorization: `Bearer ${document.cookie.match(/admin_token=([^;]+)/)?.[1] || ''}` }
-    }).then(r => r.json()).then(d => {
-      setDailySummary(d?.summary ?? [])
-    }).catch(() => {})
+          const response = await fetch('/api/direct-links/conversions/daily-summary?days=30', {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          })
+          
+          if (response.ok) {
+            const data = await response.json()
+            setDailySummary(data?.summary ?? [])
+          }
+        } catch (err) {
+          console.warn('Daily summary not available:', err)
+        }
+      }
+      
+      fetchSummary()
+    }).catch((err) => {
+      console.warn('Direct link conversions API not available:', err)
+    })
   }, [])
 
   // ── Conversions drawer ─────────────────────────────────────────────────────
@@ -538,7 +574,13 @@ export default function DirectLinksPage() {
                       {conversions.map(c => (
                         <tr key={c.id} className="hover:bg-gray-50/50">
                           <td className="px-4 py-2.5 text-xs font-mono text-gray-500 whitespace-nowrap">
-                            {format(new Date(c.created_at), 'MMM d, HH:mm')}
+                            {(() => {
+                              try {
+                                return format(new Date(c.created_at), 'MMM d, HH:mm')
+                              } catch (err) {
+                                return c.created_at || '—'
+                              }
+                            })()}
                           </td>
                           <td className="px-4 py-2.5 text-xs font-mono text-gray-600">{c.ip_address}</td>
                           <td className="px-4 py-2.5 text-xs text-gray-500">—</td>
