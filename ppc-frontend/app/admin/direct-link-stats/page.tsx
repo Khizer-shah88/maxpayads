@@ -756,29 +756,4 @@ export default function DirectLinkStatsPage() {
       </div>
     </div>
   )
-
-  // Error boundary catch block
-  } catch (renderError: any) {
-    console.error('Component render error:', renderError)
-    return (
-      <div className="flex min-h-screen bg-[#f8f9fb]">
-        <Sidebar />
-        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
-          <div className="text-center py-20">
-            <div className="text-red-500 mb-4">
-              <BarChart3 size={48} className="mx-auto mb-4 opacity-30" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Rendering Error</h2>
-            <p className="text-gray-600 mb-4">Something went wrong while loading this page</p>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
-            >
-              Reload Page
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
 }

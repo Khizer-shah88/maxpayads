@@ -117,50 +117,31 @@ export default function DirectLinksPage() {
   const [regenerating, setRegenerating] = useState<string | null>(null)
   const [error, setError] = useState<string>('')
 
+  // Safe auth initialization
   useEffect(() => { 
-    try {
-      initialize()
-    } catch (err) {
-      console.error('Auth initialization error:', err)
-      toast.error('Authentication initialization failed')
+    const initAuth = async () => {
+      try {
+        await initialize()
+      } catch (err) {
+        console.error('Auth initialization error:', err)
+        toast.error('Authentication initialization failed')
+      }
     }
+    initAuth()
   }, [initialize])
 
-  // Wrap the component logic in try-catch for error boundary
-  try {
-
-  // Early error state check
-  if (error) {
-    return (
-      <div className="flex min-h-screen bg-[#f8f9fb]">
-        <Sidebar />
-        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
-          <div className="text-center py-20">
-            <div className="text-red-500 mb-4">
-              <Link size={48} className="mx-auto mb-4 opacity-30" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Direct Links Error</h2>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
-            >
-              Reload Page
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Load publishers once ───────────────────────────────────────────────────
+  // Load publishers once
   useEffect(() => {
-    adminApi.getPublishers({ limit: 200 }).then(r => {
-      setPublishers((r.data?.publishers ?? []).filter((p: Publisher) => p.role !== 'admin'))
-    }).catch((err) => {
-      console.error('Failed to load publishers:', err)
-      toast.error('Failed to load publishers')
-    })
+    const loadPubs = async () => {
+      try {
+        const r = await adminApi.getPublishers({ limit: 200 })
+        setPublishers((r.data?.publishers ?? []).filter((p: Publisher) => p.role !== 'admin'))
+      } catch (err) {
+        console.error('Failed to load publishers:', err)
+        toast.error('Failed to load publishers')
+      }
+    }
+    loadPubs()
   }, [])
 
   // ── Load links ─────────────────────────────────────────────────────────────
@@ -193,49 +174,46 @@ export default function DirectLinksPage() {
     }
   }, [pubFilter, statusFilter])
 
-  useEffect(() => { loadLinks() }, [loadLinks])
+  useEffect(() => { 
+    loadLinks() 
+  }, [loadLinks])
 
-  // ── Load daily summary chart (last 30 days) ────────────────────────────────
+  // Load daily summary chart (last 30 days)
   useEffect(() => {
-    // Try to call API endpoints to check if they're available
-    directLinkApi.getConversions({ limit: 1 }).then(() => {
-      // Conversions API is working, try to get daily summary
-      const fetchSummary = async () => {
-        try {
-          // Use fetch with proper authentication
-          const token = document.cookie
-            .split('; ')
-            .find(row => row.startsWith('admin_token='))
-            ?.split('=')[1]
-          
-          if (!token) {
-            console.warn('No admin token found for daily summary')
-            return
-          }
-
-          const response = await fetch('/api/direct-links/conversions/daily-summary?days=30', {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          })
-          
-          if (response.ok) {
-            const data = await response.json()
-            setDailySummary(data?.summary ?? [])
-          }
-        } catch (err) {
-          console.warn('Daily summary not available:', err)
+    const loadSummary = async () => {
+      try {
+        await directLinkApi.getConversions({ limit: 1 })
+        
+        const token = document.cookie
+          .split('; ')
+          .find(row => row.startsWith('admin_token='))
+          ?.split('=')[1]
+        
+        if (!token) {
+          console.warn('No admin token found for daily summary')
+          return
         }
+
+        const response = await fetch('/api/direct-links/conversions/daily-summary?days=30', {
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setDailySummary(data?.summary ?? [])
+        }
+      } catch (err) {
+        console.warn('Daily summary not available:', err)
       }
-      
-      fetchSummary()
-    }).catch((err) => {
-      console.warn('Direct link conversions API not available:', err)
-    })
+    }
+    
+    loadSummary()
   }, [])
 
-  // ── Conversions drawer ─────────────────────────────────────────────────────
+  // Conversions drawer loading
   const loadConversions = useCallback(async () => {
     if (!convDrawer) return
     setConvLoading(true)
@@ -253,9 +231,11 @@ export default function DirectLinksPage() {
     finally { setConvLoading(false) }
   }, [convDrawer, dateFrom, dateTo, convPage])
 
-  useEffect(() => { if (convDrawer) loadConversions() }, [loadConversions])
+  useEffect(() => { 
+    if (convDrawer) loadConversions() 
+  }, [convDrawer, loadConversions])
 
-  // ── CRUD ───────────────────────────────────────────────────────────────────
+  // CRUD operations
   const openCreate = () => {
     setForm({ ...EMPTY_FORM })
     setEditTarget(null)
@@ -352,11 +332,35 @@ export default function DirectLinksPage() {
     finally { setRegenerating(null) }
   }
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
+  // Summary stats
   const totalConversions = useMemo(() => links.reduce((s, l) => s + l.total_conversions, 0), [links])
   const todayTotal = useMemo(() => links.reduce((s, l) => s + l.today_conversions, 0), [links])
 
   const inp = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm'
+
+  // Early error state check
+  if (error) {
+    return (
+      <div className="flex min-h-screen bg-[#f8f9fb]">
+        <Sidebar />
+        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+          <div className="text-center py-20">
+            <div className="text-red-500 mb-4">
+              <Link size={48} className="mx-auto mb-4 opacity-30" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Direct Links Error</h2>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
@@ -670,29 +674,4 @@ export default function DirectLinksPage() {
       </div>
     </div>
   )
-
-  // Error boundary catch block
-  } catch (renderError: any) {
-    console.error('DirectLinks component render error:', renderError)
-    return (
-      <div className="flex min-h-screen bg-[#f8f9fb]">
-        <Sidebar />
-        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
-          <div className="text-center py-20">
-            <div className="text-red-500 mb-4">
-              <Link size={48} className="mx-auto mb-4 opacity-30" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Direct Links Error</h2>
-            <p className="text-gray-600 mb-4">Something went wrong while loading the direct links page</p>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
-            >
-              Reload Page
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
 }
