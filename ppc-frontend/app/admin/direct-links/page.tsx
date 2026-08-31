@@ -115,6 +115,7 @@ export default function DirectLinksPage() {
   // Publishers + templates for dropdowns
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [regenerating, setRegenerating] = useState<string | null>(null)
+  const [error, setError] = useState<string>('')
 
   useEffect(() => { 
     try {
@@ -124,6 +125,33 @@ export default function DirectLinksPage() {
       toast.error('Authentication initialization failed')
     }
   }, [initialize])
+
+  // Wrap the component logic in try-catch for error boundary
+  try {
+
+  // Early error state check
+  if (error) {
+    return (
+      <div className="flex min-h-screen bg-[#f8f9fb]">
+        <Sidebar />
+        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+          <div className="text-center py-20">
+            <div className="text-red-500 mb-4">
+              <Link size={48} className="mx-auto mb-4 opacity-30" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Direct Links Error</h2>
+            <p className="text-gray-600 mb-4">{error}</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // ── Load publishers once ───────────────────────────────────────────────────
   useEffect(() => {
@@ -139,13 +167,27 @@ export default function DirectLinksPage() {
   const loadLinks = useCallback(async () => {
     setLoading(true)
     try {
+      console.log('Loading direct links with filters:', { pubFilter, statusFilter })
+      
       const res = await directLinkApi.getAll({
         publisher_id: pubFilter || undefined,
         status: statusFilter || undefined,
       })
+      
+      console.log('Direct links response:', res.data)
       setLinks(res.data?.links ?? [])
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to load direct links')
+      console.error('Failed to load direct links:', err)
+      console.error('Error response:', err?.response?.data)
+      
+      if (err?.response?.status === 404) {
+        toast.error('Direct links API not available - feature may not be deployed yet')
+        // Set empty array so UI still renders
+        setLinks([])
+      } else {
+        toast.error(err?.response?.data?.detail || 'Failed to load direct links')
+        setLinks([])
+      }
     } finally {
       setLoading(false)
     }
@@ -244,6 +286,8 @@ export default function DirectLinksPage() {
 
     setSaving(true)
     try {
+      console.log('Creating direct link with payload:', form)
+      
       const payload: any = {
         name: form.name.trim(),
         publisher_id: form.publisher_id,
@@ -256,17 +300,33 @@ export default function DirectLinksPage() {
       if (form.prelander_template_id.trim()) payload.prelander_template_id = form.prelander_template_id.trim()
       if (form.campaign_id.trim()) payload.campaign_id = form.campaign_id.trim()
 
+      let result
       if (modal === 'edit' && editTarget) {
-        await directLinkApi.update(editTarget.id, payload)
+        console.log('Updating direct link:', editTarget.id)
+        result = await directLinkApi.update(editTarget.id, payload)
         toast.success('Direct link updated')
       } else {
-        await directLinkApi.create(payload)
+        console.log('Creating new direct link')
+        result = await directLinkApi.create(payload)
         toast.success('Direct link created')
       }
+      
+      console.log('Direct link save result:', result)
       setModal(null)
       loadLinks()
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Save failed')
+      console.error('Direct link save error:', err)
+      console.error('Error response:', err?.response?.data)
+      console.error('Error status:', err?.response?.status)
+      
+      // More specific error messages
+      if (err?.response?.status === 404) {
+        toast.error('Direct link API endpoint not found - feature may not be deployed yet')
+      } else if (err?.response?.status === 422) {
+        toast.error('Validation error: ' + (err?.response?.data?.detail || 'Invalid data'))
+      } else {
+        toast.error(err?.response?.data?.detail || err?.message || 'Save failed')
+      }
     } finally {
       setSaving(false)
     }
@@ -610,4 +670,29 @@ export default function DirectLinksPage() {
       </div>
     </div>
   )
+
+  // Error boundary catch block
+  } catch (renderError: any) {
+    console.error('DirectLinks component render error:', renderError)
+    return (
+      <div className="flex min-h-screen bg-[#f8f9fb]">
+        <Sidebar />
+        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+          <div className="text-center py-20">
+            <div className="text-red-500 mb-4">
+              <Link size={48} className="mx-auto mb-4 opacity-30" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Direct Links Error</h2>
+            <p className="text-gray-600 mb-4">Something went wrong while loading the direct links page</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 }
