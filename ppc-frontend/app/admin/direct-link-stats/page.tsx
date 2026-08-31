@@ -68,35 +68,38 @@ export default function DirectLinkStatsPage() {
   })
   const [crSaving, setCrSaving] = useState(false)
 
+  // Safe auth initialization
   useEffect(() => { 
-    try {
-      initialize()
-    } catch (err) {
-      console.error('Auth initialization error:', err)
-      setError('Authentication error')
+    const initializeAuth = async () => {
+      try {
+        await initialize()
+      } catch (err) {
+        console.error('Auth initialization error:', err)
+        setError('Authentication error')
+      }
     }
+    initializeAuth()
   }, [initialize])
 
   // Set default date range (last 30 days)
   useEffect(() => {
-    try {
-      const today = new Date()
-      const thirtyDaysAgo = new Date(today)
-      thirtyDaysAgo.setDate(today.getDate() - 30)
-      
-      setDateTo(today.toISOString().split('T')[0])
-      setDateFrom(thirtyDaysAgo.toISOString().split('T')[0])
-    } catch (err) {
-      console.error('Date initialization error:', err)
-      // Fallback to basic date strings
-      const today = new Date()
-      setDateTo('2024-12-31')
-      setDateFrom('2024-12-01')
+    const initializeDates = () => {
+      try {
+        const today = new Date()
+        const thirtyDaysAgo = new Date(today)
+        thirtyDaysAgo.setDate(today.getDate() - 30)
+        
+        setDateTo(today.toISOString().split('T')[0])
+        setDateFrom(thirtyDaysAgo.toISOString().split('T')[0])
+      } catch (err) {
+        console.error('Date initialization error:', err)
+        // Fallback to basic date strings
+        setDateTo('2024-12-31')
+        setDateFrom('2024-12-01')
+      }
     }
+    initializeDates()
   }, [])
-
-  // Wrap the entire component in a try-catch
-  try {
 
   const loadData = useCallback(async () => {
     if (!dateFrom || !dateTo) return
