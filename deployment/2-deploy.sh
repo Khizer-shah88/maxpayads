@@ -72,12 +72,11 @@ _load_env_safe() {
 
 _load_env_safe "$ENV_FILE"
 
-# Verify the entry guard secret is configured (not a placeholder)
-if [ -z "${ENTRY_SESSION_SECRET:-}" ] || \
-   echo "${ENTRY_SESSION_SECRET}" | grep -qi "CHANGE_ME"; then
-  echo "WARNING: ENTRY_SESSION_SECRET is not set or is a placeholder."
-  echo "         The entry guard will be DISABLED until a real secret is configured."
-fi
+# ── HOTFIX: Disable entry guard for public access ──────────────────────────
+# Override ENTRY_SESSION_SECRET to empty to disable the entry guard system
+# This allows public access to vertexmonetize.com without referrer restrictions
+export ENTRY_SESSION_SECRET=""
+echo "Entry guard system disabled for public access"
 
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
