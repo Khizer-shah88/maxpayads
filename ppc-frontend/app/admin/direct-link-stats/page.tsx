@@ -389,6 +389,8 @@ export default function DirectLinkStatsPage() {
                 Direct Link Domain <span className="text-red-500">*</span>
               </label>
               <input
+                id="direct-link-domain"
+                name="directLinkDomain"
                 type="text"
                 placeholder="e.g. direct.yournetwork.com"
                 className={inp}
@@ -430,6 +432,8 @@ export default function DirectLinkStatsPage() {
           <div className="flex gap-3 items-center">
             <Calendar size={16} className="text-gray-400" />
             <input 
+              id="date-from"
+              name="dateFrom"
               type="date" 
               value={dateFrom} 
               onChange={e => setDateFrom(e.target.value)}
@@ -437,6 +441,8 @@ export default function DirectLinkStatsPage() {
             />
             <span className="text-gray-400">to</span>
             <input 
+              id="date-to"
+              name="dateTo"
               type="date" 
               value={dateTo} 
               onChange={e => setDateTo(e.target.value)}
@@ -552,6 +558,8 @@ export default function DirectLinkStatsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <select 
+                  id="publisher-select"
+                  name="publisherSelect"
                   value={selectedPublisher} 
                   onChange={e => setSelectedPublisher(e.target.value)}
                   className={inp}
@@ -683,6 +691,8 @@ export default function DirectLinkStatsPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Raw Clicks</label>
                     <input 
+                      id="raw-clicks"
+                      name="rawClicks"
                       type="text"
                       value={dailyConversions.find(d => d.date === crForm.date)?.raw_clicks.toLocaleString() || '0'}
                       disabled
@@ -692,6 +702,8 @@ export default function DirectLinkStatsPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Manual Conversions <span className="text-red-500">*</span></label>
                     <input 
+                      id="manual-conversions"
+                      name="manualConversions"
                       type="number" 
                       min="0"
                       value={crForm.manual_conversions}
@@ -709,6 +721,8 @@ export default function DirectLinkStatsPage() {
                     Reason <span className="text-red-500">*</span>
                   </label>
                   <textarea 
+                    id="override-reason"
+                    name="overrideReason"
                     value={crForm.reason}
                     onChange={e => setCrForm(p => ({ ...p, reason: e.target.value }))}
                     placeholder="Explain why this manual override is needed..."

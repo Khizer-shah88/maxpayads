@@ -80,6 +80,9 @@ function referrerHostname(referrer: string | undefined): string {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Create response first (will be used throughout)
+  let response: NextResponse;
+
   // ════════════════════════════════════════════════════════════════════════════
   // 1.  ENTRY GUARD — only active when ENTRY_SESSION_SECRET is configured
   // ════════════════════════════════════════════════════════════════════════════
@@ -143,7 +146,7 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.next();
       // Set the HttpOnly session cookie on the response
       response.headers.set('Set-Cookie', decision.setCookie);
-      return response;
+      return addSecurityHeaders(response);
     }
 
     // ALLOW_SESSION_EXISTS
@@ -201,7 +204,7 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/publisher/auth', request.url));
       }
     }
-    return NextResponse.next();
+    return addSecurityHeaders(NextResponse.next());
   }
 
   // ── Protect /admin/* routes ────────────────────────────────────────────────
@@ -222,7 +225,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/auth', request.url));
     }
 
-    return NextResponse.next();
+    return addSecurityHeaders(NextResponse.next());
   }
 
   // ── Protect /publisher/* routes ────────────────────────────────────────────
@@ -246,10 +249,30 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/publisher/auth', request.url));
     }
 
-    return NextResponse.next();
+    return addSecurityHeaders(NextResponse.next());
   }
 
-  return NextResponse.next();
+  return addSecurityHeaders(NextResponse.next());
+}
+
+// Helper to add security headers to any response
+function addSecurityHeaders(response: NextResponse): NextResponse {
+  // Set CSP header to allow Next.js functionality
+  const cspHeader = `
+    default-src 'self';
+    script-src 'self' 'unsafe-inline' 'unsafe-eval';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: blob: https:;
+    font-src 'self' data:;
+    connect-src 'self' https:;
+    frame-src 'self';
+    base-uri 'self';
+    form-action 'self';
+  `.replace(/\s{2,}/g, ' ').trim();
+
+  response.headers.set('Content-Security-Policy', cspHeader);
+  
+  return response;
 }
 
 export const config = {
