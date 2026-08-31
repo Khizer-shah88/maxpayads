@@ -303,9 +303,26 @@ export default function DirectLinksPage() {
       if (err?.response?.status === 404) {
         toast.error('Direct link API endpoint not found - feature may not be deployed yet')
       } else if (err?.response?.status === 422) {
-        toast.error('Validation error: ' + (err?.response?.data?.detail || 'Invalid data'))
+        // Handle validation errors - detail can be a string or an array of objects
+        const detail = err?.response?.data?.detail
+        let errorMessage = 'Validation error: '
+        
+        if (typeof detail === 'string') {
+          errorMessage += detail
+        } else if (Array.isArray(detail)) {
+          // FastAPI validation errors are arrays of objects with loc, msg, type
+          errorMessage += detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
+        } else if (detail && typeof detail === 'object') {
+          errorMessage += JSON.stringify(detail)
+        } else {
+          errorMessage += 'Invalid data provided'
+        }
+        
+        toast.error(errorMessage)
       } else {
-        toast.error(err?.response?.data?.detail || err?.message || 'Save failed')
+        const detail = err?.response?.data?.detail
+        const message = typeof detail === 'string' ? detail : (err?.message || 'Save failed')
+        toast.error(message)
       }
     } finally {
       setSaving(false)
