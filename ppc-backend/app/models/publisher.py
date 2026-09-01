@@ -23,6 +23,7 @@ class PyObjectId(ObjectId):
 
 class Publisher(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
+    public_id: Optional[str] = None  # Unique public ID (e.g., "PUB_ABC12XYZ")
     name: str
     email: str
     password_hash: str
@@ -37,6 +38,8 @@ class Publisher(BaseModel):
     invalid_clicks: int = 0
     payment_method: Optional[str] = None
     payment_details: Optional[str] = None
+    is_admin_created: bool = False  # True if created by admin, False if self-registered
+    created_by: Optional[str] = None  # Admin ID who created this publisher (if is_admin_created=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = None

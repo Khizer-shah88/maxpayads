@@ -121,24 +121,24 @@ async def admin_create_publisher(
     if status_val not in ("active", "pending", "suspended"):
         status_val = "active"
 
-    publisher_data = {"name": name, "email": email, "password": password}
-    publisher_id = await create_publisher(publisher_data, db)
-
-    # Override status immediately (create_publisher always sets "pending")
-    await db.publishers.update_one(
-        {"_id": ObjectId(publisher_id)},
-        {"$set": {
-            "status": status_val,
-            "revenue_share": float(data.get("revenue_share", 0.80)),
-            "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
-        }},
-    )
+    publisher_data = {
+        "name": name,
+        "email": email,
+        "password": password,
+        "status": status_val,
+        "revenue_share": float(data.get("revenue_share", 0.80)),
+        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
+    }
+    # Pass admin_id to mark as admin-created
+    publisher_id = await create_publisher(publisher_data, db, admin_id=current_user["id"])
 
     # Optionally create the first website
     if website_domain:
+        from app.utils.public_id_utils import generate_unique_website_id
         domain = website_domain.lower().replace("https://", "").replace("http://", "").strip("/")
         await db.websites.insert_one({
             "publisher_id": publisher_id,
+            "public_id": await generate_unique_website_id(db),
             "domain": domain,
             "name": domain,
             "status": "active",
@@ -176,8 +176,10 @@ async def admin_add_publisher_website(
     if not publisher:
         raise NotFoundError("Publisher")
 
+    from app.utils.public_id_utils import generate_unique_website_id
     result = await db.websites.insert_one({
         "publisher_id": publisher_id,
+        "public_id": await generate_unique_website_id(db),
         "domain": domain,
         "name": name,
         "status": "active",

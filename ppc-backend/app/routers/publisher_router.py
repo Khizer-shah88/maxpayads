@@ -288,6 +288,9 @@ async def get_websites(
     current_user: dict = Depends(get_current_active_publisher),
     db=Depends(get_db),
 ):
+    """Get all websites for the current publisher with embed codes and smartlinks."""
+    from app.services.smartlink_service import generate_embed_code_with_smartlink
+    
     cursor = db.websites.find({"publisher_id": current_user["id"]})
     websites = await cursor.to_list(length=None)
     base_domain = await _get_base_url(db, request, current_user["id"])
@@ -295,15 +298,31 @@ async def get_websites(
         doc = await db.system_settings.find_one({"key": "platform_domain"})
         if doc and doc.get("value"):
             base_domain = doc["value"].rstrip("/")
+    
+    tracking_url = await _get_tracking_url(db, current_user["id"])
+    
     for w in websites:
         w["id"] = str(w.pop("_id"))
         if w.get("updated_at"):
             w["updated_at"] = w["updated_at"].isoformat()
         if w.get("created_at"):
             w["created_at"] = w["created_at"].isoformat()
-        w["embed_code"] = (
-            f'<script src="{base_domain}/ad.js?pub={current_user["id"]}&site={w["id"]}" async></script>'
+        
+        # Generate embed code and smartlink with public IDs
+        codes = await generate_embed_code_with_smartlink(
+            db,
+            current_user["id"],
+            w["id"],
+            base_domain,
+            tracking_url,
+            use_public_ids=True,
         )
+        
+        w["embed_code"] = codes["embed_code"]
+        w["smart_link"] = codes["smart_link"]
+        w["pub_identifier"] = codes["pub_identifier"]
+        w["site_identifier"] = codes["site_identifier"]
+    
     return {"success": True, "websites": websites}
 
 
@@ -313,10 +332,12 @@ async def add_website(
     current_user: dict = Depends(get_current_active_publisher),
     db=Depends(get_db),
 ):
+    from app.utils.public_id_utils import generate_unique_website_id
     domain = data.get("domain", "").strip().lower().replace("https://", "").replace("http://", "")
     name = data.get("name", domain)
     website = {
         "publisher_id": current_user["id"],
+        "public_id": await generate_unique_website_id(db),
         "domain": domain,
         "name": name,
         "status": "active",
@@ -357,6 +378,9 @@ async def get_ad_unit(
     current_user: dict = Depends(get_current_active_publisher),
     db=Depends(get_db),
 ):
+    """Get ad unit configuration for a website with smartlink support."""
+    from app.services.smartlink_service import generate_smartlink
+    
     website = await db.websites.find_one(
         {"_id": _oid(website_id), "publisher_id": current_user["id"]}
     )
@@ -384,7 +408,11 @@ async def get_ad_unit(
         ad_type, ad_settings, base_url, current_user["id"], website_id,
         tracking_url=tracking_url,
     )
-    smart_link = f"{base_url}?pub={current_user['id']}&site={website_id}"
+    
+    # Generate smartlink with public IDs
+    smart_link = await generate_smartlink(
+        db, current_user["id"], website_id, base_url, use_public_ids=True
+    )
 
     return {
         "success": True,
@@ -405,6 +433,8 @@ async def save_ad_settings(
     db=Depends(get_db),
 ):
     """Save ad customization settings for a website."""
+    from app.services.smartlink_service import generate_smartlink
+    
     website = await db.websites.find_one(
         {"_id": _oid(website_id), "publisher_id": current_user["id"]}
     )
@@ -449,7 +479,11 @@ async def save_ad_settings(
         ad_type, settings, base_url, current_user["id"], website_id,
         tracking_url=tracking_url,
     )
-    smart_link = f"{base_url}?pub={current_user['id']}&site={website_id}"
+    
+    # Generate smartlink with public IDs
+    smart_link = await generate_smartlink(
+        db, current_user["id"], website_id, base_url, use_public_ids=True
+    )
 
     return {
         "success": True,

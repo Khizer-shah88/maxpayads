@@ -15,18 +15,43 @@ def _oid(id_str: str):
         return id_str
 
 
-async def create_publisher(data: dict, db) -> str:
+async def create_publisher(data: dict, db, admin_id: Optional[str] = None) -> str:
+    """
+    Create a new publisher account.
+    
+    Args:
+        data: Publisher data (name, email, password, etc.)
+        db: Database connection
+        admin_id: If provided, marks publisher as admin-created
+    
+    Returns:
+        Publisher ID string
+    """
+    from app.utils.public_id_utils import generate_unique_publisher_id
+    
     data["password_hash"] = hash_password(data.pop("password"))
     data["role"] = "publisher"
-    data["status"] = "pending"
+    data["status"] = data.get("status", "pending")  # Allow override for admin-created
     data["balance"] = 0.0
     data["total_earnings"] = 0.0
     data["total_clicks"] = 0
     data["valid_clicks"] = 0
     data["invalid_clicks"] = 0
-    data["revenue_share"] = 0.80
+    data["revenue_share"] = data.get("revenue_share", 0.80)
     data["created_at"] = datetime.utcnow()
     data["updated_at"] = datetime.utcnow()
+    
+    # Generate unique public ID
+    data["public_id"] = await generate_unique_publisher_id(db)
+    
+    # Admin-created tracking
+    if admin_id:
+        data["is_admin_created"] = True
+        data["created_by"] = admin_id
+    else:
+        data["is_admin_created"] = False
+        data["created_by"] = None
+    
     result = await db.publishers.insert_one(data)
     return str(result.inserted_id)
 

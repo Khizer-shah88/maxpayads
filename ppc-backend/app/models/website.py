@@ -5,6 +5,7 @@ from datetime import datetime
 
 class Website(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
+    public_id: Optional[str] = None  # Unique public ID (e.g., "SITE_XYZ789AB")
     publisher_id: str
     domain: str
     name: str

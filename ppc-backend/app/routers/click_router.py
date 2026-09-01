@@ -70,26 +70,46 @@ async def _quick_fraud_check(ip: str, user_agent: str, redis, website_id: str = 
 @router.get("/click")
 async def track_click(
     request: Request,
-    pub: str = Query(..., description="Publisher ID"),
-    site: Optional[str] = Query(None, description="Website ID"),
+    pub: str = Query(..., description="Publisher ID (ObjectId or public_id PUB_XXXXXXXX)"),
+    site: Optional[str] = Query(None, description="Website ID (ObjectId or public_id SITE_XXXXXXXX)"),
     db=Depends(get_db),
     redis=Depends(get_redis_client),
 ):
     """
     Main click tracking endpoint — exact flow:
     1. Click received → extract metadata
-    2. Fraud check (inline, fast rule-based)
-    3. Resolve publisher / website
+    2. Resolve publisher/website IDs (supports public_id or ObjectId)
+    3. Fraud check (inline, fast rule-based)
     4. Campaign match
     5. GEO rules
     6. Device / OS rules
     7. Landing page (if set)
     8. Final redirect
     Target response time: < 50ms
+    
+    Backward Compatible:
+    - Accepts old format: ?pub=ObjectId&site=ObjectId
+    - Accepts new format: ?pub=PUB_XXXXXXXX&site=SITE_XXXXXXXX
     """
     start_time = datetime.utcnow()
 
-    # --- Step 1: Extract request metadata ---
+    # --- Step 1: Resolve publisher and website IDs (backward compatible) ---
+    from app.utils.public_id_utils import resolve_publisher_id, resolve_website_id
+    
+    publisher_id = await resolve_publisher_id(db, pub.strip())
+    if not publisher_id:
+        logger.warning(f"Invalid publisher identifier: {pub}")
+        return build_redirect(FALLBACK_URL)
+    
+    website_id = None
+    if site:
+        site = site.strip().rstrip("/")
+        website_id = await resolve_website_id(db, site)
+        # If website_id not found, continue without it (backward compat)
+        if not website_id:
+            logger.warning(f"Website not found: {site}, continuing without website binding")
+    
+    # --- Step 2: Extract request metadata ---
     client_ip = get_client_ip(
         dict(request.headers),
         request.client.host if request.client else "0.0.0.0",
@@ -98,17 +118,14 @@ async def track_click(
     # Referrer: check header first, fall back to ?ref= query param (passed by anchor domain)
     referrer = request.headers.get("referer", "") or request.query_params.get("ref", "")
 
-    # Normalize website_id: strip trailing slashes
-    if site:
-        site = site.rstrip("/")
     device_info = parse_user_agent(user_agent)
     from app.utils.geo_utils import lookup_ip
     country_code, country_name = lookup_ip(client_ip)
 
-    # --- Step 2: Inline fraud check (fast, rule-based) ---
+    # --- Step 3: Inline fraud check (fast, rule-based) ---
     # Only IP is used for duplicate check. Country, referrer, publisher are for stats only.
     is_blocked, is_duplicate, fraud_reason = await _quick_fraud_check(
-        client_ip, user_agent, redis, website_id=site
+        client_ip, user_agent, redis, website_id=website_id
     )
 
     # Determine click status:
@@ -125,10 +142,10 @@ async def track_click(
         click_status = "pending"
         fraud_score = 0.0
 
-    # Build click document
+    # Build click document (always use internal _id for storage)
     click_data = {
-        "publisher_id": pub,
-        "website_id": site,
+        "publisher_id": publisher_id,
+        "website_id": website_id,
         "ip_address": client_ip,
         "country_code": country_code,
         "country_name": country_name,
@@ -174,14 +191,14 @@ async def track_click(
             from app.services.fraud_service import log_fraud
             from app.services.earnings_service import update_publisher_invalid_click, update_website_stats
             await log_fraud(click_id, click_data, fraud_reason, fraud_score, db)
-            await update_publisher_invalid_click(pub, db)
-            if site:
-                await update_website_stats(site, 0.0, False, db)
+            await update_publisher_invalid_click(publisher_id, db)
+            if website_id:
+                await update_website_stats(website_id, 0.0, False, db)
         except Exception as e:
             logger.warning(f"Failed to log duplicate click: {e}")
         # Don't return here — continue to route to the real offer below
 
-    # --- Step 3-7: Route click (publisher → campaign → GEO → device → lander → offer) ---
+    # --- Step 4-8: Route click (publisher → campaign → GEO → device → lander → offer) ---
     destination = FALLBACK_URL
     referrer_suppression = False
     try:
@@ -211,7 +228,7 @@ async def track_click(
         except Exception as e:
             logger.warning(f"Failed to queue click task: {e}")
 
-    # --- Step 8: Final redirect ---
+    # --- Step 9: Final redirect ---
     return build_redirect(destination, referrer_suppression)
 
 
