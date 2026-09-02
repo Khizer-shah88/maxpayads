@@ -15,6 +15,7 @@ class RedirectionDomainCreate(BaseModel):
     is_default: bool = False
     status: DomainStatus = "active"
     template: LastDomainTemplate = "default"
+    template_id: Optional[str] = None  # Link to prelander_templates collection
     notes: Optional[str] = None
 
 
@@ -24,6 +25,7 @@ class RedirectionDomainUpdate(BaseModel):
     is_default: Optional[bool] = None
     status: Optional[DomainStatus] = None
     template: Optional[LastDomainTemplate] = None
+    template_id: Optional[str] = None  # Link to prelander_templates collection
     notes: Optional[str] = None
 
 
@@ -36,6 +38,7 @@ class RedirectionDomainOut(BaseModel):
     is_default: bool
     status: DomainStatus
     template: LastDomainTemplate
+    template_id: Optional[str] = None  # Link to prelander_templates collection
     dns_status: DnsStatus
     dns_checked_at: Optional[str] = None
     resolved_ips: List[str] = Field(default_factory=list)

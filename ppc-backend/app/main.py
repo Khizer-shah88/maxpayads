@@ -15,14 +15,21 @@ from app.core.exceptions import (
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.redirect_chain_middleware import RedirectChainMiddleware
+from app.middleware.security_middleware import (
+    SecurityHeadersMiddleware,
+    RequestValidationMiddleware,
+    SecurityAuditMiddleware,
+    SessionSecurityMiddleware,
+    APISecurityMiddleware,
+)
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
     campaign_router, click_router, withdrawal_router, analytics_router,
 )
 from app.routers import offer_router, landing_page_router, prelander_router, redirection_domain_router
-from app.routers import prelander_template_router
-from app.routers import direct_link_router, redirect_chain_router, public_stats_router
+from app.routers import prelander_template_router, prelander_public_router
+from app.routers import direct_link_router, redirect_chain_router, public_stats_router, stats_profile_router
 
 from fastapi.exceptions import HTTPException
 
@@ -66,7 +73,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Custom middleware
+# Custom middleware (order matters - first added wraps last)
+app.add_middleware(SecurityHeadersMiddleware)  # Outermost - adds security headers
+app.add_middleware(RequestValidationMiddleware)  # Validate requests early
+app.add_middleware(SecurityAuditMiddleware)  # Audit security events
+app.add_middleware(SessionSecurityMiddleware)  # Session security
+app.add_middleware(APISecurityMiddleware)  # API security checks
 app.add_middleware(RedirectChainMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -94,9 +106,11 @@ app.include_router(landing_page_router.router)
 app.include_router(prelander_router.router)
 app.include_router(redirection_domain_router.router)
 app.include_router(prelander_template_router.router)
+app.include_router(prelander_public_router.router)  # Public prelander rendering
 app.include_router(direct_link_router.router)
 app.include_router(redirect_chain_router.router)
 app.include_router(public_stats_router.router)
+app.include_router(stats_profile_router.router)
 
 
 @app.get("/health", tags=["System"])

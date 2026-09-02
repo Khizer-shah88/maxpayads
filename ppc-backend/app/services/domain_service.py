@@ -57,6 +57,7 @@ def _serialize(doc: dict, publisher_map: Optional[Dict[str, str]] = None) -> dic
         "is_default": bool(doc.get("is_default")),
         "status": doc.get("status", "active"),
         "template": doc.get("template", "default"),
+        "template_id": doc.get("template_id"),
         "dns_status": doc.get("dns_status", "pending"),
         "dns_checked_at": doc.get("dns_checked_at").isoformat() if doc.get("dns_checked_at") else None,
         "resolved_ips": doc.get("resolved_ips") or [],
@@ -170,6 +171,7 @@ async def create_domain(db, data: dict) -> dict:
         "is_default": is_default,
         "status": data.get("status", "active"),
         "template": data.get("template", "default") if domain_type == "last" else "default",
+        "template_id": data.get("template_id"),
         "dns_status": "pending",
         "dns_checked_at": None,
         "resolved_ips": [],
@@ -218,6 +220,8 @@ async def update_domain(db, domain_id: str, data: dict) -> Optional[dict]:
         update["notes"] = data["notes"]
     if doc["domain_type"] == "last" and data.get("template") is not None:
         update["template"] = data["template"]
+    if doc["domain_type"] == "last" and "template_id" in data:
+        update["template_id"] = data["template_id"]
 
     if data.get("is_default") is not None:
         is_default = bool(data["is_default"])

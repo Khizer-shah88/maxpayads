@@ -165,8 +165,10 @@ def is_public_id_format(identifier: str, id_type: str = "any") -> bool:
         return False
     
     if id_type == "publisher":
-        return identifier.startswith(f"{PUB_PREFIX}_") and len(identifier) == len(PUB_PREFIX) + 1 + ID_LENGTH
+        # Check prefix and minimum reasonable length (at least 7 chars after prefix)
+        return identifier.startswith(f"{PUB_PREFIX}_") and len(identifier) >= len(PUB_PREFIX) + 1 + 7
     elif id_type == "website":
-        return identifier.startswith(f"{SITE_PREFIX}_") and len(identifier) == len(SITE_PREFIX) + 1 + ID_LENGTH
+        # Check prefix and minimum reasonable length (at least 7 chars after prefix)
+        return identifier.startswith(f"{SITE_PREFIX}_") and len(identifier) >= len(SITE_PREFIX) + 1 + 7
     else:  # any
         return (identifier.startswith(f"{PUB_PREFIX}_") or identifier.startswith(f"{SITE_PREFIX}_"))

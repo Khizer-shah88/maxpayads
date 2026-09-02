@@ -211,5 +211,111 @@ async def delete_template(
         {"$unset": {"prelander_template_id": ""}, "$set": {"updated_at": datetime.utcnow()}},
     )
 
+    # Clear references in redirection_domains
+    await db.redirection_domains.update_many(
+        {"template_id": template_id},
+        {"$unset": {"template_id": ""}, "$set": {"updated_at": datetime.utcnow()}},
+    )
+
     await db.prelander_templates.delete_one({"_id": _oid(template_id)})
     return {"success": True, "message": "Prelander template deleted"}
+
+
+@router.get("/{template_id}/validate")
+async def validate_template(
+    template_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Validate template syntax and security."""
+    from app.services.prelander_service import PrelanderTemplateEngine
+    
+    doc = await db.prelander_templates.find_one({"_id": _oid(template_id)})
+    if not doc:
+        raise NotFoundError("Prelander Template")
+    
+    html = doc.get("full_html_template", "")
+    if not html:
+        return {
+            "success": True,
+            "validation": {
+                "valid": False,
+                "message": "No HTML template content found",
+                "used_placeholders": [],
+            },
+        }
+    
+    engine = PrelanderTemplateEngine()
+    validation_result = engine.validate_template(html)
+    
+    return {
+        "success": True,
+        "validation": validation_result,
+    }
+
+
+@router.post("/validate-html")
+async def validate_html_content(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+):
+    """
+    Validate HTML template content before saving.
+    Does not require template_id - validates raw HTML.
+    """
+    from app.services.prelander_service import PrelanderTemplateEngine
+    
+    html = data.get("html", "")
+    if not html:
+        return {
+            "success": True,
+            "validation": {
+                "valid": False,
+                "message": "No HTML content provided",
+                "used_placeholders": [],
+            },
+        }
+    
+    engine = PrelanderTemplateEngine()
+    validation_result = engine.validate_template(html)
+    
+    return {
+        "success": True,
+        "validation": validation_result,
+    }
+
+
+@router.get("/{template_id}/assigned-domains")
+async def get_template_assigned_domains(
+    template_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Get list of domains assigned to this template."""
+    doc = await db.prelander_templates.find_one({"_id": _oid(template_id)})
+    if not doc:
+        raise NotFoundError("Prelander Template")
+    
+    # Find all redirection domains using this template
+    cursor = db.redirection_domains.find(
+        {"template_id": template_id, "domain_type": "last"},
+        {"domain": 1, "status": 1, "dns_status": 1, "publisher_ids": 1},
+    )
+    
+    domains = []
+    async for d in cursor:
+        domains.append({
+            "id": str(d["_id"]),
+            "domain": d.get("domain", ""),
+            "status": d.get("status", "active"),
+            "dns_status": d.get("dns_status", "pending"),
+            "publisher_count": len(d.get("publisher_ids", [])),
+        })
+    
+    return {
+        "success": True,
+        "template_id": template_id,
+        "template_name": doc.get("name", ""),
+        "domains": domains,
+        "total_domains": len(domains),
+    }

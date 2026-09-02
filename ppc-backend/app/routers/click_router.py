@@ -23,48 +23,93 @@ logger = logging.getLogger(__name__)
 FALLBACK_URL = "https://example.com"
 
 
-async def _quick_fraud_check(ip: str, user_agent: str, redis, website_id: str = None) -> tuple:
+async def _comprehensive_fraud_check(
+    ip: str, 
+    user_agent: str, 
+    headers: dict,
+    publisher_id: str,
+    campaign_id: Optional[str],
+    referer: str,
+    db,
+    redis,
+    website_id: str = None
+) -> tuple:
     """
-    Fast inline fraud check (rule-based only, no ML).
-    Returns (block, soft_flag, reason).
-      - block=True: bot/datacenter/rate_limit → redirect to fallback, don't show offer
-      - soft_flag=True: duplicate → still show offer, but mark as invalid (no earnings)
-    Duplicate check uses IP only. Publisher, country, referrer are for stats only.
+    Comprehensive fraud check using new fraud detection service.
+    Returns (block, soft_flag, reason, fraud_score, classification).
+      - block=True: invalid/bot traffic → redirect to fallback
+      - soft_flag=True: suspicious/duplicate → flag but still route
     """
-    # Check 1: Bot user agent — HARD BLOCK
+    from app.services import fraud_detection_service as fds
+    
+    # Legacy checks for backward compatibility
+    # Check 1: Bot user agent (legacy) — HARD BLOCK
     if is_bot_user_agent(user_agent):
-        return True, False, "bot_user_agent"
+        return True, False, "bot_user_agent", 1.0, fds.TRAFFIC_BOT
 
-    # Check 2: Datacenter IP — HARD BLOCK
+    # Check 2: Datacenter IP (legacy) — HARD BLOCK  
     if is_datacenter_ip(ip):
-        return True, False, "datacenter_ip"
+        return True, False, "datacenter_ip", 0.95, fds.TRAFFIC_INVALID
 
-    # Check 3: Rate limit — HARD BLOCK
+    # Check 3: Rate limit (legacy) — HARD BLOCK
     try:
         key = f"{REDIS_CLICK_RATE_PREFIX}{ip}"
         count = await redis.incr(key)
         if count == 1:
             await redis.expire(key, 60)
         if count > MAX_CLICKS_PER_IP_PER_MINUTE:
-            return True, False, "rate_limit_exceeded"
+            return True, False, "rate_limit_exceeded", 0.90, fds.TRAFFIC_INVALID
     except Exception as e:
-        logger.warning(f"Redis rate limit check failed (treating as suspicious): {e}")
-        return True, False, "rate_limit_exceeded"
+        logger.warning(f"Redis rate limit check failed: {e}")
 
     # Check 4: Duplicate IP+Website — SOFT FLAG
-    # Same IP + same website within window = duplicate (still reaches offer, no earnings)
-    # Different website from same IP = valid (first visit per website in 24hrs)
     try:
         site_suffix = f":{website_id}" if website_id else ""
         dup_key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ip}{site_suffix}"
         exists = await redis.exists(dup_key)
         if exists:
-            return False, True, "duplicate_ip"
+            return False, True, "duplicate_ip", 0.85, fds.TRAFFIC_DUPLICATE
         await redis.setex(dup_key, DUPLICATE_CLICK_WINDOW_SECONDS, "1")
     except Exception as e:
         logger.warning(f"Redis duplicate check failed: {e}")
 
-    return False, False, None
+    # NEW: Comprehensive fraud detection
+    try:
+        request_data = {
+            "ip_address": ip,
+            "user_agent": user_agent,
+            "headers": headers,
+            "publisher_id": publisher_id,
+            "campaign_id": campaign_id,
+            "referer": referer,
+        }
+        
+        result = await fds.classify_traffic(db, redis, request_data)
+        
+        classification = result["classification"]
+        fraud_score = result["score"] / 100.0  # Normalize to 0-1
+        reasons = result["reasons"]
+        should_reject = result["should_reject"]
+        should_flag = result["should_flag"]
+        
+        # Join reasons for single fraud_reason field
+        fraud_reason = "; ".join(reasons[:3]) if reasons else None
+        
+        # Decision logic
+        if should_reject:
+            # Invalid or bot traffic - hard block
+            return True, False, fraud_reason, fraud_score, classification
+        elif should_flag:
+            # Suspicious or duplicate - soft flag
+            return False, True, fraud_reason, fraud_score, classification
+        else:
+            # Valid traffic
+            return False, False, None, fraud_score, classification
+            
+    except Exception as e:
+        logger.error(f"Fraud detection service error: {e}")
+        # Fallback to safe default on error
+        return False, False, None, 0.0, fds.TRAFFIC_VALID
 
 
 @router.get("/click")
@@ -122,25 +167,21 @@ async def track_click(
     from app.utils.geo_utils import lookup_ip
     country_code, country_name = lookup_ip(client_ip)
 
-    # --- Step 3: Inline fraud check (fast, rule-based) ---
-    # Only IP is used for duplicate check. Country, referrer, publisher are for stats only.
-    is_blocked, is_duplicate, fraud_reason = await _quick_fraud_check(
-        client_ip, user_agent, redis, website_id=website_id
+    # --- Step 3: Comprehensive fraud check (includes legacy + new detection) ---
+    # Prepare headers dict for fraud detection
+    headers_dict = dict(request.headers)
+    
+    is_blocked, is_flagged, fraud_reason, fraud_score, traffic_classification = await _comprehensive_fraud_check(
+        client_ip, user_agent, headers_dict, publisher_id, None, referrer, db, redis, website_id=website_id
     )
 
-    # Determine click status:
-    # - blocked (bot/datacenter/rate_limit) → invalid, don't reach offer
-    # - duplicate → invalid, but still reach offer (just no earnings)
-    # - clean → pending (will be validated by background task)
+    # Determine click status based on fraud check results
     if is_blocked:
         click_status = "invalid"
-        fraud_score = {"bot_user_agent": 1.0, "datacenter_ip": 0.95, "rate_limit_exceeded": 0.90}.get(fraud_reason, 1.0)
-    elif is_duplicate:
-        click_status = "invalid"
-        fraud_score = 0.85
+    elif is_flagged:
+        click_status = "invalid"  # Flagged traffic is also marked invalid but still routes
     else:
-        click_status = "pending"
-        fraud_score = 0.0
+        click_status = "pending"  # Will be validated by background task
 
     # Build click document (always use internal _id for storage)
     click_data = {
@@ -158,9 +199,10 @@ async def track_click(
         "is_valid": False,
         "fraud_reason": fraud_reason,
         "fraud_score": fraud_score,
+        "traffic_classification": traffic_classification,  # NEW: Store classification
         "cpc": 0.0,
         "earnings": 0.0,
-        "processed": is_blocked or is_duplicate,
+        "processed": is_blocked or is_flagged,
         "timestamp": start_time,
     }
 
@@ -177,6 +219,22 @@ async def track_click(
         try:
             from app.services.fraud_service import log_fraud
             from app.services.earnings_service import update_publisher_invalid_click, update_website_stats
+            from app.services import fraud_detection_service as fds
+            
+            # Log security event
+            await fds.log_security_event(
+                db,
+                event_type="fraud_detected",
+                severity="warning",
+                description=f"Blocked traffic: {fraud_reason}",
+                metadata={
+                    "click_id": click_id,
+                    "ip": client_ip,
+                    "classification": traffic_classification,
+                    "fraud_score": fraud_score,
+                }
+            )
+            
             await log_fraud(click_id, click_data, fraud_reason, fraud_score, db)
             await update_publisher_invalid_click(pub, db)
             if site:
@@ -185,17 +243,33 @@ async def track_click(
             logger.warning(f"Failed to log inline fraud: {e}")
         return build_redirect(FALLBACK_URL)
 
-    # SOFT FLAG (duplicate): log as invalid but still route to the real offer
-    if is_duplicate:
+    # SOFT FLAG (suspicious/duplicate): log as invalid but still route to the real offer
+    if is_flagged:
         try:
             from app.services.fraud_service import log_fraud
             from app.services.earnings_service import update_publisher_invalid_click, update_website_stats
+            from app.services import fraud_detection_service as fds
+            
+            # Log security event (lower severity for flags)
+            await fds.log_security_event(
+                db,
+                event_type="suspicious_traffic",
+                severity="info",
+                description=f"Flagged traffic: {fraud_reason}",
+                metadata={
+                    "click_id": click_id,
+                    "ip": client_ip,
+                    "classification": traffic_classification,
+                    "fraud_score": fraud_score,
+                }
+            )
+            
             await log_fraud(click_id, click_data, fraud_reason, fraud_score, db)
             await update_publisher_invalid_click(publisher_id, db)
             if website_id:
                 await update_website_stats(website_id, 0.0, False, db)
         except Exception as e:
-            logger.warning(f"Failed to log duplicate click: {e}")
+            logger.warning(f"Failed to log flagged click: {e}")
         # Don't return here — continue to route to the real offer below
 
     # --- Step 4-8: Route click (publisher → campaign → GEO → device → lander → offer) ---
@@ -216,8 +290,8 @@ async def track_click(
         pass
 
     # --- Queue background task for ML fraud check + CPC/earnings ---
-    # Only queue for clean (non-duplicate) clicks — duplicates are already processed
-    if not is_duplicate:
+    # Only queue for clean (non-flagged) clicks — flagged clicks are already processed
+    if not is_flagged:
         try:
             from app.tasks.click_tasks import process_click
             click_data_for_task = {

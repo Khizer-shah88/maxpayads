@@ -41,7 +41,7 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             redis = get_redis()
             
             # Skip if database/redis not available (startup phase)
-            if not db or not redis:
+            if db is None or redis is None:
                 return await call_next(request)
             
             # Look up if this domain is part of any redirect chain
