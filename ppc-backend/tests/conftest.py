@@ -1,30 +1,20 @@
 """
-conftest.py — shared pytest fixtures for the FastAPI test suite.
+conftest.py — shared pytest fixtures.
 
-Key problem solved:
-  Motor (MongoDB async driver) binds its connection pool to the asyncio event
-  loop that was current when AsyncIOMotorClient was first created.  With the
-  default per-function event loop scope, every test after the first one gets a
-  *new* loop while Motor still holds a reference to the old closed loop →
-  RuntimeError: Event loop is closed.
+Motor binds its connection pool to the asyncio event loop current when
+AsyncIOMotorClient is first created. All fixtures and tests share a single
+session-scoped event loop so Motor's connection pool stays valid for the
+entire test run.
 
-Fix:
-  - Set the event loop scope to "session" so all tests share one loop.
-  - Provide a session-scoped `async_client` fixture that starts the FastAPI app
-    (and therefore the DB/Redis lifespan) exactly once for the whole test run.
-  - Tests that need their own client can use `async_client` directly or create
-    a fresh AsyncClient inside the same session loop without triggering lifespan.
-
-Test DB isolation:
-  - Tests run against `ppc_network_test` (never production `ppc_network`).
-  - DB_NAME env var is overridden before the app is imported/started.
-  - Session-scoped autouse fixture drops the test database after the suite.
+DB isolation: DB_NAME is overridden to `ppc_network_test` before any app
+import. The test DB is wiped before the session (clean slate) and after
+(tidy up for next run).
 """
 
 import asyncio
 import os
 
-# ── Override DB_NAME BEFORE any app import ─────────────────────────────────
+# Must happen before any app module is imported
 os.environ.setdefault("DB_NAME", "ppc_network_test")
 
 import pytest
@@ -33,85 +23,71 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
-# ── Event loop: one loop for the entire test session ─────────────────────────
+# ── One event loop for the whole session ─────────────────────────────────────
 
 @pytest.fixture(scope="session")
 def event_loop_policy():
-    """Use the default asyncio policy."""
     return asyncio.DefaultEventLoopPolicy()
 
 
 @pytest.fixture(scope="session")
 def event_loop(event_loop_policy):
     """
-    Session-scoped event loop.  All async fixtures and tests share this loop,
-    which keeps the Motor connection pool alive across tests.
+    Session-scoped loop shared by every async fixture and test.
+    Not explicitly closed — Motor's thread-pool executor needs the loop to
+    remain accessible during interpreter shutdown.
     """
-    policy = event_loop_policy
-    loop = policy.new_event_loop()
+    loop = event_loop_policy.new_event_loop()
     asyncio.set_event_loop(loop)
     yield loop
-    loop.close()
 
 
-# ── Shared HTTP client — app lifespan runs once ───────────────────────────────
+# ── App client — FastAPI lifespan runs once ───────────────────────────────────
 
 @pytest_asyncio.fixture(scope="session")
 async def async_client():
     """
-    Session-scoped AsyncClient.  The FastAPI lifespan (DB connect, Redis
-    connect, ML model load) executes once at the start and tears down once
-    at the end of the test session.
+    Session-scoped AsyncClient. DB/Redis connect once via FastAPI lifespan.
+    Wipes the test DB before and after the session.
     """
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-    ) as client:
-        yield client
+    ) as ac:
+        from app.database import get_database
+        _db = get_database()
+        if _db is not None and "test" in str(getattr(_db, "name", "")):
+            for coll in await _db.list_collection_names():
+                await _db[coll].delete_many({})
+
+        yield ac
+
+        _db = get_database()
+        if _db is not None and "test" in str(getattr(_db, "name", "")):
+            for coll in await _db.list_collection_names():
+                await _db[coll].delete_many({})
 
 
-# ── Test DB cleanup — wipe entire test DB after session ──────────────────────
+# ── DB / Redis handles — synchronous, no await ───────────────────────────────
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def cleanup_test_db(async_client):
-    """
-    Wipe all collections in the test database after the test session ends.
-    The `async_client` fixture is referenced to ensure the DB lifespan is
-    already running when we access the database handle.
-    """
-    yield  # run all tests first
-    from app.database import get_database
-    db = get_database()
-    if db is not None:
-        # Only wipe the test database (never allow wiping production)
-        db_name = db.name if hasattr(db, "name") else str(db)
-        if "test" in str(db_name):
-            colls = await db.list_collection_names()
-            for coll in colls:
-                await db[coll].delete_many({})
-
-
-# ── Database and test data fixtures ───────────────────────────────────────────
-
-@pytest_asyncio.fixture
-async def db():
-    """Get database connection for tests."""
+@pytest.fixture(scope="session")
+def db(async_client):
     from app.database import get_database
     return get_database()
 
 
-@pytest_asyncio.fixture
-async def redis():
-    """Get Redis connection for tests."""
+@pytest.fixture(scope="session")
+def redis(async_client):
     from app.cache.redis_client import get_redis
     return get_redis()
 
 
-@pytest_asyncio.fixture
+# ── Shared test records — session-scoped so Motor awaits use the session loop ─
+
+@pytest_asyncio.fixture(scope="session")
 async def test_admin(db):
-    """Create a test admin user."""
     from app.core.security import hash_password
-    admin_data = {
+    data = {
         "name": "Test Admin",
         "email": "admin@test.com",
         "password_hash": hash_password("admin123"),
@@ -121,18 +97,16 @@ async def test_admin(db):
         "total_earnings": 0.0,
         "revenue_share": 1.0,
     }
-    result = await db.publishers.insert_one(admin_data)
-    admin_data["_id"] = result.inserted_id
-    yield admin_data
-    # Cleanup
-    await db.publishers.delete_one({"_id": admin_data["_id"]})
+    result = await db.publishers.insert_one(data)
+    data["_id"] = result.inserted_id
+    yield data
+    await db.publishers.delete_one({"_id": data["_id"]})
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="session")
 async def test_publisher(db):
-    """Create a test publisher."""
     from app.core.security import hash_password
-    publisher_data = {
+    data = {
         "name": "Test Publisher",
         "email": "publisher@test.com",
         "password_hash": hash_password("password123"),
@@ -142,17 +116,15 @@ async def test_publisher(db):
         "total_earnings": 0.0,
         "revenue_share": 0.80,
     }
-    result = await db.publishers.insert_one(publisher_data)
-    publisher_data["_id"] = result.inserted_id
-    yield publisher_data
-    # Cleanup
-    await db.publishers.delete_one({"_id": publisher_data["_id"]})
+    result = await db.publishers.insert_one(data)
+    data["_id"] = result.inserted_id
+    yield data
+    await db.publishers.delete_one({"_id": data["_id"]})
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="session")
 async def test_website(db, test_publisher):
-    """Create a test website."""
-    website_data = {
+    data = {
         "publisher_id": str(test_publisher["_id"]),
         "domain": "testsite.com",
         "name": "Test Site",
@@ -162,28 +134,24 @@ async def test_website(db, test_publisher):
         "invalid_clicks": 0,
         "total_earnings": 0.0,
     }
-    result = await db.websites.insert_one(website_data)
-    website_data["_id"] = result.inserted_id
-    yield website_data
-    # Cleanup
-    await db.websites.delete_one({"_id": website_data["_id"]})
+    result = await db.websites.insert_one(data)
+    data["_id"] = result.inserted_id
+    yield data
+    await db.websites.delete_one({"_id": data["_id"]})
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def admin_token(test_admin):
-    """Generate JWT token for test admin."""
     from app.core.security import create_access_token
     return create_access_token({"sub": str(test_admin["_id"]), "role": "admin"})
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def publisher_token(test_publisher):
-    """Generate JWT token for test publisher."""
     from app.core.security import create_access_token
     return create_access_token({"sub": str(test_publisher["_id"]), "role": "publisher"})
 
 
-@pytest_asyncio.fixture
-async def client(async_client):
-    """Alias for async_client for backward compatibility."""
+@pytest.fixture(scope="session")
+def client(async_client):
     return async_client
