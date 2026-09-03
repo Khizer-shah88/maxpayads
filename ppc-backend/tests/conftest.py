@@ -26,20 +26,23 @@ from app.main import app
 # ── One event loop for the whole session ─────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def event_loop_policy():
-    return asyncio.DefaultEventLoopPolicy()
-
-
-@pytest.fixture(scope="session")
-def event_loop(event_loop_policy):
+def event_loop():
     """
-    Session-scoped loop shared by every async fixture and test.
-    Not explicitly closed — Motor's thread-pool executor needs the loop to
-    remain accessible during interpreter shutdown.
+    Create a session-scoped event loop for all async tests.
+    Uses a fresh event loop and ensures it's set as the running loop
+    for the duration of the test session. Closes the loop after tests
+    finish to avoid leaving resources open.
     """
-    loop = event_loop_policy.new_event_loop()
+    loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    yield loop
+    try:
+        yield loop
+    finally:
+        try:
+            asyncio.set_event_loop(None)
+        except Exception:
+            pass
+        loop.close()
 
 
 # ── App client — FastAPI lifespan runs once ───────────────────────────────────

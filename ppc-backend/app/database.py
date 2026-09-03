@@ -39,10 +39,14 @@ async def disconnect_db():
 async def create_indexes():
     # Publishers
     await db.publishers.create_index("email", unique=True)
+    # Ensure human-readable public_id is unique when present
+    await db.publishers.create_index("public_id", unique=True, sparse=True)
     await db.publishers.create_index("status")
     await db.publishers.create_index("role")
 
     # Websites
+    # Ensure human-readable public_id is unique when present
+    await db.websites.create_index("public_id", unique=True, sparse=True)
     await db.websites.create_index("publisher_id")
     await db.websites.create_index("domain")
 
