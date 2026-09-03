@@ -1,26 +1,55 @@
 """
 conftest.py — shared pytest fixtures.
 
-Motor binds its connection pool to the asyncio event loop current when
-AsyncIOMotorClient is first created. All fixtures and tests share a single
-session-scoped event loop so Motor's connection pool stays valid for the
-entire test run.
+THE CORE PROBLEM THIS SOLVES
+═════════════════════════════
+Motor (AsyncIOMotorClient) binds its connection pool to the asyncio event
+loop that is current when the client is first created. pytest-asyncio 0.23.x
+in `auto` mode creates a *new* event loop for every async test function,
+even if a session-scoped `event_loop` fixture exists. Any Motor await on a
+test's per-function loop deadlocks because pymongo's background monitor
+threads are blocked waiting on the *session* loop.
 
-DB isolation: DB_NAME is overridden to `ppc_network_test` before any app
-import. The test DB is wiped before the session (clean slate) and after
-(tidy up for next run).
+FIX: override the pytest-asyncio loop scope to "session" for every test
+via the `pytest_collection_modifyitems` hook. This forces every async test
+function to run on the same session loop where Motor was started.
+
+DB ISOLATION
+════════════
+DB_NAME is overridden to `ppc_network_test` before any app import so tests
+never touch the production database. The test DB is wiped before (clean
+slate) and after (tidy up) the session.
 """
 
 import asyncio
 import os
 
-# Must happen before any app module is imported
-os.environ.setdefault("DB_NAME", "ppc_network_test")
+# Must happen BEFORE any app module is imported at collection time
+os.environ["DB_NAME"] = "ppc_network_test"
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from app.main import app
+
+
+# ── Global loop scope override ────────────────────────────────────────────────
+# Force every async test to run on the session-scoped loop.
+# Without this, pytest-asyncio 0.23.x creates a new loop per test function
+# which conflicts with Motor's session-bound connection pool.
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if isinstance(item, pytest.Function):
+            # Add loop_scope="session" to any async test that has the asyncio mark
+            # (auto mode adds it automatically, but without loop_scope)
+            if hasattr(item, "get_closest_marker"):
+                marker = item.get_closest_marker("asyncio")
+                if marker is not None:
+                    # Re-apply with session scope
+                    item.add_marker(
+                        pytest.mark.asyncio(loop_scope="session"),
+                        append=False,
+                    )
 
 
 # ── One event loop for the whole session ─────────────────────────────────────
@@ -28,27 +57,29 @@ from app.main import app
 @pytest.fixture(scope="session")
 def event_loop():
     """
-    Single session-scoped event loop shared by all async fixtures and tests.
-    Motor's connection pool binds to this loop during FastAPI lifespan startup.
-
-    NOT closed explicitly — Motor's executor threads and anyio task groups
-    may still be finishing during interpreter teardown. Python GC handles it.
+    Single event loop for the entire test session.
+    Motor's connection pool is created on this loop (via FastAPI lifespan)
+    and all tests must use this same loop to avoid 'future attached to
+    a different loop' errors.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     yield loop
-    # Intentionally no loop.close() — avoids "Event loop is closed" errors
-    # during Motor/anyio shutdown that happen after pytest session teardown.
+    # Do NOT call loop.close() — Motor's background threads (server monitor,
+    # kill-cursors, RTT) are still running during interpreter teardown.
 
 
-# ── App client — FastAPI lifespan runs once ───────────────────────────────────
+# ── App client — FastAPI lifespan runs exactly once ──────────────────────────
 
 @pytest_asyncio.fixture(scope="session")
 async def async_client():
     """
-    Session-scoped AsyncClient. DB/Redis connect once via FastAPI lifespan.
-    Wipes the test DB before and after the session.
+    Session-scoped HTTPX client. FastAPI lifespan (Motor connect, Redis
+    connect, index creation) runs once here at session start.
+    Test DB is wiped before yielding (clean slate for every CI run).
     """
+    from app.main import app
+
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -61,13 +92,14 @@ async def async_client():
 
         yield ac
 
+        # Post-session wipe — leave DB clean for next run
         _db = get_database()
         if _db is not None and "test" in str(getattr(_db, "name", "")):
             for coll in await _db.list_collection_names():
                 await _db[coll].delete_many({})
 
 
-# ── DB / Redis handles — synchronous, no await ───────────────────────────────
+# ── Convenience handles (sync — Motor is already connected) ──────────────────
 
 @pytest.fixture(scope="session")
 def db(async_client):
@@ -81,7 +113,7 @@ def redis(async_client):
     return get_redis()
 
 
-# ── Shared test records — session-scoped so Motor awaits use the session loop ─
+# ── Shared test data — session-scoped Motor awaits on session loop ────────────
 
 @pytest_asyncio.fixture(scope="session")
 async def test_admin(db):
