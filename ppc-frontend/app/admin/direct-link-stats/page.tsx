@@ -435,9 +435,13 @@ export default function DirectLinkStatsPage() {
                 <div className="flex gap-2 pt-2 border-t border-gray-100">
                   <button
                     onClick={e => { e.stopPropagation(); generateStatsUrl(pub.id, pub.name) }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors"
+                    disabled={generatingShare === pub.id}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors disabled:opacity-60"
                   >
-                    <Copy size={12} /> Share Stats
+                    {generatingShare === pub.id
+                      ? <><Spinner size={12} /> Getting…</>
+                      : <><Share2 size={12} /> Share Stats</>
+                    }
                   </button>
                   <button
                     onClick={e => {
@@ -754,6 +758,72 @@ export default function DirectLinkStatsPage() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Share Stats Modal ────────────────────────────────────────────── */}
+        {shareModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Publisher Stats Link</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">{shareModal.name}</p>
+                </div>
+                <button onClick={() => setShareModal(null)}
+                  className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
+                <p className="text-sm font-semibold text-blue-900 mb-1">White-label stats page</p>
+                <p className="text-xs text-blue-700">
+                  This link shows only the publisher&apos;s performance stats — no admin panel, no internal branding, no campaign or domain names exposed. Safe to share directly with the publisher.
+                </p>
+              </div>
+
+              {/* URL display */}
+              <div className="mb-5">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Shareable URL</label>
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-1">
+                  <div className="flex-1 px-3 py-2 text-xs font-mono text-gray-700 break-all select-all min-w-0">
+                    {shareModal.url}
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(shareModal.url)
+                      toast.success('Link copied to clipboard!')
+                    } catch {
+                      toast.error('Copy failed — please select and copy manually')
+                    }
+                  }}
+                  className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+                >
+                  <Copy size={15} /> Copy Link
+                </button>
+                <a
+                  href={shareModal.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  <ExternalLink size={15} /> Preview
+                </a>
+              </div>
+
+              <p className="text-xs text-gray-400 text-center mt-4">
+                The link is valid and does not expire. Regenerate a new one if needed.
+              </p>
             </div>
           </div>
         )}
