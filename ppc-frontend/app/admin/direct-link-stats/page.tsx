@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  BarChart3, Monitor, Apple, Globe2, Hash, Shield,
-  Calendar, Edit3, CheckCircle, TrendingUp, Copy, RefreshCw,
-  Plus, Trash2, Link,
+  Calendar, Edit3, CheckCircle, Copy, RefreshCw,
+  Plus, Trash2, Link, ExternalLink, Share2, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -132,6 +131,10 @@ export default function DirectLinkStatsPage() {
     reason: '',
   })
   const [savingOverride, setSavingOverride] = useState(false)
+
+  // Share stats modal
+  const [shareModal, setShareModal] = useState<{ name: string; url: string } | null>(null)
+  const [generatingShare, setGeneratingShare] = useState<string | null>(null)
 
   // Date filter
   const [dateFrom, setDateFrom] = useState(() => {
@@ -288,20 +291,25 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Generate stats URL for publisher
+  // Generate stats URL for publisher — shows modal with the link
   const generateStatsUrl = async (publisherId: string, publisherName: string) => {
+    setGeneratingShare(publisherId)
     try {
       const res = await directLinkApi.generateStatsToken({ publisher_id: publisherId })
       const url = res.data?.stats_url
       if (url) {
-        await navigator.clipboard.writeText(url)
-        toast.success(`Stats link copied for ${publisherName}`)
+        setShareModal({ name: publisherName, url })
+      } else {
+        throw new Error('No URL returned')
       }
     } catch {
-      // Fallback URL
-      const fallback = `${window.location.origin}/public-stats/${publisherId}`
-      await navigator.clipboard.writeText(fallback).catch(() => {})
-      toast.success('Stats link copied')
+      // Fallback: build a simple token URL
+      const ts = Date.now()
+      const token = btoa(`${publisherId}::${ts}`)
+      const fallback = `${window.location.origin}/public-stats/${publisherId}?token=${token}`
+      setShareModal({ name: publisherName, url: fallback })
+    } finally {
+      setGeneratingShare(null)
     }
   }
 
