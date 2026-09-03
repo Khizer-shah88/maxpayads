@@ -15,6 +15,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15          # hard ceiling — kills the job if tests hang
 
     defaults:
       run:
@@ -26,7 +27,9 @@ jobs:
       DEBUG: 'false'
       SECRET_KEY: ci-test-secret-key-ci-test-secret-key
       MONGODB_URL: mongodb://127.0.0.1:27017
+      DB_NAME: ppc_network_test   # use test DB — never touches production data
       REDIS_URL: redis://127.0.0.1:6379
+      # Celery broker — tests never start workers, this just needs to parse
       CELERY_BROKER_URL: amqp://guest:guest@127.0.0.1:5672//
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
       ADMIN_EMAIL: admin@example.com
@@ -45,6 +48,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
       redis:
         image: redis:7.2-alpine
         ports:
@@ -54,15 +58,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      rabbitmq:
-        image: rabbitmq:3-alpine
-        ports:
-          - 5672:5672
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q check_running"
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 10
 
     steps:
       - name: Checkout repository
