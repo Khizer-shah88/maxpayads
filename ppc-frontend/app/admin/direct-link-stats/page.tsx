@@ -156,11 +156,11 @@ export default function DirectLinkStatsPage() {
         directLinkApi.getAll(),
       ])
 
+      // Backend's get_all_publishers already filters role=publisher in DB
+      // Accept any result — no extra role filter needed
       const allPubs: Publisher[] =
         pubResult.status === 'fulfilled'
-          ? (pubResult.value.data?.publishers ?? []).filter(
-              (p: Publisher) => p.role === 'publisher'
-            )
+          ? (pubResult.value.data?.publishers ?? [])
           : []
 
       const allLinks: DirectLink[] =
@@ -171,12 +171,21 @@ export default function DirectLinkStatsPage() {
       setPublishers(allPubs)
       setLinks(allLinks)
 
-      // Log failures for debugging without showing toast
+      // Show a user-visible error if publishers failed to load
       if (pubResult.status === 'rejected') {
-        console.error('Publishers API error:', pubResult.reason?.response?.status, pubResult.reason?.message)
+        const status = pubResult.reason?.response?.status
+        const msg = pubResult.reason?.response?.data?.error
+          || pubResult.reason?.response?.data?.detail
+          || pubResult.reason?.message
+          || 'Unknown error'
+        console.error('Publishers API error:', status, msg)
+        if (status !== 401) {
+          // 401 = auth interceptor already redirects; don't double-toast
+          toast.error(`Could not load publishers (${status ?? 'network error'})`)
+        }
       }
       if (linksResult.status === 'rejected') {
-        console.warn('Direct links API error:', linksResult.reason?.response?.status, linksResult.reason?.message)
+        console.warn('Direct links API:', linksResult.reason?.response?.status)
       }
     } catch (err: any) {
       console.error('Unexpected loadData error:', err)
@@ -194,21 +203,26 @@ export default function DirectLinkStatsPage() {
 
   const selectedPublisher = publishers.find(p => p.id === selectedPublisherId)
 
-  // Aggregated stats per publisher
-  const publisherStats = publishers.map(pub => {
-    const pubLinks = links.filter(l => l.publisher_id === pub.id)
-    const totalClicks = pubLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
-    const totalConversions = pubLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
-    const todayConversions = pubLinks.reduce((s, l) => s + (l.today_conversions || 0), 0)
-    return {
-      ...pub,
-      linkCount: pubLinks.length,
-      totalClicks,
-      totalConversions,
-      todayConversions,
-      cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
-    }
-  }).filter(p => p.linkCount > 0) // only publishers with at least 1 link
+  // Aggregated stats per publisher — only publishers WITH links shown in the grid
+  const publisherStats = publishers
+    .map(pub => {
+      const pubLinks = links.filter(l => l.publisher_id === pub.id)
+      const totalClicks = pubLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
+      const totalConversions = pubLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
+      const todayConversions = pubLinks.reduce((s, l) => s + (l.today_conversions || 0), 0)
+      return {
+        ...pub,
+        linkCount: pubLinks.length,
+        totalClicks,
+        totalConversions,
+        todayConversions,
+        cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
+      }
+    })
+    .filter(p => p.linkCount > 0) // stats grid: only publishers with links
+
+  // All publishers for the Create Link dropdown (regardless of existing links)
+  const publisherDropdownList = publishers
 
   // Create link
   const handleCreateLink = async () => {
@@ -623,10 +637,15 @@ export default function DirectLinkStatsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Publisher <span className="text-red-500">*</span></label>
                   <select value={linkForm.publisher_id} onChange={e => setLinkForm(p => ({ ...p, publisher_id: e.target.value }))} className={inp}>
                     <option value="">Select publisher…</option>
-                    {publishers.map(p => (
+                    {publisherDropdownList.map(p => (
                       <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
                     ))}
                   </select>
+                  {publisherDropdownList.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      No publishers found. Create publishers first from the Publishers page.
+                    </p>
+                  )}
                 </div>
 
                 <div>
