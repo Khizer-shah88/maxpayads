@@ -143,7 +143,7 @@ export default function DirectLinkStatsPage() {
 
   // Auth init
   useEffect(() => {
-    initialize().catch(() => {})
+    try { initialize() } catch { /* ignore */ }
   }, [initialize])
 
   // Load publishers + links together
