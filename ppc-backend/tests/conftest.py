@@ -28,21 +28,17 @@ from app.main import app
 @pytest.fixture(scope="session")
 def event_loop():
     """
-    Create a session-scoped event loop for all async tests.
-    Uses a fresh event loop and ensures it's set as the running loop
-    for the duration of the test session. Closes the loop after tests
-    finish to avoid leaving resources open.
+    Single session-scoped event loop shared by all async fixtures and tests.
+    Motor's connection pool binds to this loop during FastAPI lifespan startup.
+
+    NOT closed explicitly — Motor's executor threads and anyio task groups
+    may still be finishing during interpreter teardown. Python GC handles it.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        yield loop
-    finally:
-        try:
-            asyncio.set_event_loop(None)
-        except Exception:
-            pass
-        loop.close()
+    yield loop
+    # Intentionally no loop.close() — avoids "Event loop is closed" errors
+    # during Motor/anyio shutdown that happen after pytest session teardown.
 
 
 # ── App client — FastAPI lifespan runs once ───────────────────────────────────
