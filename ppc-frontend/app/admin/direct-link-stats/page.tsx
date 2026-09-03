@@ -10,6 +10,7 @@ import Sidebar from '@/components/shared/Sidebar'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { adminApi, directLinkApi } from '@/lib/api'
+import { safeBtoa } from '@/lib/safe-format'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -362,39 +363,48 @@ export default function DirectLinkStatsPage() {
       return String(d)
     }
   }
-  const safeBtoa = (s: string) => {
-    try {
-      return btoa(s)
-    } catch {
-      // Fallback to encodeURIComponent for unicode strings
-      return encodeURIComponent(s)
-    }
-  }
+  // use imported safeBtoa for robust base64 encoding across environments
 
   const inp = "w-full px-3 py-2 border border-gray-200 rounded-xl text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm"
+  // Basic input class
 
-  // Error boundary for the entire component
-  if (error) {
-    return (
-      <div className="flex min-h-screen bg-[#f8f9fb]">
-        <Sidebar />
-        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
-          <div className="text-center py-20">
-            <div className="text-red-500 mb-4">
-              <BarChart3 size={48} className="mx-auto mb-4 opacity-30" />
+  // ErrorBoundary class to catch rendering errors in child components
+  class ErrorBoundary extends (require('react').Component) {
+    constructor(props: any) {
+      super(props)
+      this.state = { hasError: false, error: null }
+    }
+    static getDerivedStateFromError(error: any) {
+      return { hasError: true, error }
+    }
+    componentDidCatch(error: any, info: any) {
+      console.error('DirectLinkStats render error:', error, info)
+    }
+    render() {
+      if (this.state.hasError) {
+        return (
+          <div className="flex min-h-screen bg-[#f8f9fb]">
+            <Sidebar />
+            <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+              <div className="text-center py-20">
+                <div className="text-red-500 mb-4">
+                  <BarChart3 size={48} className="mx-auto mb-4 opacity-30" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Client Error</h2>
+                <p className="text-gray-600 mb-4">An unexpected client-side error occurred. Check console for details.</p>
+                <button 
+                  onClick={() => window.location.reload()} 
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
+                >
+                  Reload Page
+                </button>
+              </div>
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Error Loading Page</h2>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
-            >
-              Reload Page
-            </button>
           </div>
-        </div>
-      </div>
-    )
+        )
+      }
+      return this.props.children
+    }
   }
 
   return (
@@ -555,7 +565,7 @@ export default function DirectLinkStatsPage() {
                       publisher.conversion_rate >= 5 ? 'text-emerald-600' :
                       publisher.conversion_rate >= 2 ? 'text-amber-600' : 'text-gray-700'
                     }`}>
-                      {publisher.conversion_rate.toFixed(2)}%
+                      {fmtPercent(publisher.conversion_rate)}%
                     </span>
                   </div>
                 </div>

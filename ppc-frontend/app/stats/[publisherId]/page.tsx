@@ -7,6 +7,7 @@ import {
   Users, MousePointer, Percent, Activity, Globe,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { safeAtob } from '@/lib/safe-format'
 
 // ─── White-Label Publisher Stats Page ─────────────────────────────────────────
 // This page is completely white-labeled - no internal branding
@@ -51,7 +52,7 @@ export default function PublisherStatsPage() {
       // For now, we'll simulate the data
       
       // Decode and validate token (basic validation)
-      const decodedToken = atob(token)
+      const decodedToken = safeAtob(token)
       
       // Simulate API call delay
       await new Promise(resolve => setTimeout(resolve, 1000))

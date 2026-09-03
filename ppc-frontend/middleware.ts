@@ -258,12 +258,15 @@ export async function middleware(request: NextRequest) {
 // Helper to add security headers to any response
 function addSecurityHeaders(response: NextResponse): NextResponse {
   // Set CSP header to allow Next.js functionality
+  // Content Security Policy
+  // - Allow stylesheet/font hosts used by Google Fonts so font loading isn't blocked
+  // - Remove 'unsafe-eval' to prevent string evaluation in scripts
   const cspHeader = `
     default-src 'self';
-    script-src 'self' 'unsafe-inline' 'unsafe-eval';
-    style-src 'self' 'unsafe-inline';
+    script-src 'self' 'unsafe-inline';
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
     img-src 'self' data: blob: https:;
-    font-src 'self' data:;
+    font-src 'self' data: https://fonts.gstatic.com;
     connect-src 'self' https:;
     frame-src 'self';
     base-uri 'self';
