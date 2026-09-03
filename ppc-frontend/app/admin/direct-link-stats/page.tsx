@@ -140,7 +140,7 @@ export default function DirectLinkStatsPage() {
             unique_mac_clicks: 0,
             total_conversions: 0,
             conversion_rate: 0,
-            shareable_stats_url: `${typeof window !== 'undefined' ? window.location.origin : ''}/public-stats/${btoa(publisher.id + ':' + publisher.email)}`,
+            shareable_stats_url: `${typeof window !== 'undefined' ? window.location.origin : ''}/public-stats/${safeBtoa(publisher.id + ':' + publisher.email)}`,
             date_from: dateFrom,
             date_to: dateTo,
           })
@@ -324,7 +324,7 @@ export default function DirectLinkStatsPage() {
       
       if (err?.response?.status === 404) {
         // Generate fallback URL if API not available
-        const fallbackUrl = `${window.location.origin}/public-stats/${publisherId}?token=${btoa(publisherId + ':' + Date.now())}`
+        const fallbackUrl = `${window.location.origin}/public-stats/${publisherId}?token=${safeBtoa(publisherId + ':' + Date.now())}`
         await copyShareableLink(fallbackUrl, publisherName)
         toast.success(`Fallback stats link generated for ${publisherName}`)
       } else {
@@ -334,6 +334,42 @@ export default function DirectLinkStatsPage() {
   }
 
   const selectedPublisherData = publisherStats.find(p => p.publisher_id === selectedPublisher)
+
+  // Safe format helpers to avoid runtime errors from undefined values
+  const fmtNum = (n: any) => (typeof n === 'number' ? n.toLocaleString() : '0')
+  const fmtPercent = (n: any) => {
+    try {
+      const v = Number(n || 0)
+      return v.toFixed(2)
+    } catch {
+      return '0.00'
+    }
+  }
+  const fmtRatio = (num: any, den: any) => {
+    try {
+      const n = Number(num || 0)
+      const d = Number(den || 0)
+      return d > 0 ? ((n / d) * 100).toFixed(2) : '0.00'
+    } catch {
+      return '0.00'
+    }
+  }
+  const fmtDate = (d: any) => {
+    try {
+      const dt = new Date(d)
+      return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString()
+    } catch {
+      return String(d)
+    }
+  }
+  const safeBtoa = (s: string) => {
+    try {
+      return btoa(s)
+    } catch {
+      // Fallback to encodeURIComponent for unicode strings
+      return encodeURIComponent(s)
+    }
+  }
 
   const inp = "w-full px-3 py-2 border border-gray-200 rounded-xl text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary/30 text-sm"
 
@@ -492,14 +528,14 @@ export default function DirectLinkStatsPage() {
                       <Monitor size={12} className="text-blue-500" />
                       <span className="text-gray-400">Windows</span>
                     </div>
-                    <span className="font-semibold text-blue-600">{publisher.unique_windows_clicks.toLocaleString()}</span>
+                    <span className="font-semibold text-blue-600">{fmtNum(publisher.unique_windows_clicks)}</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <div className="flex items-center gap-1">
                       <Apple size={12} className="text-gray-600" />
                       <span className="text-gray-400">Mac</span>
                     </div>
-                    <span className="font-semibold text-gray-600">{publisher.unique_mac_clicks.toLocaleString()}</span>
+                    <span className="font-semibold text-gray-600">{fmtNum(publisher.unique_mac_clicks)}</span>
                   </div>
                 </div>
 
@@ -507,11 +543,11 @@ export default function DirectLinkStatsPage() {
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-gray-400">Total Impressions</span>
-                    <span className="font-semibold text-gray-700">{publisher.total_clicks.toLocaleString()}</span>
+                    <span className="font-semibold text-gray-700">{fmtNum(publisher.total_clicks)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-400">Conversions</span>
-                    <span className="font-semibold text-gray-700">{publisher.total_conversions.toLocaleString()}</span>
+                    <span className="font-semibold text-gray-700">{fmtNum(publisher.total_conversions)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-400">CR</span>
@@ -603,15 +639,15 @@ export default function DirectLinkStatsPage() {
                       return (
                         <tr key={day.date} className="border-b border-gray-50 hover:bg-gray-50/50">
                           <td className="py-3 px-2 font-medium text-gray-900">
-                            {new Date(day.date).toLocaleDateString()}
+                            {fmtDate(day.date)}
                           </td>
                           <td className="py-3 px-2 text-right text-gray-700">
-                            {day.raw_clicks.toLocaleString()}
+                            {fmtNum(day.raw_clicks)}
                           </td>
                           <td className={`py-3 px-2 text-right font-medium ${
                             isOverride ? 'text-amber-600' : 'text-gray-700'
                           }`}>
-                            {displayConversions.toLocaleString()}
+                            {fmtNum(displayConversions)}
                             {isOverride && (
                               <span className="ml-1 text-xs text-amber-500">*</span>
                             )}
@@ -621,7 +657,7 @@ export default function DirectLinkStatsPage() {
                             day.conversion_rate >= 5 ? 'text-emerald-600' :
                             day.conversion_rate >= 2 ? 'text-orange-500' : 'text-gray-700'
                           }`}>
-                            {day.conversion_rate.toFixed(2)}%
+                            {fmtPercent(day.conversion_rate)}%
                             {isOverride && (
                               <span className="ml-1 text-xs text-amber-500">*</span>
                             )}
@@ -677,8 +713,8 @@ export default function DirectLinkStatsPage() {
         {showManualCRModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900 mb-5">
-                Manual Conversion Override — {new Date(crForm.date).toLocaleDateString()}
+                <h3 className="text-lg font-bold text-gray-900 mb-5">
+                Manual Conversion Override — {fmtDate(crForm.date)}
               </h3>
 
               <div className="space-y-4">
@@ -694,7 +730,7 @@ export default function DirectLinkStatsPage() {
                       id="raw-clicks"
                       name="rawClicks"
                       type="text"
-                      value={dailyConversions.find(d => d.date === crForm.date)?.raw_clicks.toLocaleString() || '0'}
+                      value={dailyConversions.find(d => d.date === crForm.date)?.raw_clicks ? fmtNum(dailyConversions.find(d => d.date === crForm.date)!.raw_clicks) : '0'}
                       disabled
                       className={inp + " bg-gray-50 text-gray-500"}
                     />
@@ -739,7 +775,7 @@ export default function DirectLinkStatsPage() {
                       {crForm.manual_conversions} conversions ÷ {dailyConversions.find(d => d.date === crForm.date)?.raw_clicks || 0} clicks = 
                       <span className="font-semibold ml-1">
                         {dailyConversions.find(d => d.date === crForm.date)?.raw_clicks 
-                          ? ((crForm.manual_conversions / dailyConversions.find(d => d.date === crForm.date)!.raw_clicks) * 100).toFixed(2)
+                          ? fmtRatio(crForm.manual_conversions, dailyConversions.find(d => d.date === crForm.date)!.raw_clicks)
                           : '0.00'
                         }% CR
                       </span>

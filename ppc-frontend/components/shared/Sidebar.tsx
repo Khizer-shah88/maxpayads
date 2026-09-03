@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Users, Megaphone, Tag, FileText, DollarSign,
-  ShieldAlert, BarChart3, CreditCard, ClipboardList, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2, LayoutTemplate, Link2,
+  ShieldAlert, BarChart3, CreditCard, ClipboardList, LogOut, ChevronLeft, Menu, Zap, KeyRound, Globe2, LayoutTemplate,
 } from 'lucide-react'
 import { removeAdminTokens, getAdminUser } from '@/lib/auth'
 import type { AuthUser } from '@/types'
@@ -17,7 +17,6 @@ const navItems = [
   { label: 'Offers', href: '/admin/offers', icon: Tag },
   { label: 'Landing Pages', href: '/admin/landing-pages', icon: FileText },
   { label: 'Prelander Templates', href: '/admin/prelander-templates', icon: LayoutTemplate },
-  { label: 'Direct Links', href: '/admin/direct-links', icon: Link2 },
   { label: 'Direct Link Stats', href: '/admin/direct-link-stats', icon: BarChart3 },
   { label: 'Redirection Domains', href: '/admin/redirection-domains', icon: Globe2 },
   { label: 'CPC Settings', href: '/admin/cpc', icon: DollarSign },
