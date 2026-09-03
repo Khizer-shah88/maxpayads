@@ -146,11 +146,10 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
     last_base = await resolve_domain_url(db, "last", publisher_id)
     intermediate_base = await resolve_domain_url(db, "intermediate", publisher_id)
     has_managed_domain = bool(last_base or intermediate_base)
-    
-    if landing_page and (landing_page.get("lander_url") or has_managed_domain):
-        # Template page lives on Last Domain when configured, otherwise Intermediate,
-        # otherwise the landing page's configured lander_url (legacy)
-        legacy_lander = (landing_page.get("lander_url") or "").strip()
+
+    # Enter prelander path if: we have a landing page OR managed domains are configured
+    if has_managed_domain or (landing_page and landing_page.get("lander_url")):
+        legacy_lander = (landing_page.get("lander_url") if landing_page else "") or ""
         lander_url = (legacy_lander or last_base or intermediate_base or "").strip().rstrip("/")
         if not lander_url.startswith("http"):
             normalized = normalize_domain(lander_url or legacy_lander)
@@ -158,12 +157,17 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         if not lander_url:
             return resolved_offer_url, referrer_suppression
         
-        # Optional intermediate hop before the template page (rare three-step flow)
+        # Optional intermediate hop before the template page (three-step flow)
+        # When both intermediate and last domains are configured:
+        #   click → intermediate/d/{slug} → (hop) → last/d/{slug} → prelander
+        # When only one domain:
+        #   click → that_domain/d/{slug} → prelander
         if intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
-            lander_url = intermediate_base.rstrip("/")
-            template_base = last_base.rstrip("/")
+            # Three-step: send to intermediate first; it will hop to last domain
+            entry_domain = intermediate_base.rstrip("/")
         else:
-            template_base = lander_url
+            # Two-step: send directly to last (or intermediate if last not set)
+            entry_domain = (last_base or intermediate_base or lander_url).rstrip("/")
         
         # Generate encrypted slug — encodes OS + timestamp + offer_id + campaign_id + country_code
         ts = str(int(time.time()))
@@ -174,8 +178,8 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         key = "mxp2026"
         xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
         slug = base64.urlsafe_b64encode(xored).decode().rstrip("=")
-        prelander_dest = f"{template_base}/d/{slug}"
-        logger.info(f"[ROUTE] Sending to prelander: {prelander_dest}")
+        prelander_dest = f"{entry_domain}/d/{slug}"
+        logger.info(f"[ROUTE] Sending to prelander entry: {prelander_dest}")
         return prelander_dest, referrer_suppression
     
     # --- Fallback: no prelander found, go directly to offer URL ---
