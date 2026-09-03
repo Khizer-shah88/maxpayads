@@ -27,7 +27,8 @@ jobs:
       SECRET_KEY: ci-test-secret-key-ci-test-secret-key
       MONGODB_URL: mongodb://127.0.0.1:27017
       REDIS_URL: redis://127.0.0.1:6379
-      CELERY_BROKER_URL: amqp://guest:guest@127.0.0.1:5672//
+      # Use the GitHub Actions service host name for RabbitMQ
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
       ADMIN_EMAIL: admin@example.com
       ADMIN_PASSWORD: changeme123
@@ -51,6 +52,16 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+          - 15672:15672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics --host localhost status"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
