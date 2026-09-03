@@ -150,17 +150,36 @@ export default function DirectLinkStatsPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [pubRes, linksRes] = await Promise.all([
+      // Load both independently — one failure never blocks the other
+      const [pubResult, linksResult] = await Promise.allSettled([
         adminApi.getPublishers({ limit: 500 }),
-        directLinkApi.getAll().catch(() => ({ data: { links: [] } })),
+        directLinkApi.getAll(),
       ])
-      const allPubs: Publisher[] = (pubRes.data?.publishers ?? []).filter(
-        (p: Publisher) => p.role === 'publisher'
-      )
+
+      const allPubs: Publisher[] =
+        pubResult.status === 'fulfilled'
+          ? (pubResult.value.data?.publishers ?? []).filter(
+              (p: Publisher) => p.role === 'publisher'
+            )
+          : []
+
+      const allLinks: DirectLink[] =
+        linksResult.status === 'fulfilled'
+          ? (linksResult.value.data?.links ?? [])
+          : []
+
       setPublishers(allPubs)
-      setLinks(linksRes.data?.links ?? [])
+      setLinks(allLinks)
+
+      // Log failures for debugging without showing toast
+      if (pubResult.status === 'rejected') {
+        console.error('Publishers API error:', pubResult.reason?.response?.status, pubResult.reason?.message)
+      }
+      if (linksResult.status === 'rejected') {
+        console.warn('Direct links API error:', linksResult.reason?.response?.status, linksResult.reason?.message)
+      }
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Failed to load data')
+      console.error('Unexpected loadData error:', err)
     } finally {
       setLoading(false)
     }
