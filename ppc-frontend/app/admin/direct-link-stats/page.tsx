@@ -152,7 +152,7 @@ export default function DirectLinkStatsPage() {
     try {
       // Load both independently — one failure never blocks the other
       const [pubResult, linksResult] = await Promise.allSettled([
-        adminApi.getPublishers({ limit: 500 }),
+        adminApi.getPublishers({ limit: 200 }),
         directLinkApi.getAll(),
       ])
 
