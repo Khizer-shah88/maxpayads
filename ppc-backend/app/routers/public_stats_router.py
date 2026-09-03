@@ -26,16 +26,17 @@ router = APIRouter(prefix="/public-stats", tags=["Public Stats"])
 def _validate_token(token: str, publisher_id: str) -> bool:
     """
     Validate the stats access token.
-    Token is base64( publisher_id:email:timestamp )
-    Returns True if valid and publisher_id matches.
+    Token is urlsafe_base64( publisher_id:email:timestamp ) with padding stripped.
+    Returns True if the publisher_id in the token matches the URL parameter.
     """
     try:
-        decoded = base64.b64decode(token + "==").decode("utf-8")
+        # Restore stripped padding
+        padded = token + "=" * (4 - len(token) % 4) if len(token) % 4 else token
+        decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
         parts = decoded.split(":")
         if len(parts) < 1:
             return False
-        token_pub_id = parts[0]
-        return token_pub_id == publisher_id
+        return parts[0] == publisher_id
     except Exception:
         return False
 

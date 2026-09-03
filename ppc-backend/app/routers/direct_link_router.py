@@ -549,23 +549,22 @@ async def delete_conversion_override(
 
 @router.post("/generate-stats-token")
 async def generate_stats_token(
+    request: Request,
     data: dict,
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
     """
     Generate a white-label stats access token for a publisher.
+    Returns a shareable URL that opens the publisher stats page.
+    The URL uses the current app domain — no hardcoded stats domain needed.
     
-    Body: {
-        "publisher_id": "...",
-        "domain": "stats.yournetwork.com" (optional)
-    }
+    Body: { "publisher_id": "..." }
     """
     publisher_id = data.get("publisher_id")
     if not publisher_id:
         raise HTTPException(status_code=400, detail="publisher_id is required")
-    
-    # Verify publisher exists
+
     try:
         pub_oid = ObjectId(publisher_id)
         publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
@@ -573,25 +572,28 @@ async def generate_stats_token(
             raise HTTPException(status_code=404, detail="Publisher not found")
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid publisher ID")
-    
-    # Generate token with publisher info and timestamp
+
+    # URL-safe base64 token — safe to pass as query param without encoding issues
     import base64
     timestamp = int(datetime.utcnow().timestamp())
     token_data = f"{publisher_id}:{publisher.get('email', '')}:{timestamp}"
-    token = base64.b64encode(token_data.encode()).decode()
-    
-    # Get domain from settings or use provided
-    domain = data.get("domain")
-    if not domain:
-        domain_setting = await db.system_settings.find_one({"key": "stats_domain"})
-        domain = domain_setting.get("value", "stats.maxpayads.com") if domain_setting else "stats.maxpayads.com"
-    
-    stats_url = f"https://{domain}/public-stats/{publisher_id}?token={token}"
-    
+    token = base64.urlsafe_b64encode(token_data.encode()).decode().rstrip("=")
+
+    # Build URL using the request origin (same domain as admin panel)
+    # This ensures the link always works regardless of where the app is hosted
+    forwarded_proto = request.headers.get("x-forwarded-proto", "https")
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    if forwarded_host:
+        base_url = f"{forwarded_proto}://{forwarded_host}"
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    stats_url = f"{base_url}/public-stats/{publisher_id}?token={token}"
+
     return {
         "success": True,
         "token": token,
         "stats_url": stats_url,
         "publisher_name": publisher.get("name", "Unknown"),
-        "expires": None  # No expiration for now
+        "expires": None,
     }
