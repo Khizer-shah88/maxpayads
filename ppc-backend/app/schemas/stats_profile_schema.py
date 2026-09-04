@@ -47,7 +47,7 @@ class StatsProfileResponse(BaseModel):
 
 class ManualConversionCreate(BaseModel):
     """Create manual conversion entry for a specific date"""
-    date: str = Field(..., description="Date in YYYY-MM-DD format", regex=r'^\d{4}-\d{2}-\d{2}$')
+    date: str = Field(..., description="Date in YYYY-MM-DD format", pattern=r'^\d{4}-\d{2}-\d{2}$')
     publisher_id: str = Field(..., description="Publisher ID")
     link_id: Optional[str] = Field(None, description="Specific link ID (optional, applies to all links if not set)")
     conversions: int = Field(..., ge=0, description="Number of conversions")
