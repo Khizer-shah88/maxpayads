@@ -177,5 +177,60 @@ def test_bypass_default_value():
         "Bypass should default to OFF when not specified"
 
 
+def test_clean_campaign_url_with_domain_prefix():
+    """Test URL cleaning removes domain prefixes"""
+    from app.services.traffic_router import _clean_campaign_url
+    
+    # Test cases with domain prefix
+    test_cases = [
+        # Input URL → Expected output
+        ("https://clicksetopfile.cc/https/examplewin.com", "https://examplewin.com"),
+        ("https://domain.com/https/offer.com/product", "https://offer.com/product"),
+        ("https://tracking.com/http/example.com", "http://example.com"),
+        ("http://proxy.com/https/target.com", "https://target.com"),
+    ]
+    
+    for input_url, expected_output in test_cases:
+        result = _clean_campaign_url(input_url)
+        assert result == expected_output, \
+            f"Failed: {input_url} should become {expected_output}, got {result}"
+
+
+def test_clean_campaign_url_normal_urls():
+    """Test URL cleaning preserves normal URLs"""
+    from app.services.traffic_router import _clean_campaign_url
+    
+    # Normal URLs should pass through unchanged
+    normal_urls = [
+        "https://example.com",
+        "https://offer.com/product?id=123",
+        "http://example.com/page",
+        "https://subdomain.example.com/path",
+    ]
+    
+    for url in normal_urls:
+        result = _clean_campaign_url(url)
+        assert result == url, f"Normal URL should not be modified: {url} → {result}"
+
+
+def test_clean_campaign_url_adds_protocol():
+    """Test URL cleaning adds https:// if missing"""
+    from app.services.traffic_router import _clean_campaign_url
+    
+    # URLs without protocol
+    assert _clean_campaign_url("example.com") == "https://example.com"
+    assert _clean_campaign_url("www.example.com") == "https://www.example.com"
+    assert _clean_campaign_url("offer.com/product") == "https://offer.com/product"
+
+
+def test_clean_campaign_url_handles_empty():
+    """Test URL cleaning handles empty/None values"""
+    from app.services.traffic_router import _clean_campaign_url, FALLBACK_URL
+    
+    # Empty or None should return fallback
+    assert _clean_campaign_url("") == FALLBACK_URL
+    assert _clean_campaign_url(None) == FALLBACK_URL
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

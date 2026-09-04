@@ -10,6 +10,55 @@ logger = logging.getLogger(__name__)
 FALLBACK_URL = "https://example.com"
 
 
+def _clean_campaign_url(url: str) -> str:
+    """
+    Clean campaign URL to ensure it's properly formatted.
+    
+    Fixes common issues:
+    - Removes accidental domain prefixes like: https://domain.com/https/actualurl.com
+    - Ensures proper https:// or http:// protocol
+    - Handles malformed URLs from database
+    
+    Examples:
+        https://clicksetopfile.cc/https/examplewin.com → https://examplewin.com
+        https://domain.com/http/example.com → http://example.com
+        examplewin.com → https://examplewin.com
+    """
+    if not url:
+        return FALLBACK_URL
+    
+    # Remove any trailing/leading whitespace
+    url = url.strip()
+    
+    # Check if URL has a domain prefix followed by /https/ or /http/
+    # Pattern: https://somedomain.com/https/actualurl.com
+    if "/https/" in url:
+        # Extract everything after /https/
+        parts = url.split("/https/")
+        if len(parts) > 1:
+            url = "https://" + parts[-1]
+            logger.info(f"[URL CLEAN] Removed domain prefix, extracted: {url}")
+    
+    elif "/http/" in url:
+        # Extract everything after /http/
+        parts = url.split("/http/")
+        if len(parts) > 1:
+            url = "http://" + parts[-1]
+            logger.info(f"[URL CLEAN] Removed domain prefix, extracted: {url}")
+    
+    # Ensure URL starts with http:// or https://
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+        logger.info(f"[URL CLEAN] Added https:// protocol: {url}")
+    
+    # Final validation
+    if not url.startswith(("http://", "https://")):
+        logger.warning(f"[URL CLEAN] Invalid URL after cleaning: {url}, using fallback")
+        return FALLBACK_URL
+    
+    return url
+
+
 def select_weighted_landing_page(landing_pages: list) -> Optional[dict]:
     """
     Pick one landing page using weighted random rotation, keyed on each page's
@@ -150,8 +199,11 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
     # The traffic still goes through anchor → inter domain for logging, 
     # but the final destination is the campaign URL, not the prelander
     if is_bypass_on:
-        logger.info(f"[ROUTE] BYPASS MODE: Direct to campaign URL: {resolved_offer_url}")
-        return resolved_offer_url, referrer_suppression
+        # Clean the URL to ensure it's properly formatted
+        # Remove any domain prefix that might have been accidentally added
+        clean_url = _clean_campaign_url(resolved_offer_url)
+        logger.info(f"[ROUTE] BYPASS MODE: Direct to campaign URL: {clean_url}")
+        return clean_url, referrer_suppression
     
     # --- Step 5: Build prelander destination URL ---
     # Bypass OFF: Build prelander URL with encrypted slug
