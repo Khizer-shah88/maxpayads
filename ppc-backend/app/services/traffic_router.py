@@ -101,31 +101,33 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
     )
     
     # --- Step 4: Check direct redirect mode ---
-    # direct_redirect_mode = "Bypass Redirect Links" toggle in admin
-    # When ON:  skip intermediate domain hop → go directly to last domain (prelander)
-    # When OFF: full chain → anchor → intermediate → last (prelander)
+    # Bypass ON  → return campaign URL directly (skip all prelander domains)
+    # Bypass OFF → route through intermediate → last domain (prelander)
     is_direct = False
     try:
         from bson import ObjectId
-        # campaign_id is a string; must convert to ObjectId for MongoDB lookup
         campaign_oid = ObjectId(campaign_id) if isinstance(campaign_id, str) else campaign_id
         campaign = await db.campaigns.find_one({"_id": campaign_oid})
         if campaign and campaign.get("direct_redirect_mode"):
             is_direct = True
-            logger.info("[ROUTE] Campaign direct redirect ON — bypassing intermediate")
+            logger.info("[ROUTE] Bypass ON — returning campaign URL directly")
     except Exception as e:
-        logger.debug("[ROUTE] Campaign lookup for bypass check failed: %s", e)
+        logger.debug("[ROUTE] Campaign bypass lookup failed: %s", e)
 
-    # Also check if the matched offer has direct redirect mode
+    # Also check matched offer
     if not is_direct and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
         try:
             from bson import ObjectId as OId
             offer = await db.offers.find_one({"_id": OId(metadata["source_id"])})
             if offer and offer.get("direct_redirect_mode"):
                 is_direct = True
-                logger.info("[ROUTE] Offer direct redirect ON — bypassing intermediate")
+                logger.info("[ROUTE] Offer bypass ON — returning campaign URL directly")
         except Exception:
             pass
+
+    # Bypass ON: go straight to the campaign/offer URL
+    if is_direct:
+        return resolved_offer_url, referrer_suppression
     
     # --- Step 5: Build prelander destination URL ---
     os_param = "mac" if (os_name or "").lower() in ("mac os", "mac os x", "macos", "ios") else "windows"
@@ -162,23 +164,15 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         if not lander_url:
             return resolved_offer_url, referrer_suppression
 
-        # Determine entry domain based on bypass mode:
-        #
-        # Bypass OFF (is_direct=False):  intermediate → last  (full 3-step chain)
-        # Bypass ON  (is_direct=True):   last domain directly  (skip intermediate hop)
-        #
-        if is_direct:
-            # Skip intermediate — send directly to last domain
-            entry_domain = (last_base or lander_url).rstrip("/")
-            logger.info("[ROUTE] Bypass ON — going directly to last domain: %s", entry_domain)
-        elif intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
-            # Full 3-step: intermediate will hop to last
+        # Bypass OFF: always use full chain
+        # With both intermediate + last: entry = intermediate (will hop to last)
+        # With only one domain:          entry = that domain directly
+        if intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] Bypass OFF — entering at intermediate domain: %s", entry_domain)
+            logger.info("[ROUTE] Full chain — entering at intermediate: %s", entry_domain)
         else:
-            # No intermediate configured — go directly to last/lander
             entry_domain = (last_base or intermediate_base or lander_url).rstrip("/")
-            logger.info("[ROUTE] No intermediate — entering at: %s", entry_domain)
+            logger.info("[ROUTE] Single domain — entering at: %s", entry_domain)
 
         # Generate encrypted slug
         ts = str(int(time.time()))
