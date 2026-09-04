@@ -77,6 +77,37 @@ def _decode_slug(slug: str) -> Optional[dict]:
 router = APIRouter(prefix="/prelander", tags=["Prelander"])
 
 
+@router.get("/domain-type")
+async def get_domain_type(
+    host: str,
+    db=Depends(get_db),
+):
+    """
+    Returns the configured domain_type for a hostname.
+    Called by /d/[slug] page on load to decide whether to redirect.
+    Response: { "domain_type": "last" | "intermediate" | "link" | "unknown",
+                "last_domain": "https://lastdomain.com" | null }
+    """
+    from app.services.domain_service import normalize_domain, resolve_domain_url
+
+    h = normalize_domain(host)
+    if not h:
+        return {"domain_type": "unknown", "last_domain": None}
+
+    doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
+    domain_type = doc.get("domain_type", "unknown") if doc else "unknown"
+
+    last_domain = None
+    if domain_type != "last":
+        publisher_ids = (doc or {}).get("publisher_ids") or []
+        publisher_id = publisher_ids[0] if publisher_ids else None
+        last_base = await resolve_domain_url(db, "last", publisher_id)
+        if last_base and normalize_domain(last_base) != h:
+            last_domain = last_base.rstrip("/")
+
+    return {"domain_type": domain_type, "last_domain": last_domain}
+
+
 @router.get("/resolve/{slug}")
 async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
@@ -90,13 +121,19 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
     from app.services.domain_service import normalize_domain, resolve_domain_url
 
-    # The /api/ proxy strips the original Host header. The frontend sends the
-    # real browser hostname via X-Prelander-Host so we can detect domain type.
-    prelander_host = (
-        request.headers.get("x-prelander-host", "")
-        or request.headers.get("host", "")
-    ).split(":")[0].lower()
-    host_normalized = normalize_domain(prelander_host)
+    # Use X-Prelander-Host (sent by browser JS) OR Host header (sent by nginx).
+    # X-Prelander-Host is the real browser domain even through the Next.js proxy.
+    # Host header is set by nginx to $host so it's also reliable when nginx
+    # routes /api/prelander directly to FastAPI (as in the catch-all block).
+    xph = request.headers.get("x-prelander-host", "").strip()
+    host_header = request.headers.get("host", "").strip()
+
+    # Prefer X-Prelander-Host; fall back to Host; normalize both
+    prelander_host = normalize_domain(xph or host_header)
+    
+    # Also check the raw host without port stripping (normalize_domain already strips port)
+    if not prelander_host:
+        prelander_host = normalize_domain(host_header)
 
     # ── Domain-type detection & hop ───────────────────────────────────────────
     # Always try to redirect to the last domain unless the current host IS
@@ -105,10 +142,10 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     #   2. Host is registered as link/anchor   → redirect to last
     #   3. Host is NOT in DB at all            → redirect to last (if one exists)
     #   4. Host IS the last domain             → serve prelander data directly
-    if host_normalized:
+    if prelander_host:
         # Is this host already the last/prelander domain?
         last_doc = await db.redirection_domains.find_one({
-            "domain": host_normalized,
+            "domain": prelander_host,
             "domain_type": "last",
             "status": "active",
         })
@@ -116,7 +153,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         if not last_doc:
             # Not a last domain — try to find the last domain and hop to it
             inter_doc = await db.redirection_domains.find_one({
-                "domain": host_normalized,
+                "domain": prelander_host,
                 "domain_type": "intermediate",
                 "status": "active",
             })
@@ -124,9 +161,9 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             publisher_id = publisher_ids[0] if publisher_ids else None
 
             last_base = await resolve_domain_url(db, "last", publisher_id)
-            if last_base and normalize_domain(last_base) != host_normalized:
+            if last_base and normalize_domain(last_base) != prelander_host:
                 dest = f"{last_base.rstrip('/')}/d/{slug}"
-                logger.info("[PRELANDER] Hopping %s → %s", host_normalized, dest)
+                logger.info("[PRELANDER] Hopping %s → %s", prelander_host, dest)
                 return RedirectResponse(
                     url=dest,
                     status_code=302,

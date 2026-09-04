@@ -34,23 +34,25 @@ export default function PrelanderSlugPage() {
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
 
       try {
+        // Step 1: check if this hostname is the last domain.
+        // If not, redirect the browser to the last domain with the same slug.
+        // This avoids fetch() swallowing the 302 from the backend.
+        const dtRes = await fetch(
+          `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}`
+        )
+        if (dtRes.ok) {
+          const dt = await dtRes.json()
+          if (dt.domain_type !== 'last' && dt.last_domain) {
+            // Not on the last domain — navigate directly (no fetch redirect magic)
+            window.location.replace(`${dt.last_domain}/d/${encodeURIComponent(slug)}`)
+            return
+          }
+        }
+
+        // Step 2: on the last domain (or domain-type unknown) — fetch prelander data
         const res = await fetch(`/api/prelander/resolve/${encodeURIComponent(slug)}`, {
           headers: { 'X-Prelander-Host': hostname },
-          redirect: 'follow',
         })
-
-        // Detect cross-domain redirect (intermediate → last hop).
-        // fetch() follows 302s automatically. If the final URL's hostname
-        // differs from ours, navigate the browser there.
-        if (res.redirected && res.url) {
-          try {
-            const destHostname = new URL(res.url).hostname
-            if (destHostname && destHostname !== hostname) {
-              window.location.replace(res.url)
-              return
-            }
-          } catch { /* ignore malformed URL */ }
-        }
 
         if (!res.ok) {
           setBlocked(true)
