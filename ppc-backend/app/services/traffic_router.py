@@ -100,35 +100,32 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         f"rule_type={metadata.get('rule_type')}, priority={metadata.get('priority')}"
     )
     
-    # --- Step 4: Check direct redirect mode (skip prelander) ---
+    # --- Step 4: Check direct redirect mode ---
+    # direct_redirect_mode = "Bypass Redirect Links" toggle in admin
+    # When ON:  skip intermediate domain hop → go directly to last domain (prelander)
+    # When OFF: full chain → anchor → intermediate → last (prelander)
     campaign = await db.campaigns.find_one({"_id": campaign_id})
-    if campaign and campaign.get("direct_redirect_mode"):
-        logger.info("[ROUTE] Campaign direct redirect ON — bypassing prelander")
-        return resolved_offer_url, referrer_suppression
-    
-    # Check if matched offer has direct redirect mode
-    if metadata.get("rule_type") == "offer" and metadata.get("source_id"):
+    is_direct = (campaign and campaign.get("direct_redirect_mode")) or False
+
+    # Also check if matched offer has direct redirect mode
+    if not is_direct and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
         try:
             from bson import ObjectId
             offer = await db.offers.find_one({"_id": ObjectId(metadata["source_id"])})
             if offer and offer.get("direct_redirect_mode"):
-                logger.info("[ROUTE] Offer direct redirect ON — bypassing prelander")
-                return resolved_offer_url, referrer_suppression
+                is_direct = True
         except Exception:
             pass
     
-    # --- Step 5: Show prelander/landing page (direct redirect is OFF) ---
+    # --- Step 5: Build prelander destination URL ---
     os_param = "mac" if (os_name or "").lower() in ("mac os", "mac os x", "macos", "ios") else "windows"
-    
-    # Match campaign_id whether stored as string or ObjectId in MongoDB
+
     campaign_filter = campaign_id_filter(campaign_id)
     landing_pages = await db.landing_pages.find({
         **campaign_filter,
         "status": "active",
     }).to_list(length=100)
-    
-    # Fall back to unassigned (global) landing pages only when none are bound
-    # to this campaign — keeps weighted rotation working for legacy data
+
     if not landing_pages:
         landing_pages = await db.landing_pages.find({
             "status": "active",
@@ -138,16 +135,14 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
                 {"campaign_id": ""},
             ],
         }).to_list(length=100)
-    
-    # Distribute traffic across the campaign's active landing pages by weight
+
     landing_page = select_weighted_landing_page(landing_pages)
-    
+
     from app.services.domain_service import resolve_domain_url, domain_to_url, normalize_domain
     last_base = await resolve_domain_url(db, "last", publisher_id)
     intermediate_base = await resolve_domain_url(db, "intermediate", publisher_id)
     has_managed_domain = bool(last_base or intermediate_base)
 
-    # Enter prelander path if: we have a landing page OR managed domains are configured
     if has_managed_domain or (landing_page and landing_page.get("lander_url")):
         legacy_lander = (landing_page.get("lander_url") if landing_page else "") or ""
         lander_url = (legacy_lander or last_base or intermediate_base or "").strip().rstrip("/")
@@ -156,34 +151,39 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
             lander_url = domain_to_url(normalized) if normalized else ""
         if not lander_url:
             return resolved_offer_url, referrer_suppression
-        
-        # Optional intermediate hop before the template page (three-step flow)
-        # When both intermediate and last domains are configured:
-        #   click → intermediate/d/{slug} → (hop) → last/d/{slug} → prelander
-        # When only one domain:
-        #   click → that_domain/d/{slug} → prelander
-        if intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
-            # Three-step: send to intermediate first; it will hop to last domain
+
+        # Determine entry domain based on bypass mode:
+        #
+        # Bypass OFF (is_direct=False):  intermediate → last  (full 3-step chain)
+        # Bypass ON  (is_direct=True):   last domain directly  (skip intermediate hop)
+        #
+        if is_direct:
+            # Skip intermediate — send directly to last domain
+            entry_domain = (last_base or lander_url).rstrip("/")
+            logger.info("[ROUTE] Bypass ON — going directly to last domain: %s", entry_domain)
+        elif intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
+            # Full 3-step: intermediate will hop to last
             entry_domain = intermediate_base.rstrip("/")
+            logger.info("[ROUTE] Bypass OFF — entering at intermediate domain: %s", entry_domain)
         else:
-            # Two-step: send directly to last (or intermediate if last not set)
+            # No intermediate configured — go directly to last/lander
             entry_domain = (last_base or intermediate_base or lander_url).rstrip("/")
-        
-        # Generate encrypted slug — encodes OS + timestamp + offer_id + campaign_id + country_code
+            logger.info("[ROUTE] No intermediate — entering at: %s", entry_domain)
+
+        # Generate encrypted slug
         ts = str(int(time.time()))
         offer_id = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
         cc = country_code or ""
         raw = f"{os_param}:{ts}:{offer_id}:{campaign_id}:{cc}"
-        # XOR with key then base64url encode
         key = "mxp2026"
         xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
         slug = base64.urlsafe_b64encode(xored).decode().rstrip("=")
         prelander_dest = f"{entry_domain}/d/{slug}"
-        logger.info(f"[ROUTE] Sending to prelander entry: {prelander_dest}")
+        logger.info("[ROUTE] Prelander destination: %s", prelander_dest)
         return prelander_dest, referrer_suppression
-    
-    # --- Fallback: no prelander found, go directly to offer URL ---
-    logger.info("[ROUTE] No prelander configured, routing directly to offer")
+
+    # No prelander configured — fall through to offer URL
+    logger.info("[ROUTE] No prelander configured, routing to offer URL")
     return resolved_offer_url, referrer_suppression
 
 
