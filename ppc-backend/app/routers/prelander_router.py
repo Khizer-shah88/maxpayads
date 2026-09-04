@@ -98,26 +98,41 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     ).split(":")[0].lower()
     host_normalized = normalize_domain(prelander_host)
 
-    # ── Intermediate domain detection ─────────────────────────────────────────
+    # ── Domain-type detection & hop ───────────────────────────────────────────
+    # Always try to redirect to the last domain unless the current host IS
+    # already the last domain. This handles three cases:
+    #   1. Host is registered as intermediate  → redirect to last
+    #   2. Host is registered as link/anchor   → redirect to last
+    #   3. Host is NOT in DB at all            → redirect to last (if one exists)
+    #   4. Host IS the last domain             → serve prelander data directly
     if host_normalized:
-        inter_doc = await db.redirection_domains.find_one({
+        # Is this host already the last/prelander domain?
+        last_doc = await db.redirection_domains.find_one({
             "domain": host_normalized,
-            "domain_type": "intermediate",
+            "domain_type": "last",
             "status": "active",
         })
-        if inter_doc:
-            publisher_ids = inter_doc.get("publisher_ids") or []
+
+        if not last_doc:
+            # Not a last domain — try to find the last domain and hop to it
+            inter_doc = await db.redirection_domains.find_one({
+                "domain": host_normalized,
+                "domain_type": "intermediate",
+                "status": "active",
+            })
+            publisher_ids = (inter_doc or {}).get("publisher_ids") or []
             publisher_id = publisher_ids[0] if publisher_ids else None
+
             last_base = await resolve_domain_url(db, "last", publisher_id)
-            if last_base:
+            if last_base and normalize_domain(last_base) != host_normalized:
                 dest = f"{last_base.rstrip('/')}/d/{slug}"
-                logger.info("[PRELANDER] Intermediate hop %s → %s", host_normalized, dest)
+                logger.info("[PRELANDER] Hopping %s → %s", host_normalized, dest)
                 return RedirectResponse(
                     url=dest,
                     status_code=302,
                     headers={"Referrer-Policy": "no-referrer"},
                 )
-            # No last domain configured — fall through and serve data directly
+        # Either on last domain already, or no last domain configured → serve data
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
