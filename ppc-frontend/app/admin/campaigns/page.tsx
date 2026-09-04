@@ -260,10 +260,7 @@ export default function CampaignsPage() {
       toast.error('Please enter a campaign URL')
       return
     }
-    if (form.countries.length === 0) {
-      toast.error('Please select at least one country')
-      return
-    }
+    // Countries are optional — bypass mode works without country rules
     setSavingDevice(device)
     try {
       await campaignApi.saveDeviceCampaign(device, {
@@ -280,6 +277,8 @@ export default function CampaignsPage() {
       })
       toast.success(`${DEVICES.find(d => d.key === device)?.label || device} campaign saved!`)
       setSavedDevices(prev => new Set(prev).add(device))
+      // Re-sync from DB so toggle state reflects what was actually persisted
+      await loadData()
     } catch {
       toast.error('Failed to save campaign')
     } finally {
