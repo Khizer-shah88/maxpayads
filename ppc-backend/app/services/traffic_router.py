@@ -104,16 +104,26 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
     # direct_redirect_mode = "Bypass Redirect Links" toggle in admin
     # When ON:  skip intermediate domain hop → go directly to last domain (prelander)
     # When OFF: full chain → anchor → intermediate → last (prelander)
-    campaign = await db.campaigns.find_one({"_id": campaign_id})
-    is_direct = (campaign and campaign.get("direct_redirect_mode")) or False
+    is_direct = False
+    try:
+        from bson import ObjectId
+        # campaign_id is a string; must convert to ObjectId for MongoDB lookup
+        campaign_oid = ObjectId(campaign_id) if isinstance(campaign_id, str) else campaign_id
+        campaign = await db.campaigns.find_one({"_id": campaign_oid})
+        if campaign and campaign.get("direct_redirect_mode"):
+            is_direct = True
+            logger.info("[ROUTE] Campaign direct redirect ON — bypassing intermediate")
+    except Exception as e:
+        logger.debug("[ROUTE] Campaign lookup for bypass check failed: %s", e)
 
-    # Also check if matched offer has direct redirect mode
+    # Also check if the matched offer has direct redirect mode
     if not is_direct and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
         try:
-            from bson import ObjectId
-            offer = await db.offers.find_one({"_id": ObjectId(metadata["source_id"])})
+            from bson import ObjectId as OId
+            offer = await db.offers.find_one({"_id": OId(metadata["source_id"])})
             if offer and offer.get("direct_redirect_mode"):
                 is_direct = True
+                logger.info("[ROUTE] Offer direct redirect ON — bypassing intermediate")
         except Exception:
             pass
     
