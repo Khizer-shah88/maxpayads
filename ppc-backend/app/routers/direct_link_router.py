@@ -317,8 +317,15 @@ async def record_conversion(
     db=Depends(get_db),
 ):
     """
-    Record a hit on a direct link.  Called by the masked landing page when
-    the user arrives via a hash-slug URL.  Returns the destination URL.
+    Record a hit on a direct link with fraud validation and enriched tracking.
+    Called by the masked landing page when the user arrives via a hash-slug URL.
+    
+    Tracks:
+    - Unique clicks (first click from IP in time window)
+    - Valid clicks (passed fraud detection)
+    - Invalid clicks (failed fraud checks)
+    - OS, device type, country
+    - Fraud score
 
     Body: { "slug": "<8-char slug>", "metadata": {...} }
     """
@@ -349,29 +356,110 @@ async def record_conversion(
     ip = cf_ip or (xff.split(",")[0].strip() if xff else "") or (
         request.client.host if request.client else "unknown"
     )
+    
+    user_agent = request.headers.get("user-agent", "")
+
+    # ─── Parse device info (OS, device type, browser) ───
+    from app.utils.ua_parser import parse_user_agent
+    device_info = parse_user_agent(user_agent)
+    
+    # ─── Get country from IP ───
+    from app.utils.geo_utils import lookup_ip
+    country_code, country_name = lookup_ip(ip)
+    
+    # ─── Check if unique click (first from this IP in last 24h) ───
+    yesterday = datetime.utcnow() - timedelta(days=1)
+    previous_click = await db.direct_link_events.find_one({
+        "ip_address": ip,
+        "link_id": link_id,
+        "created_at": {"$gte": yesterday}
+    })
+    is_unique = previous_click is None
+    
+    # ─── Run fraud detection (basic checks) ───
+    is_valid = True
+    is_fraud = False
+    fraud_score = 0.0
+    fraud_reason = None
+    
+    try:
+        # Import fraud detection from click router
+        from app.services import fraud_detection_service as fds
+        
+        # Basic validation checks
+        headers_dict = dict(request.headers)
+        
+        # Check for bot/datacenter IPs
+        if await fds.is_datacenter_ip(ip):
+            is_valid = False
+            is_fraud = True
+            fraud_reason = "datacenter_ip"
+            fraud_score = 1.0
+        # Check for suspicious user agent
+        elif not user_agent or len(user_agent) < 20:
+            is_valid = False
+            fraud_reason = "suspicious_ua"
+            fraud_score = 0.8
+        # Check rate limiting (too many clicks from same IP)
+        elif not is_unique:
+            # Additional check: count clicks in last hour
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            recent_clicks = await db.direct_link_events.count_documents({
+                "ip_address": ip,
+                "created_at": {"$gte": one_hour_ago}
+            })
+            if recent_clicks >= 10:  # More than 10 clicks/hour = suspicious
+                is_valid = False
+                fraud_reason = "rate_limit"
+                fraud_score = 0.7
+    except Exception as e:
+        # If fraud check fails, log but don't block
+        import logging
+        logging.warning(f"Direct link fraud check failed: {e}")
+        # Default to valid if check fails
+        pass
 
     event = {
         "link_id": link_id,
         "publisher_id": publisher_id,
         "slug": slug,
         "ip_address": ip,
-        "user_agent": request.headers.get("user-agent", "")[:500],
+        "user_agent": user_agent[:500],
         "referrer": request.headers.get("referer", ""),
         "metadata": data.get("metadata") or {},
         "created_at": datetime.utcnow(),
+        # Enhanced tracking fields
+        "is_unique": is_unique,
+        "is_valid": is_valid,
+        "is_fraud": is_fraud,
+        "fraud_score": fraud_score,
+        "fraud_reason": fraud_reason,
+        "device_type": device_info.get("device_type", "unknown"),
+        "os": device_info.get("os", "Unknown"),
+        "browser": device_info.get("browser", "Unknown"),
+        "country_code": country_code or "Unknown",
+        "country_name": country_name or "Unknown",
     }
     await db.direct_link_events.insert_one(event)
 
     # Increment counters on the link document
+    # Only count valid clicks in total
+    inc_data = {"total_clicks": 1}
+    if is_valid:
+        inc_data["total_conversions"] = 1
+    
     await db.direct_links.update_one(
         {"_id": doc["_id"]},
-        {"$inc": {"total_clicks": 1, "total_conversions": 1}},
+        {"$inc": inc_data},
     )
 
     return {
         "success": True,
         "destination_url": doc.get("destination_url", ""),
         "prelander_template_id": doc.get("prelander_template_id"),
+        # Return validation status for debugging (optional)
+        "is_valid": is_valid,
+        "is_unique": is_unique,
     }
 
 
