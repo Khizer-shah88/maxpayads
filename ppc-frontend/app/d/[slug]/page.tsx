@@ -44,13 +44,14 @@ export default function PrelanderSlugPage() {
           const dt = await dtRes.json()
           if (dt.domain_type !== 'last' && dt.last_domain) {
             // Not on the last domain — navigate directly (no fetch redirect magic)
-            window.location.replace(`${dt.last_domain}/d/${encodeURIComponent(slug)}`)
+            // Use the raw slug (base64url chars are URL-safe, no encoding needed)
+            window.location.replace(`${dt.last_domain}/d/${slug}`)
             return
           }
         }
 
         // Step 2: on the last domain (or domain-type unknown) — fetch prelander data
-        const res = await fetch(`/api/prelander/resolve/${encodeURIComponent(slug)}`, {
+        const res = await fetch(`/api/prelander/resolve/${slug}`, {
           headers: { 'X-Prelander-Host': hostname },
         })
 
