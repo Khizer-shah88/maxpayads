@@ -35,7 +35,10 @@ _XOR_KEY = "mxp2026"
 
 
 def _decode_slug(slug: str) -> Optional[dict]:
-    """Decode an XOR-encrypted slug → {os, offer_id, campaign_id, country_code}."""
+    """
+    Decode an XOR-encrypted slug → {os, timestamp, offer_id, campaign_id, country_code}.
+    Returns None if invalid or if the timestamp is older than 1 hour (expired).
+    """
     try:
         padded = slug + "=" * (4 - len(slug) % 4) if len(slug) % 4 else slug
         xored = base64.urlsafe_b64decode(padded)
@@ -44,6 +47,22 @@ def _decode_slug(slug: str) -> Optional[dict]:
             return None
         parts = raw.split(":")
         result = {"os": parts[0]}
+
+        # parts[1] is the timestamp — validate expiry (3600s = 1 hour)
+        if len(parts) >= 2 and parts[1]:
+            try:
+                import time
+                slug_ts = int(parts[1])
+                age = time.time() - slug_ts
+                if age > 3600:  # 1 hour expiry
+                    logger.warning("[PRELANDER] Slug expired (age=%ds)", int(age))
+                    return None
+                if age < -60:   # Clock skew guard — reject future timestamps
+                    logger.warning("[PRELANDER] Slug from the future, rejected")
+                    return None
+            except (ValueError, TypeError):
+                return None
+
         if len(parts) >= 3 and parts[2]:
             result["offer_id"] = parts[2]
         if len(parts) >= 4 and parts[3]:
@@ -71,8 +90,13 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
     from app.services.domain_service import normalize_domain, resolve_domain_url
 
-    host = request.headers.get("host", "").split(":")[0].lower()
-    host_normalized = normalize_domain(host)
+    # The /api/ proxy strips the original Host header. The frontend sends the
+    # real browser hostname via X-Prelander-Host so we can detect domain type.
+    prelander_host = (
+        request.headers.get("x-prelander-host", "")
+        or request.headers.get("host", "")
+    ).split(":")[0].lower()
+    host_normalized = normalize_domain(prelander_host)
 
     # ── Intermediate domain detection ─────────────────────────────────────────
     if host_normalized:
