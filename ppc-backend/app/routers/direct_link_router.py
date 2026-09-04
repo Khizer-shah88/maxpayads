@@ -588,6 +588,17 @@ async def generate_stats_token(
     else:
         base_url = str(request.base_url).rstrip("/")
 
+    # Check if a custom white-label stats domain is configured.
+    # If set, the share link uses that domain so the admin's main domain is hidden.
+    # Configure via Admin → Settings → stats_domain (e.g. "stats.yourdomain.com")
+    stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+    if stats_domain_doc and stats_domain_doc.get("value", "").strip():
+        custom_domain = stats_domain_doc["value"].strip().rstrip("/")
+        # Ensure protocol prefix
+        if not custom_domain.startswith("http"):
+            custom_domain = f"https://{custom_domain}"
+        base_url = custom_domain
+
     stats_url = f"{base_url}/public-stats/{publisher_id}?token={token}"
 
     return {

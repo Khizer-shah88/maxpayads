@@ -136,6 +136,10 @@ export default function DirectLinkStatsPage() {
   const [shareModal, setShareModal] = useState<{ name: string; url: string } | null>(null)
   const [generatingShare, setGeneratingShare] = useState<string | null>(null)
 
+  // Stats domain config (white-label domain for share links)
+  const [statsDomain, setStatsDomain] = useState('')
+  const [savingDomain, setSavingDomain] = useState(false)
+
   // Date filter
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
@@ -198,6 +202,25 @@ export default function DirectLinkStatsPage() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Load saved stats domain setting
+  useEffect(() => {
+    adminApi.getStatsDomain()
+      .then(res => { if (res.data?.domain) setStatsDomain(res.data.domain) })
+      .catch(() => {})
+  }, [])
+
+  const saveStatsDomain = async () => {
+    setSavingDomain(true)
+    try {
+      await adminApi.setStatsDomain(statsDomain.trim())
+      toast.success('Stats domain saved — new share links will use this domain')
+    } catch {
+      toast.error('Failed to save stats domain')
+    } finally {
+      setSavingDomain(false)
+    }
+  }
 
   // Links for selected publisher
   const publisherLinks = selectedPublisherId
@@ -303,9 +326,9 @@ export default function DirectLinkStatsPage() {
         throw new Error('No URL returned')
       }
     } catch {
-      // Fallback: build a simple token URL
-      const ts = Date.now()
-      const token = btoa(`${publisherId}::${ts}`)
+      // Fallback: build token locally and use path only
+      const ts = Math.floor(Date.now() / 1000)
+      const token = btoa(`${publisherId}::${ts}`).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
       const fallback = `${window.location.origin}/public-stats/${publisherId}?token=${token}`
       setShareModal({ name: publisherName, url: fallback })
     } finally {
@@ -337,6 +360,42 @@ export default function DirectLinkStatsPage() {
           >
             <Plus size={18} /> Create Link
           </button>
+        </div>
+
+        {/* Stats domain config — white-label domain for share links */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                White-Label Stats Domain
+              </label>
+              <p className="text-xs text-gray-400 mb-2">
+                When set, publisher share links use this domain instead of <code className="bg-gray-100 px-1 rounded">vertexmonetize.com</code>.
+                Point this domain&apos;s DNS to the same server, then enter it here.
+              </p>
+              <input
+                value={statsDomain}
+                onChange={e => setStatsDomain(e.target.value)}
+                placeholder="stats.yournetwork.com  (no https://)"
+                className={inp}
+              />
+              {statsDomain && (
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Share links will look like:{' '}
+                  <code className="bg-gray-100 px-1 rounded">
+                    https://{statsDomain}/public-stats/…
+                  </code>
+                </p>
+              )}
+            </div>
+            <button
+              onClick={saveStatsDomain}
+              disabled={savingDomain}
+              className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-sm font-semibold flex items-center gap-2 whitespace-nowrap disabled:bg-gray-300 self-end"
+            >
+              {savingDomain ? <Spinner size={16} /> : 'Save Domain'}
+            </button>
+          </div>
         </div>
 
         {/* Summary cards */}
@@ -762,6 +821,7 @@ export default function DirectLinkStatsPage() {
           </div>
         )}
 
+        {/* Share Stats Modal info update — domain config notice */}
         {/* ── Share Stats Modal ────────────────────────────────────────────── */}
         {shareModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -782,7 +842,9 @@ export default function DirectLinkStatsPage() {
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
                 <p className="text-sm font-semibold text-blue-900 mb-1">White-label stats page</p>
                 <p className="text-xs text-blue-700">
-                  This link shows only the publisher&apos;s performance stats — no admin panel, no internal branding, no campaign or domain names exposed. Safe to share directly with the publisher.
+                  This link shows only performance stats — no admin panel, no internal branding, no campaign or domain names exposed.
+                  To use a custom domain (e.g. <code className="bg-blue-100 px-1 rounded">stats.yourdomain.com</code>), set it in
+                  Admin → Settings → <strong>stats_domain</strong>.
                 </p>
               </div>
 
@@ -822,7 +884,7 @@ export default function DirectLinkStatsPage() {
               </div>
 
               <p className="text-xs text-gray-400 text-center mt-4">
-                The link is valid and does not expire. Regenerate a new one if needed.
+                To use a custom white-label domain, configure <strong>stats_domain</strong> in system settings.
               </p>
             </div>
           </div>

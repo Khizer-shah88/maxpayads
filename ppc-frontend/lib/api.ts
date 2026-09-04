@@ -85,6 +85,8 @@ export const adminApi = {
   deleteVideo: (id: string) => api.delete(`/admin/videos/${id}`),
   getDomain: () => api.get('/admin/domain'),
   setDomain: (domain: string) => api.put('/admin/domain', { domain }),
+  getStatsDomain: () => api.get('/admin/stats-domain'),
+  setStatsDomain: (domain: string) => api.put('/admin/stats-domain', { domain }),
   getRedirectionDomains: (params?: { domain_type?: string; status?: string; publisher_id?: string }) =>
     api.get('/admin/redirection-domains', { params }),
   createRedirectionDomain: (data: object) => api.post('/admin/redirection-domains', data),

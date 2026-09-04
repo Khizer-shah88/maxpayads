@@ -631,6 +631,37 @@ async def set_domain(
     return {"success": True, "message": "Domain updated", "domain": domain}
 
 
+@router.get("/stats-domain")
+async def get_stats_domain(
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Get the configured white-label stats domain."""
+    doc = await db.system_settings.find_one({"key": "stats_domain"})
+    domain = doc.get("value", "") if doc else ""
+    return {"success": True, "domain": domain}
+
+
+@router.put("/stats-domain")
+async def set_stats_domain(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Set the white-label domain used in publisher stats share links.
+    When set, share links use this domain instead of the admin panel domain.
+    Example: 'stats.yournetwork.com' → link becomes https://stats.yournetwork.com/public-stats/...
+    """
+    domain = data.get("domain", "").strip().rstrip("/")
+    await db.system_settings.update_one(
+        {"key": "stats_domain"},
+        {"$set": {"key": "stats_domain", "value": domain, "updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+    return {"success": True, "message": "Stats domain updated", "domain": domain}
+
+
 @router.put("/settings/cpc/bulk")
 async def bulk_update_cpc(
     data: dict,
