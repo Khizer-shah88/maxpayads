@@ -47,12 +47,25 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
     """
     Core traffic routing engine - USES CENTRALIZED TARGETING ENGINE.
     
-    Flow:
+    Traffic Routing Flow Based on Bypass Status:
+    
+    BYPASS OFF (default):
+        Publisher Smartlink → Anchor Domain → Inter Domain → Logs → Prelander Domain
+        - The final destination is a prelander page on the "last" domain
+        - User sees the prelander template before reaching the campaign URL
+    
+    BYPASS ON (direct_redirect_mode=True):
+        Publisher Smartlink → Anchor Domain → Inter Domain → Logs → Direct Campaign URL
+        - The prelander is completely skipped
+        - User goes directly to the campaign/offer URL
+        - Still passes through anchor/inter domains for logging
+    
+    Steps:
     1. Resolve campaign for click
     2. Build click context
     3. Use TargetingEngine to resolve destination (all rules centralized)
-    4. Check direct redirect mode
-    5. Show prelander if needed
+    4. Check bypass status (direct_redirect_mode on campaign or offer)
+    5. Return direct campaign URL (if bypass ON) or prelander URL (if bypass OFF)
     
     Returns (destination_url, referrer_suppression).
     """
@@ -100,36 +113,56 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         f"rule_type={metadata.get('rule_type')}, priority={metadata.get('priority')}"
     )
     
-    # --- Step 4: Check direct redirect mode ---
-    # Bypass ON  → return campaign URL directly (skip all prelander domains)
-    # Bypass OFF → route through intermediate → last domain (prelander)
-    is_direct = False
+    # --- Step 4: Check direct redirect mode (Bypass) ---
+    # This determines the final destination after passing through anchor and inter domains
+    # 
+    # Flow with Bypass OFF (default):
+    #   Publisher Smartlink → Anchor Domain → Inter Domain → Logs → Prelander Domain
+    # 
+    # Flow with Bypass ON:
+    #   Publisher Smartlink → Anchor Domain → Inter Domain → Logs → Direct Campaign URL
+    # 
+    # NOTE: The anchor and inter domains are handled externally (middleware/click endpoint).
+    # This function only determines what URL to send as the FINAL destination.
+    is_bypass_on = False
     try:
         from bson import ObjectId
         campaign_oid = ObjectId(campaign_id) if isinstance(campaign_id, str) else campaign_id
         campaign = await db.campaigns.find_one({"_id": campaign_oid})
         if campaign and campaign.get("direct_redirect_mode"):
-            is_direct = True
-            logger.info("[ROUTE] Bypass ON — returning campaign URL directly")
+            is_bypass_on = True
+            logger.info("[ROUTE] Bypass ON (campaign) — will skip prelander, go direct to campaign URL")
     except Exception as e:
         logger.debug("[ROUTE] Campaign bypass lookup failed: %s", e)
 
-    # Also check matched offer
-    if not is_direct and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
+    # Also check matched offer for bypass setting
+    if not is_bypass_on and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
         try:
             from bson import ObjectId as OId
             offer = await db.offers.find_one({"_id": OId(metadata["source_id"])})
             if offer and offer.get("direct_redirect_mode"):
-                is_direct = True
-                logger.info("[ROUTE] Offer bypass ON — returning campaign URL directly")
+                is_bypass_on = True
+                logger.info("[ROUTE] Bypass ON (offer) — will skip prelander, go direct to campaign URL")
         except Exception:
             pass
 
-    # Bypass ON: go straight to the campaign/offer URL
-    if is_direct:
+    # Bypass ON: Return the campaign/offer URL directly (skip prelander)
+    # The traffic still goes through anchor → inter domain for logging, 
+    # but the final destination is the campaign URL, not the prelander
+    if is_bypass_on:
+        logger.info(f"[ROUTE] BYPASS MODE: Direct to campaign URL: {resolved_offer_url}")
         return resolved_offer_url, referrer_suppression
     
     # --- Step 5: Build prelander destination URL ---
+    # Bypass OFF: Build prelander URL with encrypted slug
+    # The traffic flow is: Anchor → Inter → Prelander Domain (last)
+    # 
+    # Note: The anchor and inter domains handle session cookies and logging.
+    # This function generates the prelander URL that will be the final destination
+    # after passing through those domains.
+    
+    logger.info("[ROUTE] BYPASS OFF: Building prelander destination")
+    
     os_param = "mac" if (os_name or "").lower() in ("mac os", "mac os x", "macos", "ios") else "windows"
 
     campaign_filter = campaign_id_filter(campaign_id)
@@ -162,24 +195,25 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
             normalized = normalize_domain(lander_url or legacy_lander)
             lander_url = domain_to_url(normalized) if normalized else ""
         if not lander_url:
+            logger.warning("[ROUTE] No valid lander URL, falling back to campaign URL")
             return resolved_offer_url, referrer_suppression
 
-        # Bypass OFF: always send the final URL to the last domain.
-        # The intermediate domain is used for click processing (already done
-        # in the /click endpoint). The prelander URL should always land on
-        # the last domain directly so the user sees the template there.
-        # If only intermediate exists (no last domain), use intermediate.
+        # Use the last (prelander) domain as the final destination
+        # The full flow: Publisher → Anchor → Inter → Last Domain (prelander page)
+        # The inter domain logs the click before redirecting to the last domain
         if last_base:
             entry_domain = last_base.rstrip("/")
-            logger.info("[ROUTE] Sending to last domain: %s", entry_domain)
+            logger.info("[ROUTE] Prelander domain (last): %s", entry_domain)
         elif intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] No last domain, using intermediate: %s", entry_domain)
+            logger.info("[ROUTE] No last domain configured, using intermediate: %s", entry_domain)
         else:
             entry_domain = lander_url.rstrip("/")
-            logger.info("[ROUTE] Using legacy lander: %s", entry_domain)
+            logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
 
-        # Generate encrypted slug
+        # Generate encrypted slug containing campaign data
+        # This slug is decoded on the prelander page to show the appropriate template
+        # and eventually redirect to the campaign URL
         ts = str(int(time.time()))
         offer_id = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
         cc = country_code or ""
@@ -188,11 +222,11 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
         slug = base64.urlsafe_b64encode(xored).decode().rstrip("=")
         prelander_dest = f"{entry_domain}/d/{slug}"
-        logger.info("[ROUTE] Prelander destination: %s", prelander_dest)
+        logger.info("[ROUTE] Final prelander URL: %s", prelander_dest)
         return prelander_dest, referrer_suppression
 
-    # No prelander configured — fall through to offer URL
-    logger.info("[ROUTE] No prelander configured, routing to offer URL")
+    # No prelander configured — fall back to campaign URL
+    logger.info("[ROUTE] No prelander domain configured, falling back to campaign URL")
     return resolved_offer_url, referrer_suppression
 
 
