@@ -164,15 +164,20 @@ async def route_click(click_data: dict, db, redis) -> Tuple[str, bool]:
         if not lander_url:
             return resolved_offer_url, referrer_suppression
 
-        # Bypass OFF: always use full chain
-        # With both intermediate + last: entry = intermediate (will hop to last)
-        # With only one domain:          entry = that domain directly
-        if intermediate_base and last_base and normalize_domain(intermediate_base) != normalize_domain(last_base):
+        # Bypass OFF: always send the final URL to the last domain.
+        # The intermediate domain is used for click processing (already done
+        # in the /click endpoint). The prelander URL should always land on
+        # the last domain directly so the user sees the template there.
+        # If only intermediate exists (no last domain), use intermediate.
+        if last_base:
+            entry_domain = last_base.rstrip("/")
+            logger.info("[ROUTE] Sending to last domain: %s", entry_domain)
+        elif intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] Full chain — entering at intermediate: %s", entry_domain)
+            logger.info("[ROUTE] No last domain, using intermediate: %s", entry_domain)
         else:
-            entry_domain = (last_base or intermediate_base or lander_url).rstrip("/")
-            logger.info("[ROUTE] Single domain — entering at: %s", entry_domain)
+            entry_domain = lander_url.rstrip("/")
+            logger.info("[ROUTE] Using legacy lander: %s", entry_domain)
 
         # Generate encrypted slug
         ts = str(int(time.time()))
