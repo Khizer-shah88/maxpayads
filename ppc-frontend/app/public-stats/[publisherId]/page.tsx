@@ -85,7 +85,7 @@ export default function PublisherStatsPage() {
       setStats({
         publisher_name: apiData.publisher_name || 'Publisher',
         publisher_id: apiData.publisher_id || publisherId,
-        date_range: apiData.date_range || `Last 30 Days`,
+        date_range: apiData.date_range || 'Last 30 Days',
         total_impressions: apiData.total_impressions || apiData.total_clicks || 0,
         unique_windows_clicks: apiData.unique_windows_clicks || 0,
         unique_mac_clicks: apiData.unique_mac_clicks || 0,
@@ -121,7 +121,7 @@ export default function PublisherStatsPage() {
   }, [loadStats])
 
   const downloadReport = () => {
-    if (!stats) return
+    if (!stats || !stats.daily_breakdown) return
     
     // Generate CSV report
     const csvContent = [
@@ -187,6 +187,12 @@ export default function PublisherStatsPage() {
     return <Activity className="w-4 h-4 text-gray-500" />
   }
 
+  // Safe access to optional values with defaults
+  const totalImpressions = stats.total_impressions || 0
+  const totalConversions = stats.total_conversions || 0
+  const conversionRate = stats.conversion_rate || 0
+  const dailyBreakdown = stats.daily_breakdown || []
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Header */}
@@ -203,7 +209,8 @@ export default function PublisherStatsPage() {
             <div className="flex items-center gap-3">
               <button
                 onClick={downloadReport}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors"
+                disabled={!dailyBreakdown.length}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
                 Download Report
@@ -227,7 +234,7 @@ export default function PublisherStatsPage() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Total Impressions</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_impressions.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{totalImpressions.toLocaleString()}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-sm">
@@ -248,7 +255,7 @@ export default function PublisherStatsPage() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Total Conversions</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.total_conversions.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{totalConversions.toLocaleString()}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-sm text-emerald-600">
@@ -264,7 +271,7 @@ export default function PublisherStatsPage() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Conversion Rate</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.conversion_rate.toFixed(2)}%</p>
+                <p className="text-2xl font-bold text-gray-900">{conversionRate.toFixed(2)}%</p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-sm">
@@ -307,7 +314,7 @@ export default function PublisherStatsPage() {
                 <div className="text-right">
                   <p className="text-xl font-bold text-blue-900">{stats.unique_windows_clicks.toLocaleString()}</p>
                   <p className="text-sm text-blue-600">
-                    {((stats.unique_windows_clicks / stats.total_impressions) * 100).toFixed(1)}%
+                    {totalImpressions > 0 ? ((stats.unique_windows_clicks / totalImpressions) * 100).toFixed(1) : 0}%
                   </p>
                 </div>
               </div>
@@ -323,7 +330,7 @@ export default function PublisherStatsPage() {
                 <div className="text-right">
                   <p className="text-xl font-bold text-gray-900">{stats.unique_mac_clicks.toLocaleString()}</p>
                   <p className="text-sm text-gray-600">
-                    {((stats.unique_mac_clicks / stats.total_impressions) * 100).toFixed(1)}%
+                    {totalImpressions > 0 ? ((stats.unique_mac_clicks / totalImpressions) * 100).toFixed(1) : 0}%
                   </p>
                 </div>
               </div>
@@ -351,7 +358,7 @@ export default function PublisherStatsPage() {
                   <div>
                     <p className="text-sm font-semibold text-emerald-800">Strong Performance</p>
                     <p className="text-xs text-emerald-700 mt-1">
-                      Your {stats.conversion_rate.toFixed(2)}% conversion rate exceeds the industry average of 3.2%
+                      Your {conversionRate.toFixed(2)}% conversion rate exceeds the industry average of 3.2%
                     </p>
                   </div>
                 </div>
@@ -363,7 +370,10 @@ export default function PublisherStatsPage() {
                   <div>
                     <p className="text-sm font-semibold text-blue-800">Best Performance Day</p>
                     <p className="text-xs text-blue-700 mt-1">
-                      {new Date(stats.insights.top_performance_day).toLocaleDateString()} showed the highest conversion rate
+                      {stats.insights.top_performance_day 
+                        ? `${new Date(stats.insights.top_performance_day).toLocaleDateString()} showed the highest conversion rate`
+                        : 'Data not available yet'
+                      }
                     </p>
                   </div>
                 </div>
@@ -387,58 +397,60 @@ export default function PublisherStatsPage() {
         </div>
 
         {/* Daily Performance Chart */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Daily Performance Trend (Last 14 Days)</h3>
-          
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {stats.daily_breakdown.slice(0, 14).map(day => (
-              <div key={day.date} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-3 h-3 bg-blue-500 rounded-full flex-shrink-0"></div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {new Date(day.date).toLocaleDateString('en-US', { 
-                        weekday: 'short', 
-                        month: 'short', 
-                        day: 'numeric' 
-                      })}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <Monitor size={12} />
-                        <span>{day.windows_clicks}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <Apple size={12} />
-                        <span>{day.mac_clicks}</span>
+        {dailyBreakdown.length > 0 && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Daily Performance Trend (Last 14 Days)</h3>
+            
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {dailyBreakdown.slice(0, 14).map(day => (
+                <div key={day.date} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                  <div className="flex items-center gap-4">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full flex-shrink-0"></div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(day.date).toLocaleDateString('en-US', { 
+                          weekday: 'short', 
+                          month: 'short', 
+                          day: 'numeric' 
+                        })}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <div className="flex items-center gap-1 text-xs text-gray-500">
+                          <Monitor size={12} />
+                          <span>{day.windows_clicks}</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-xs text-gray-500">
+                          <Apple size={12} />
+                          <span>{day.mac_clicks}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
+                  <div className="flex items-center gap-6 text-sm">
+                    <div className="text-right">
+                      <p className="text-gray-600">Clicks</p>
+                      <p className="font-semibold text-gray-900">{day.clicks.toLocaleString()}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gray-600">Conversions</p>
+                      <p className="font-semibold text-gray-900">{day.conversions.toLocaleString()}</p>
+                    </div>
+                    <div className="text-right min-w-[60px]">
+                      <p className="text-gray-600">CR</p>
+                      <p className={`font-semibold text-sm ${
+                        day.cr >= 6 ? 'text-emerald-600' : 
+                        day.cr >= 4 ? 'text-amber-600' : 
+                        day.cr >= 2 ? 'text-orange-500' : 'text-gray-900'
+                      }`}>
+                        {day.cr.toFixed(2)}%
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-6 text-sm">
-                  <div className="text-right">
-                    <p className="text-gray-600">Clicks</p>
-                    <p className="font-semibold text-gray-900">{day.clicks.toLocaleString()}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-gray-600">Conversions</p>
-                    <p className="font-semibold text-gray-900">{day.conversions.toLocaleString()}</p>
-                  </div>
-                  <div className="text-right min-w-[60px]">
-                    <p className="text-gray-600">CR</p>
-                    <p className={`font-semibold text-sm ${
-                      day.cr >= 6 ? 'text-emerald-600' : 
-                      day.cr >= 4 ? 'text-amber-600' : 
-                      day.cr >= 2 ? 'text-orange-500' : 'text-gray-900'
-                    }`}>
-                      {day.cr.toFixed(2)}%
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Footer */}
         <div className="text-center mt-12 py-8 border-t border-gray-200">
