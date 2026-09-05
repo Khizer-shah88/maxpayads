@@ -13,6 +13,22 @@ from datetime import datetime
 ProfileStatus = Literal["active", "paused", "archived"]
 
 
+class StatsProfilePreferences(BaseModel):
+    """Configurable preferences for what stats to show/hide to publishers."""
+    show_os: bool = Field(True, description="Show OS breakdown (Windows, Android, iOS, etc.)")
+    show_country: bool = Field(True, description="Show country statistics")
+    show_device: bool = Field(True, description="Show device type breakdown (Desktop, Mobile, Tablet)")
+    show_clicks: bool = Field(True, description="Show total clicks")
+    show_unique_clicks: bool = Field(True, description="Show unique clicks")
+    show_valid_clicks: bool = Field(True, description="Show validated/unique clicks")
+    show_invalid_clicks: bool = Field(False, description="Show invalid/fraud clicks")
+    show_impressions: bool = Field(True, description="Show impression count")
+    show_conversions: bool = Field(True, description="Show conversion count")
+    show_cr: bool = Field(True, description="Show conversion rate")
+    show_fraud_score: bool = Field(False, description="Show average fraud score")
+    show_daily_breakdown: bool = Field(True, description="Show daily breakdown chart")
+
+
 class StatsProfileCreate(BaseModel):
     """Create a new stats profile."""
     name: str = Field(..., min_length=2, max_length=100)
@@ -22,6 +38,7 @@ class StatsProfileCreate(BaseModel):
     status: ProfileStatus = "active"
     notes: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
+    preferences: StatsProfilePreferences = Field(default_factory=StatsProfilePreferences)
 
     @field_validator("name")
     @classmethod
@@ -40,6 +57,7 @@ class StatsProfileUpdate(BaseModel):
     status: Optional[ProfileStatus] = None
     notes: Optional[str] = None
     metadata: Optional[dict] = None
+    preferences: Optional[StatsProfilePreferences] = None
 
     @field_validator("name")
     @classmethod

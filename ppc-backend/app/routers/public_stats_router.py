@@ -52,6 +52,8 @@ async def get_publisher_public_stats(
     Get white-label publisher statistics.
     Called by the /public-stats/[publisherId] Next.js page.
     No admin branding exposed — returns only aggregated performance data.
+    
+    Respects stats profile preferences if configured.
     """
     # ── Token validation ──────────────────────────────────────────────────────
     if not _validate_token(token, publisher_id):
@@ -67,6 +69,27 @@ async def get_publisher_public_stats(
     publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
     if not publisher:
         raise HTTPException(status_code=404, detail="Not found")
+
+    # ── Get stats profile preferences (if exists) ──────────────────────────────
+    profile = await db.stats_profiles.find_one({"publisher_id": publisher_id})
+    preferences = profile.get("preferences") if profile else None
+    
+    # Default preferences if no profile
+    default_prefs = {
+        "show_os": True,
+        "show_country": True,
+        "show_device": True,
+        "show_clicks": True,
+        "show_unique_clicks": True,
+        "show_valid_clicks": True,
+        "show_invalid_clicks": False,
+        "show_impressions": True,
+        "show_conversions": True,
+        "show_cr": True,
+        "show_fraud_score": False,
+        "show_daily_breakdown": True,
+    }
+    prefs = preferences or default_prefs
 
     # ── Date range ────────────────────────────────────────────────────────────
     end_date = datetime.utcnow()
@@ -113,50 +136,51 @@ async def get_publisher_public_stats(
     conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0.0
 
     # ── Daily breakdown ───────────────────────────────────────────────────────
-    daily_clicks_pipeline = [
-        {"$match": click_match},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
-            "clicks": {"$sum": 1},
-            "windows_clicks": {"$sum": {"$cond": [
-                {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "windows|win", "options": "i"}},
-                1, 0,
-            ]}},
-            "mac_clicks": {"$sum": {"$cond": [
-                {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "mac|ios|darwin", "options": "i"}},
-                1, 0,
-            ]}},
-        }},
-        {"$sort": {"_id": -1}},
-        {"$limit": days},
-    ]
-    daily_clicks_raw = await db.clicks.aggregate(daily_clicks_pipeline).to_list(length=None)
-
-    # Daily conversions
-    daily_conv_pipeline = [
-        {"$match": conv_match},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
-            "conversions": {"$sum": 1},
-        }},
-    ]
-    daily_conv_raw = await db.direct_link_events.aggregate(daily_conv_pipeline).to_list(length=None)
-    daily_conv_map = {row["_id"]: row["conversions"] for row in daily_conv_raw}
-
     daily_breakdown = []
-    for row in daily_clicks_raw:
-        date_str = row["_id"]
-        clicks = row["clicks"]
-        conversions = daily_conv_map.get(date_str, 0)
-        cr = round(conversions / clicks * 100, 2) if clicks > 0 else 0.0
-        daily_breakdown.append({
-            "date": date_str,
-            "clicks": clicks,
-            "conversions": conversions,
-            "cr": cr,
-            "windows_clicks": row.get("windows_clicks", 0),
-            "mac_clicks": row.get("mac_clicks", 0),
-        })
+    if prefs.get("show_daily_breakdown", True):
+        daily_clicks_pipeline = [
+            {"$match": click_match},
+            {"$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                "clicks": {"$sum": 1},
+                "windows_clicks": {"$sum": {"$cond": [
+                    {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "windows|win", "options": "i"}},
+                    1, 0,
+                ]}},
+                "mac_clicks": {"$sum": {"$cond": [
+                    {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "mac|ios|darwin", "options": "i"}},
+                    1, 0,
+                ]}},
+            }},
+            {"$sort": {"_id": -1}},
+            {"$limit": days},
+        ]
+        daily_clicks_raw = await db.clicks.aggregate(daily_clicks_pipeline).to_list(length=None)
+
+        # Daily conversions
+        daily_conv_pipeline = [
+            {"$match": conv_match},
+            {"$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+                "conversions": {"$sum": 1},
+            }},
+        ]
+        daily_conv_raw = await db.direct_link_events.aggregate(daily_conv_pipeline).to_list(length=None)
+        daily_conv_map = {row["_id"]: row["conversions"] for row in daily_conv_raw}
+
+        for row in daily_clicks_raw:
+            date_str = row["_id"]
+            clicks = row["clicks"]
+            conversions = daily_conv_map.get(date_str, 0)
+            cr = round(conversions / clicks * 100, 2) if clicks > 0 else 0.0
+            daily_breakdown.append({
+                "date": date_str,
+                "clicks": clicks,
+                "conversions": conversions,
+                "cr": cr,
+                "windows_clicks": row.get("windows_clicks", 0),
+                "mac_clicks": row.get("mac_clicks", 0),
+            })
 
     # ── Insights ──────────────────────────────────────────────────────────────
     avg_daily_clicks = round(total_clicks / days) if days > 0 else 0
@@ -193,24 +217,44 @@ async def get_publisher_public_stats(
     # Top performance day
     top_day = max(daily_breakdown, key=lambda x: x["cr"], default=None)
 
+    # Build response based on preferences
+    response_data = {
+        "publisher_name": publisher.get("name", "Publisher"),
+        "publisher_id": publisher_id,
+        "date_range": f"Last {days} Days",
+        "preferences": prefs,
+    }
+    
+    # Add stats based on preferences
+    if prefs.get("show_impressions", True):
+        response_data["total_impressions"] = total_clicks
+    
+    if prefs.get("show_clicks", True):
+        response_data["total_clicks"] = total_clicks
+    
+    if prefs.get("show_conversions", True):
+        response_data["total_conversions"] = total_conversions
+    
+    if prefs.get("show_cr", True):
+        response_data["conversion_rate"] = round(conversion_rate, 2)
+    
+    # Always include these for platform breakdown
+    response_data["unique_windows_clicks"] = windows_clicks
+    response_data["unique_mac_clicks"] = mac_clicks
+    
+    if prefs.get("show_daily_breakdown", True):
+        response_data["daily_breakdown"] = daily_breakdown
+    
+    # Always include insights
+    response_data["performance_score"] = performance_score
+    response_data["insights"] = {
+        "top_performance_day": top_day["date"] if top_day else None,
+        "avg_daily_clicks": avg_daily_clicks,
+        "trend_direction": trend,
+        "platform_preference": platform_preference,
+    }
+
     return {
         "success": True,
-        "data": {
-            "publisher_name": publisher.get("name", "Publisher"),
-            "publisher_id": publisher_id,
-            "date_range": f"Last {days} Days",
-            "total_impressions": total_clicks,
-            "unique_windows_clicks": windows_clicks,
-            "unique_mac_clicks": mac_clicks,
-            "total_conversions": total_conversions,
-            "conversion_rate": round(conversion_rate, 2),
-            "performance_score": performance_score,
-            "daily_breakdown": daily_breakdown,
-            "insights": {
-                "top_performance_day": top_day["date"] if top_day else None,
-                "avg_daily_clicks": avg_daily_clicks,
-                "trend_direction": trend,
-                "platform_preference": platform_preference,
-            },
-        },
+        "data": response_data,
     }

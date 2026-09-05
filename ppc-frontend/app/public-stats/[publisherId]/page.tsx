@@ -18,13 +18,14 @@ interface StatsData {
   publisher_name: string
   publisher_id: string
   date_range: string
-  total_impressions: number
+  total_impressions?: number
+  total_clicks?: number
   unique_windows_clicks: number
   unique_mac_clicks: number
-  total_conversions: number
-  conversion_rate: number
+  total_conversions?: number
+  conversion_rate?: number
   performance_score: string
-  daily_breakdown: Array<{
+  daily_breakdown?: Array<{
     date: string
     clicks: number
     conversions: number
@@ -37,6 +38,20 @@ interface StatsData {
     avg_daily_clicks: number
     trend_direction: 'up' | 'down' | 'stable'
     platform_preference: 'windows' | 'mac' | 'balanced'
+  }
+  preferences?: {
+    show_os?: boolean
+    show_country?: boolean
+    show_device?: boolean
+    show_clicks?: boolean
+    show_unique_clicks?: boolean
+    show_valid_clicks?: boolean
+    show_invalid_clicks?: boolean
+    show_impressions?: boolean
+    show_conversions?: boolean
+    show_cr?: boolean
+    show_fraud_score?: boolean
+    show_daily_breakdown?: boolean
   }
 }
 
@@ -61,7 +76,31 @@ export default function PublisherStatsPage() {
     try {
       // Call the real API endpoint
       const response = await publicStatsApi.getPublisherStats(publisherId, token)
-      setStats(response.data.data)
+      const apiData = response.data.data
+      
+      // Handle the new response format with preferences
+      const prefs = apiData.preferences || {}
+      
+      // Build stats object based on what's returned from API (preferences already applied)
+      setStats({
+        publisher_name: apiData.publisher_name || 'Publisher',
+        publisher_id: apiData.publisher_id || publisherId,
+        date_range: apiData.date_range || `Last 30 Days`,
+        total_impressions: apiData.total_impressions || apiData.total_clicks || 0,
+        unique_windows_clicks: apiData.unique_windows_clicks || 0,
+        unique_mac_clicks: apiData.unique_mac_clicks || 0,
+        total_conversions: apiData.total_conversions || 0,
+        conversion_rate: apiData.conversion_rate || 0,
+        performance_score: apiData.performance_score || 'Building',
+        daily_breakdown: apiData.daily_breakdown || [],
+        insights: apiData.insights || {
+          top_performance_day: '',
+          avg_daily_clicks: 0,
+          trend_direction: 'stable',
+          platform_preference: 'balanced',
+        },
+        preferences: prefs,
+      })
       
     } catch (err: any) {
       console.error('Error loading stats:', err)

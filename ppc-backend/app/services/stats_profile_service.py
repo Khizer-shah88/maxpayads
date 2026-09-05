@@ -60,6 +60,22 @@ async def get_publisher_name(db, publisher_id: str) -> Optional[str]:
 
 def serialize_profile(doc: dict, publisher_name: Optional[str] = None) -> dict:
     """Serialize profile document to API response."""
+    # Default preferences if not set
+    default_preferences = {
+        "show_os": True,
+        "show_country": True,
+        "show_device": True,
+        "show_clicks": True,
+        "show_unique_clicks": True,
+        "show_valid_clicks": True,
+        "show_invalid_clicks": False,
+        "show_impressions": True,
+        "show_conversions": True,
+        "show_cr": True,
+        "show_fraud_score": False,
+        "show_daily_breakdown": True,
+    }
+    
     return {
         "id": str(doc["_id"]),
         "slug": doc.get("slug", ""),
@@ -72,6 +88,7 @@ def serialize_profile(doc: dict, publisher_name: Optional[str] = None) -> dict:
         "status": doc.get("status", "active"),
         "notes": doc.get("notes"),
         "metadata": doc.get("metadata") or {},
+        "preferences": doc.get("preferences") or default_preferences,
         # Statistics
         "total_impressions": doc.get("total_impressions", 0),
         "total_clicks": doc.get("total_clicks", 0),

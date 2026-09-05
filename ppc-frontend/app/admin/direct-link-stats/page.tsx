@@ -49,8 +49,6 @@ interface ManualOverride {
 interface LinkFormData {
   name: string
   publisher_id: string
-  masked_domain: string
-  destination_url: string
   status: 'active' | 'paused' | 'archived'
   daily_conversion_cap: number
   notes: string
@@ -59,8 +57,6 @@ interface LinkFormData {
 const EMPTY_LINK_FORM: LinkFormData = {
   name: '',
   publisher_id: '',
-  masked_domain: '',
-  destination_url: '',
   status: 'active',
   daily_conversion_cap: 0,
   notes: '',
@@ -254,16 +250,12 @@ export default function DirectLinkStatsPage() {
   const handleCreateLink = async () => {
     if (!linkForm.name.trim()) { toast.error('Name is required'); return }
     if (!linkForm.publisher_id) { toast.error('Publisher is required'); return }
-    if (!linkForm.masked_domain.trim()) { toast.error('Masked domain is required'); return }
-    if (!linkForm.destination_url.trim()) { toast.error('Destination URL is required'); return }
 
     setSavingLink(true)
     try {
       await directLinkApi.create({
         name: linkForm.name.trim(),
         publisher_id: linkForm.publisher_id,
-        masked_domain: linkForm.masked_domain.trim(),
-        destination_url: linkForm.destination_url.trim(),
         status: linkForm.status,
         daily_conversion_cap: Number(linkForm.daily_conversion_cap) || 0,
         notes: linkForm.notes.trim() || null,
@@ -717,26 +709,6 @@ export default function DirectLinkStatsPage() {
                       No publishers found. Create publishers first from the Publishers page.
                     </p>
                   )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Masked Domain <span className="text-red-500">*</span>
-                    <span className="text-gray-400 font-normal ml-1">— no https://</span>
-                  </label>
-                  <input value={linkForm.masked_domain} onChange={e => setLinkForm(p => ({ ...p, masked_domain: e.target.value }))}
-                    placeholder="click.yourdomain.com" className={inp} />
-                  {linkForm.masked_domain && (
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      URL: <code className="bg-gray-100 px-1 rounded">https://{linkForm.masked_domain}/#/slug</code>
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Destination URL <span className="text-red-500">*</span></label>
-                  <input value={linkForm.destination_url} onChange={e => setLinkForm(p => ({ ...p, destination_url: e.target.value }))}
-                    placeholder="https://offer-network.com/track/xyz" className={inp} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

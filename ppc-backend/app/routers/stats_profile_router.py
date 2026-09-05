@@ -131,6 +131,7 @@ async def create_profile(
         "status": data.status,
         "notes": data.notes,
         "metadata": data.metadata,
+        "preferences": data.preferences.model_dump() if data.preferences else {},
         # Initialize counters
         "total_impressions": 0,
         "total_clicks": 0,
