@@ -574,6 +574,21 @@ export default function DirectLinkStatsPage() {
                   >
                     <Plus size={12} /> Add Link
                   </button>
+                  {/* Delete all links for this publisher */}
+                  <button
+                    onClick={e => {
+                      e.stopPropagation()
+                      const pubLinks = links.filter(l => l.publisher_id === pub.id)
+                      if (!confirm(`Delete all ${pubLinks.length} link${pubLinks.length !== 1 ? 's' : ''} for ${pub.name}? This cannot be undone.`)) return
+                      Promise.all(pubLinks.map(l => directLinkApi.delete(l.id)))
+                        .then(() => { toast.success('Links deleted'); loadData() })
+                        .catch(() => toast.error('Delete failed'))
+                    }}
+                    title="Delete all links for this publisher"
+                    className="flex items-center justify-center p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-100 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               </div>
             ))}

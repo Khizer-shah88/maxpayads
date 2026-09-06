@@ -284,21 +284,10 @@ async def create_link(
     except Exception:
         pass
 
-    # ── Archive any existing active/paused links for this publisher ──────────
-    # Only one active link per publisher at a time — old links become archived
-    await db.direct_links.update_many(
-        {
-            "publisher_id": data.publisher_id,
-            "status": {"$in": ["active", "paused"]},
-        },
-        {
-            "$set": {
-                "status": "archived",
-                "updated_at": datetime.utcnow(),
-                "archived_reason": "superseded_by_new_link",
-            }
-        },
-    )
+    # ── Delete any existing links for this publisher ────────────────────────
+    # Only one link per publisher — hard delete all previous ones
+    # NOTE: This is now handled manually by admin via the delete button
+    # We do NOT auto-delete here anymore
 
     now = datetime.utcnow()
     doc = {
