@@ -70,11 +70,19 @@ async def get_publisher_public_stats(
     if not publisher:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # ── Get stats profile preferences (if exists) ──────────────────────────────
+    # ── Get stats profile preferences from direct links ────────────────────────
+    # Look for preferences on any of this publisher's direct links (most recent one)
+    link_with_prefs = await db.direct_links.find_one(
+        {"publisher_id": publisher_id},
+        sort=[("created_at", -1)]
+    )
+    link_preferences = link_with_prefs.get("preferences") if link_with_prefs else None
+    
+    # Also check stats_profiles collection for per-publisher preferences
     profile = await db.stats_profiles.find_one({"publisher_id": publisher_id})
     preferences = profile.get("preferences") if profile else None
     
-    # Default preferences if no profile
+    # Default preferences if no profile — all ON except invalid/fraud
     default_prefs = {
         "show_os": True,
         "show_country": True,
@@ -89,7 +97,8 @@ async def get_publisher_public_stats(
         "show_fraud_score": False,
         "show_daily_breakdown": True,
     }
-    prefs = preferences or default_prefs
+    # Priority: link preferences > profile preferences > defaults
+    prefs = link_preferences or (profile.get("preferences") if profile else None) or default_prefs
 
     # ── Date range ────────────────────────────────────────────────────────────
     end_date = datetime.utcnow()

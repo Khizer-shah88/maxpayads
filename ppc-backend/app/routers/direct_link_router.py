@@ -76,6 +76,7 @@ def _serialize(doc: dict, today_conversions: int = 0) -> dict:
         "status": doc.get("status", "active"),
         "notes": doc.get("notes"),
         "daily_conversion_cap": doc.get("daily_conversion_cap", 0),
+        "preferences": doc.get("preferences") or {},
         "total_clicks": doc.get("total_clicks", 0),
         "total_conversions": doc.get("total_conversions", 0),
         "today_conversions": today_conversions,

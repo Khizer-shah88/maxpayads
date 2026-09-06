@@ -27,6 +27,8 @@ class DirectLinkCreate(BaseModel):
     notes: Optional[str] = None
     # Daily conversion cap (0 = unlimited)
     daily_conversion_cap: int = Field(default=0, ge=0)
+    # Stats page preferences (what to show/hide to the publisher)
+    preferences: Optional[dict] = None
 
     @field_validator("name")
     @classmethod

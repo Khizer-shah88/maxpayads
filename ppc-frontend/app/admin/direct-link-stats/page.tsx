@@ -46,12 +46,39 @@ interface ManualOverride {
   reason: string
 }
 
+interface StatsPreferences {
+  show_os: boolean
+  show_country: boolean
+  show_device: boolean
+  show_clicks: boolean
+  show_valid_clicks: boolean
+  show_invalid_clicks: boolean
+  show_impressions: boolean
+  show_conversions: boolean
+  show_cr: boolean
+  show_daily_breakdown: boolean
+}
+
+const DEFAULT_PREFS: StatsPreferences = {
+  show_os: true,
+  show_country: true,
+  show_device: true,
+  show_clicks: true,
+  show_valid_clicks: true,
+  show_invalid_clicks: false,
+  show_impressions: true,
+  show_conversions: true,
+  show_cr: true,
+  show_daily_breakdown: true,
+}
+
 interface LinkFormData {
   name: string
   publisher_id: string
   status: 'active' | 'paused' | 'archived'
   daily_conversion_cap: number
   notes: string
+  preferences: StatsPreferences
 }
 
 const EMPTY_LINK_FORM: LinkFormData = {
@@ -60,6 +87,7 @@ const EMPTY_LINK_FORM: LinkFormData = {
   status: 'active',
   daily_conversion_cap: 0,
   notes: '',
+  preferences: { ...DEFAULT_PREFS },
 }
 
 function safeBtoa(str: string): string {
@@ -259,6 +287,7 @@ export default function DirectLinkStatsPage() {
         status: linkForm.status,
         daily_conversion_cap: Number(linkForm.daily_conversion_cap) || 0,
         notes: linkForm.notes.trim() || null,
+        preferences: linkForm.preferences,
       })
       toast.success('Direct link created')
       setShowCreateModal(false)
@@ -731,6 +760,46 @@ export default function DirectLinkStatsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                   <textarea value={linkForm.notes} onChange={e => setLinkForm(p => ({ ...p, notes: e.target.value }))}
                     rows={2} className={inp} />
+                </div>
+
+                {/* ── Stats Preferences ── */}
+                <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+                  <p className="text-sm font-semibold text-gray-800 mb-3">Stats Page Preferences</p>
+                  <p className="text-xs text-gray-400 mb-4">Control what the publisher sees on their shared stats page.</p>
+                  <div className="grid grid-cols-1 gap-2">
+                    {(
+                      [
+                        { key: 'show_impressions',     label: 'Show Impressions' },
+                        { key: 'show_clicks',          label: 'Show Clicks' },
+                        { key: 'show_valid_clicks',    label: 'Show Valid Clicks (Unique Wins)' },
+                        { key: 'show_invalid_clicks',  label: 'Show Invalid Clicks' },
+                        { key: 'show_conversions',     label: 'Show Conversions' },
+                        { key: 'show_cr',              label: 'Show Conversion Rate' },
+                        { key: 'show_os',              label: 'Show OS Statistics' },
+                        { key: 'show_country',         label: 'Show Country Statistics' },
+                        { key: 'show_device',          label: 'Show Device Statistics' },
+                        { key: 'show_daily_breakdown', label: 'Show Daily Breakdown Table' },
+                      ] as { key: keyof StatsPreferences; label: string }[]
+                    ).map(({ key, label }) => (
+                      <label key={key} className="flex items-center justify-between gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-white transition-colors">
+                        <span className="text-sm text-gray-700">{label}</span>
+                        <button
+                          type="button"
+                          onClick={() => setLinkForm(p => ({
+                            ...p,
+                            preferences: { ...p.preferences, [key]: !p.preferences[key] }
+                          }))}
+                          className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                            linkForm.preferences[key] ? 'bg-primary' : 'bg-gray-200'
+                          }`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                            linkForm.preferences[key] ? 'translate-x-4' : 'translate-x-0'
+                          }`} />
+                        </button>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 
