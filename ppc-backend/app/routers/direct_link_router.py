@@ -125,7 +125,53 @@ async def list_links(
     }
 
 
-@router.get("/conversions")
+@router.post("/cleanup-duplicate-links", status_code=200)
+async def cleanup_duplicate_links(
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    One-time cleanup: for each publisher, keep only the most recently created
+    active/paused link and archive all older ones.
+    """
+    # Get all publishers that have more than one active/paused link
+    pipeline = [
+        {"$match": {"status": {"$in": ["active", "paused"]}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$publisher_id",
+            "links": {"$push": {"id": "$_id", "created_at": "$created_at"}},
+            "count": {"$sum": 1},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+    ]
+    results = await db.direct_links.aggregate(pipeline).to_list(length=None)
+
+    total_archived = 0
+    for pub in results:
+        # links are sorted newest first — keep the first, archive the rest
+        links_to_archive = pub["links"][1:]  # skip index 0 (newest)
+        ids_to_archive = [l["id"] for l in links_to_archive]
+        if ids_to_archive:
+            result = await db.direct_links.update_many(
+                {"_id": {"$in": ids_to_archive}},
+                {"$set": {
+                    "status": "archived",
+                    "updated_at": datetime.utcnow(),
+                    "archived_reason": "superseded_by_newer_link",
+                }},
+            )
+            total_archived += result.modified_count
+
+    return {
+        "success": True,
+        "publishers_affected": len(results),
+        "links_archived": total_archived,
+        "message": f"Archived {total_archived} duplicate links across {len(results)} publishers",
+    }
+
+
+
 async def list_conversions(
     link_id: Optional[str] = Query(None),
     publisher_id: Optional[str] = Query(None),

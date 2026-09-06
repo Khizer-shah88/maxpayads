@@ -215,6 +215,9 @@ export const directLinkApi = {
   // White-label stats token generation
   generateStatsToken: (data: { publisher_id: string; domain?: string }) =>
     api.post('/direct-links/generate-stats-token', data),
+  // One-time cleanup: archive duplicate/old links per publisher
+  cleanupDuplicateLinks: () =>
+    api.post('/direct-links/cleanup-duplicate-links'),
 }
 
 // ==================== PUBLIC STATS (NO AUTH) ====================

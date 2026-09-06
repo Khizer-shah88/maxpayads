@@ -163,6 +163,7 @@ export default function DirectLinkStatsPage() {
   // Stats domain config (white-label domain for share links)
   const [statsDomain, setStatsDomain] = useState('')
   const [savingDomain, setSavingDomain] = useState(false)
+  const [cleaningUp, setCleaningUp] = useState(false)
 
   // Date filter
   const [dateFrom, setDateFrom] = useState(() => {
@@ -227,6 +228,30 @@ export default function DirectLinkStatsPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
+  // Auto-cleanup duplicate links on page load (runs silently)
+  useEffect(() => {
+    directLinkApi.cleanupDuplicateLinks().catch(() => {/* silent */})
+  }, [])
+
+  // Manual cleanup handler (with feedback)
+  const handleCleanupDuplicates = async () => {
+    setCleaningUp(true)
+    try {
+      const res = await directLinkApi.cleanupDuplicateLinks()
+      const { links_archived, publishers_affected } = res.data
+      if (links_archived > 0) {
+        toast.success(`Archived ${links_archived} old link${links_archived !== 1 ? 's' : ''} across ${publishers_affected} publisher${publishers_affected !== 1 ? 's' : ''}`)
+      } else {
+        toast.success('Already clean — no duplicate links found')
+      }
+      loadData()
+    } catch {
+      toast.error('Cleanup failed')
+    } finally {
+      setCleaningUp(false)
+    }
+  }
+
   // Load saved stats domain setting
   useEffect(() => {
     adminApi.getStatsDomain()
@@ -246,30 +271,35 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Links for selected publisher
+  // Links for selected publisher — only active/paused for display
   const publisherLinks = selectedPublisherId
     ? links.filter(l => l.publisher_id === selectedPublisherId)
     : []
 
+  // Active link for selected publisher (only 1 should exist)
+  const activePublisherLinks = publisherLinks.filter(l => l.status !== 'archived')
+
   const selectedPublisher = publishers.find(p => p.id === selectedPublisherId)
 
-  // Aggregated stats per publisher — only publishers WITH links shown in the grid
+  // Aggregated stats per publisher — only count active/paused links, not archived
   const publisherStats = publishers
     .map(pub => {
       const pubLinks = links.filter(l => l.publisher_id === pub.id)
-      const totalClicks = pubLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
-      const totalConversions = pubLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
-      const todayConversions = pubLinks.reduce((s, l) => s + (l.today_conversions || 0), 0)
+      const activeLinks = pubLinks.filter(l => l.status !== 'archived')
+      const totalClicks = activeLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
+      const totalConversions = activeLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
+      const todayConversions = activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0)
       return {
         ...pub,
-        linkCount: pubLinks.length,
+        linkCount: activeLinks.length,  // only count active links
+        totalLinks: pubLinks.length,     // total including archived
         totalClicks,
         totalConversions,
         todayConversions,
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
-    .filter(p => p.linkCount > 0) // stats grid: only publishers with links
+    .filter(p => p.totalLinks > 0) // show publishers that have any links (including archived)
 
   // All publishers for the Create Link dropdown (regardless of existing links)
   const publisherDropdownList = publishers
@@ -372,15 +402,26 @@ export default function DirectLinkStatsPage() {
               Create links per publisher — track clicks, conversions and share white-label stats
             </p>
           </div>
-          <button
-            onClick={() => {
-              setLinkForm({ ...EMPTY_LINK_FORM })
-              setShowCreateModal(true)
-            }}
-            className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 self-start"
-          >
-            <Plus size={18} /> Create Link
-          </button>
+          <div className="flex gap-2 self-start">
+            <button
+              onClick={handleCleanupDuplicates}
+              disabled={cleaningUp}
+              className="border border-amber-300 text-amber-700 hover:bg-amber-50 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+              title="Archive old links — keeps only the newest link per publisher"
+            >
+              {cleaningUp ? <Spinner size={16} /> : <RefreshCw size={16} />}
+              Clean Duplicates
+            </button>
+            <button
+              onClick={() => {
+                setLinkForm({ ...EMPTY_LINK_FORM })
+                setShowCreateModal(true)
+              }}
+              className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2"
+            >
+              <Plus size={18} /> Create Link
+            </button>
+          </div>
         </div>
 
         {/* Stats domain config — white-label domain for share links */}
@@ -484,7 +525,7 @@ export default function DirectLinkStatsPage() {
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Links</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Active Links</p>
                     <p className="text-base font-bold text-gray-900">{pub.linkCount}</p>
                   </div>
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
@@ -545,7 +586,12 @@ export default function DirectLinkStatsPage() {
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">{selectedPublisher.name} — Links</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{publisherLinks.length} link{publisherLinks.length !== 1 ? 's' : ''}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {activePublisherLinks.length} active
+                  {publisherLinks.length > activePublisherLinks.length
+                    ? ` · ${publisherLinks.length - activePublisherLinks.length} archived`
+                    : ''}
+                </p>
               </div>
               <button
                 onClick={() => {
@@ -575,7 +621,7 @@ export default function DirectLinkStatsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {publisherLinks.map(link => (
-                      <tr key={link.id} className="hover:bg-gray-50/50">
+                      <tr key={link.id} className={`hover:bg-gray-50/50 ${link.status === 'archived' ? 'opacity-40' : ''}`}>
                         <td className="px-4 py-3">
                           <p className="font-medium text-gray-900 text-sm">{link.name}</p>
                           <p className="text-[11px] text-gray-400 truncate max-w-[160px]">{link.destination_url}</p>
