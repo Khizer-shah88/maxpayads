@@ -746,23 +746,32 @@ export default function DirectLinkStatsPage() {
                       <td className="px-4 py-3 font-mono text-gray-700">{link.total_clicks.toLocaleString()}</td>
                       <td className="px-4 py-3 font-mono text-gray-700">{link.total_conversions.toLocaleString()}</td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => {
-                            const today = new Date().toISOString().split('T')[0]
-                            setOverrideForm({
-                              date: today,
-                              publisher_id: link.publisher_id,
-                              link_id: link.id,
-                              manual_conversions: 0,
-                              reason: '',
-                            })
-                            setShowOverrideModal(true)
-                          }}
-                          className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-                          title="Override"
-                        >
-                          <Edit3 size={14} />
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              const today = new Date().toISOString().split('T')[0]
+                              setOverrideForm({
+                                date: today,
+                                publisher_id: link.publisher_id,
+                                link_id: link.id,
+                                manual_conversions: 0,
+                                reason: '',
+                              })
+                              setShowOverrideModal(true)
+                            }}
+                            className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50"
+                            title="Override"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLink(link)}
+                            className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                            title="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
