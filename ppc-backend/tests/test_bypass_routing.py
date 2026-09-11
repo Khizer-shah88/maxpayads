@@ -250,6 +250,8 @@ async def test_bypass_off_with_no_domains_falls_back_to_campaign_url():
     db.campaigns.find_one = AsyncMock(side_effect=find_one_side_effect)
     db.system_settings.find_one = AsyncMock(return_value=None)
     db.redirection_domains.find_one = AsyncMock(return_value=None)
+    db.redirection_domains.find = MagicMock()
+    db.redirection_domains.find.return_value.to_list = AsyncMock(return_value=[])
     db.landing_pages.find = MagicMock()
     db.landing_pages.find.return_value.to_list = AsyncMock(return_value=[])
     
@@ -306,6 +308,8 @@ async def test_bypass_preserves_referrer_suppression():
         db.campaigns.find_one = AsyncMock(return_value=campaign)
         db.system_settings.find_one = AsyncMock(return_value=None)
         db.redirection_domains.find_one = AsyncMock(return_value=None)
+        db.redirection_domains.find = MagicMock()
+        db.redirection_domains.find.return_value.to_list = AsyncMock(return_value=[])
         db.landing_pages.find = MagicMock()
         db.landing_pages.find.return_value.to_list = AsyncMock(return_value=[])
         

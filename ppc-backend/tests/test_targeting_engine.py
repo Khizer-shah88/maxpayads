@@ -448,6 +448,9 @@ class TestCampaignResolution:
     
     async def test_global_campaign_fallback(self, db):
         """Test global campaign as fallback."""
+        # Clean up any existing test campaigns to avoid test pollution
+        await db.campaigns.delete_many({"name": "Global Campaign"})
+        
         campaign_id = ObjectId()
         
         await db.campaigns.insert_one({

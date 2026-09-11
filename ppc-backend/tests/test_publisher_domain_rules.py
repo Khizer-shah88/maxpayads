@@ -42,8 +42,17 @@ class TestManualPublisher:
 
     async def test_smartlink_endpoint_manual_has_no_site_param(self, client, db, admin_token):
         from app.services.publisher_service import create_manual_publisher
+        from app.core.constants import DOMAIN_TYPE_ANCHOR
 
         pid = await create_manual_publisher({"name": "manual-smartlink-test"}, db)
+        
+        # Ensure anchor domain exists
+        await db.redirection_domains.insert_one({
+            "domain": "test-anchor.com",
+            "domain_type": DOMAIN_TYPE_ANCHOR,
+            "status": "active",
+        })
+        
         res = await client.get(
             f"/admin/publishers/{pid}/smartlink",
             headers={"Authorization": f"Bearer {admin_token}"},
@@ -59,6 +68,14 @@ class TestManualPublisher:
 
     async def test_smartlink_endpoint_registered_includes_sites(self, client, db, admin_token, test_publisher, test_website):
         from app.utils.public_id_utils import generate_unique_publisher_id, generate_unique_website_id
+        from app.core.constants import DOMAIN_TYPE_ANCHOR
+
+        # Ensure anchor domain exists
+        await db.redirection_domains.insert_one({
+            "domain": "test-anchor.com",
+            "domain_type": DOMAIN_TYPE_ANCHOR,
+            "status": "active",
+        })
 
         # Ensure public ids exist so the link uses them
         await db.publishers.update_one(
@@ -211,6 +228,9 @@ class TestDomainValidation:
     async def test_distinct_subdomains_allowed(self, db):
         from app.services.domain_service import create_domain
 
+        # Clean up any existing test domains
+        await db.redirection_domains.delete_many({"domain": {"$in": ["example.com", "www.example.com", "a.example.com"]}})
+        
         a = await create_domain(db, {"domain": "example.com", "domain_type": "anchor"})
         b = await create_domain(db, {"domain": "www.example.com", "domain_type": "inter"})
         c = await create_domain(db, {"domain": "a.example.com", "domain_type": "prelander"})
@@ -313,18 +333,27 @@ class TestCampaignValueResolution:
     async def test_os_plus_country_beats_os_specific(self, db):
         from app.services.targeting_engine import resolve_campaign_for_click
 
-        global_id = await db.campaigns.insert_one({
+        # Clean up any existing test campaigns
+        await db.campaigns.delete_many({"name": {"$in": ["Global", "Windows OS", "Windows US"]}})
+        
+        global_result = await db.campaigns.insert_one({
             "name": "Global", "device_os": "global", "status": "active",
             "default_offer_url": "https://g.example",
-        }).inserted_id
-        os_id = await db.campaigns.insert_one({
+        })
+        global_id = global_result.inserted_id
+        
+        os_result = await db.campaigns.insert_one({
             "name": "Windows OS", "device_os": "windows", "status": "active",
             "default_offer_url": "https://w.example",
-        }).inserted_id
-        targeted_id = await db.campaigns.insert_one({
+        })
+        os_id = os_result.inserted_id
+        
+        targeted_result = await db.campaigns.insert_one({
             "name": "Windows US", "device_os": "windows", "status": "active",
             "default_offer_url": "https://w-us.example",
-        }).inserted_id
+        })
+        targeted_id = targeted_result.inserted_id
+        
         await db.geo_rules.insert_one({
             "campaign_id": str(targeted_id), "country_code": "US",
             "offer_url": "https://w-us.example", "priority": 10,
@@ -351,6 +380,9 @@ class TestCampaignValueResolution:
         """Weighted fallback must not hand a Mac visitor a Windows campaign."""
         from app.services.targeting_engine import resolve_campaign_for_click
 
+        # Clean up ALL campaigns to avoid test pollution
+        await db.campaigns.delete_many({})
+        
         await db.campaigns.insert_one({
             "name": "Only Windows", "device_os": "windows", "status": "active",
             "default_offer_url": "https://w.example",
@@ -373,18 +405,25 @@ class TestFindMatchingOffer:
     async def test_find_matching_offer_resolves_targeted_offer(self, db):
         from app.services.traffic_router import find_matching_offer
 
-        campaign_id = await db.campaigns.insert_one({
+        # Clean up any existing test data
+        await db.campaigns.delete_many({"name": "Offer CPC Campaign"})
+        await db.offers.delete_many({"name": "US Windows Offer"})
+        
+        campaign_result = await db.campaigns.insert_one({
             "name": "Offer CPC Campaign", "status": "active",
             "default_offer_url": "https://fallback.example",
-        }).inserted_id
-        offer_id = await db.offers.insert_one({
+        })
+        campaign_id = campaign_result.inserted_id
+        
+        offer_result = await db.offers.insert_one({
             "name": "US Windows Offer", "status": "active",
             "offer_url": "https://offer.example",
             "cpc": 0.42,
             "campaign_id": str(campaign_id),
             "os_types": ["windows"],
             "country_codes": ["US"],
-        }).inserted_id
+        })
+        offer_id = offer_result.inserted_id
 
         offer = await find_matching_offer(
             campaign_id=str(campaign_id),
