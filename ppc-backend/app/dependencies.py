@@ -29,6 +29,12 @@ async def get_current_user(
     if not payload or "sub" not in payload:
         raise UnauthorizedError("Invalid or expired token")
 
+    # Type confusion guard: only access tokens authenticate API calls. Without
+    # this check, the long-lived refresh token (30 days) could be replayed as
+    # an access credential, defeating the short access-token lifetime.
+    if payload.get("type") != "access":
+        raise UnauthorizedError("Invalid or expired token")
+
     # Check token blacklist
     if redis:
         try:
@@ -63,11 +69,16 @@ async def get_current_admin(current_user: dict = Depends(get_current_user)) -> d
 
 
 async def get_current_active_publisher(current_user: dict = Depends(get_current_user)) -> dict:
-    """Ensure the current user is an active publisher (not suspended or pending)."""
+    """Ensure the current user is an active publisher (not suspended/pending/banned/removed)."""
     if current_user.get("role") == "admin":
         return current_user  # Admins can access publisher endpoints
-    if current_user.get("status") == "suspended":
+    status = current_user.get("status")
+    if status == "suspended":
         raise ForbiddenError("Account is suspended")
-    if current_user.get("status") == "pending":
+    if status == "pending":
         raise ForbiddenError("Account is pending approval")
+    # Banned/removed publishers lose panel access. Their Smartlinks keep
+    # redirecting (public /click flow), but they cannot log in.
+    if status in ("banned", "removed"):
+        raise ForbiddenError("Account is no longer available")
     return current_user

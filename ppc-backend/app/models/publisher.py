@@ -28,7 +28,8 @@ class Publisher(BaseModel):
     email: str
     password_hash: str
     role: str = "publisher"  # "publisher" or "admin"
-    status: str = "pending"  # pending, active, suspended
+    status: str = "pending"  # pending, active, suspended, banned, removed
+    publisher_type: str = "registered"  # "registered" (self-signup) or "manual" (admin-created, no login)
     revenue_share: float = 0.80
     custom_cpc: Optional[float] = None
     balance: float = 0.0

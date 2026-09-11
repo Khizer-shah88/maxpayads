@@ -18,6 +18,7 @@ async def _recalculate_async(publisher_id: str):
     from motor.motor_asyncio import AsyncIOMotorClient
     from app.config import settings
     from datetime import datetime
+    from bson import ObjectId
 
     mongo_client = AsyncIOMotorClient(settings.MONGODB_URL)
     db = mongo_client[settings.DB_NAME]
@@ -33,8 +34,18 @@ async def _recalculate_async(publisher_id: str):
     result = await db.clicks.aggregate(pipeline).to_list(length=1)
     if result:
         stats = result[0]
+        # Publisher `_id` is an ObjectId, but the task receives it as a
+        # string (and legacy docs may hold a string `_id`) — try both shapes,
+        # mirroring click_tasks.process_click.
+        pub_filter = None
+        try:
+            pub_filter = {"_id": ObjectId(publisher_id)}
+        except Exception:
+            pass
+        if not await db.publishers.find_one(pub_filter or {"_id": publisher_id}, {"_id": 1}):
+            pub_filter = {"_id": publisher_id}
         await db.publishers.update_one(
-            {"_id": publisher_id},
+            pub_filter,
             {"$set": {
                 "total_earnings": stats["total_earnings"],
                 "valid_clicks": stats["valid_clicks"],

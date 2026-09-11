@@ -18,6 +18,8 @@ Every redirect goes through resolve_destination().
 
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
+
+from app.core.glossary import normalize_os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,18 +44,13 @@ class ClickContext:
     normalized_os: Optional[str] = None
     
     def __post_init__(self):
-        """Normalize OS name for consistent matching."""
+        """Resolve the raw OS name onto the fixed OS enum for consistent matching."""
         if self.os:
-            os_map = {
-                "windows": "windows",
-                "mac os": "mac",
-                "mac os x": "mac",
-                "macos": "mac",
-                "ios": "mac",
-                "android": "android",
-                "linux": "windows",
-            }
-            self.normalized_os = os_map.get(self.os.lower(), self.os.lower())
+            self.normalized_os = normalize_os(self.os, default=self.os.lower())
+        # Geo rules store uppercase ISO codes — normalize here so every rule
+        # evaluation matches regardless of how the caller cased the input.
+        if self.country_code:
+            self.country_code = self.country_code.strip().upper()
 
 
 @dataclass
@@ -257,10 +254,12 @@ class TargetingEngine:
         """
         rules = []
         
+        # Geo rules store uppercase ISO codes (see campaign_router save logic);
+        # normalize the visitor's code so a lower/mixed-case input still matches.
         geo_rule = await self.db.geo_rules.find_one(
             {
                 "campaign_id": context.campaign_id,
-                "country_code": context.country_code,
+                "country_code": (context.country_code or "").upper(),
             },
             sort=[("priority", -1)],
         )
@@ -372,17 +371,22 @@ class TargetingEngine:
 async def resolve_campaign_for_click(click_data: dict, db) -> Optional[str]:
     """
     Resolve the appropriate campaign for a click.
-    Checks:
-    1. Website-assigned campaign
-    2. Device/OS specific campaign
-    3. Global campaign
-    4. Weighted random from active campaigns
-    
+    Checks (Domain Glossary "Campaign value" resolution order):
+    1. Website-assigned campaign (registered publisher context)
+    2. Specific OS + Country — active campaign for this OS that also has a
+       geo rule for the visitor's country
+    3. OS-specific campaign (device_os == visitor OS, no matching geo rule)
+    4. Global campaign (device_os == "global")
+    5. Weighted random from active global-capable campaigns
+       (never serves an OS-specific campaign to the wrong OS)
+
     Returns: campaign_id (str) or None
     """
     website_id = click_data.get("website_id")
     os_name = click_data.get("os")
-    
+    country_code = click_data.get("country_code")
+    device_type = click_data.get("device_type", "desktop")
+
     # 1. Website-assigned campaign
     if website_id:
         website = await db.websites.find_one({"_id": website_id})
@@ -392,50 +396,95 @@ async def resolve_campaign_for_click(click_data: dict, db) -> Optional[str]:
                 website = await db.websites.find_one({"_id": ObjectId(website_id)})
             except Exception:
                 pass
-        
+
         if website and website.get("assigned_campaign_id"):
             campaign = await db.campaigns.find_one({
                 "_id": website["assigned_campaign_id"],
                 "status": "active",
             })
+            if not campaign:
+                try:
+                    from bson import ObjectId
+                    campaign = await db.campaigns.find_one({
+                        "_id": ObjectId(website["assigned_campaign_id"]),
+                        "status": "active",
+                    })
+                except Exception:
+                    pass
             if campaign:
                 return str(campaign["_id"])
-    
-    # 2. Device/OS specific campaign
-    if os_name:
-        os_map = {
-            "windows": "windows",
-            "mac os": "mac",
-            "mac os x": "mac",
-            "macos": "mac",
-            "ios": "mac",
-            "android": "android",
-            "linux": "windows",
-        }
-        mapped_os = os_map.get(os_name.lower())
-        
-        if mapped_os:
+
+    mapped_os = normalize_os(os_name) if os_name else None
+
+    # 2. Specific OS + Country — campaign for this OS with a geo rule for
+    # the visitor's country.
+    if mapped_os and country_code:
+        cc = country_code.upper()
+        geo_rule = await db.geo_rules.find_one(
+            {"country_code": cc, "status": {"$ne": "deleted"}},
+            sort=[("priority", -1)],
+        )
+        if geo_rule and geo_rule.get("campaign_id"):
             campaign = await db.campaigns.find_one({
+                "_id": _campaign_oid(geo_rule["campaign_id"]),
                 "device_os": mapped_os,
                 "status": "active",
             })
+            if not campaign:
+                try:
+                    from bson import ObjectId
+                    campaign = await db.campaigns.find_one({
+                        "_id": ObjectId(geo_rule["campaign_id"]),
+                        "device_os": mapped_os,
+                        "status": "active",
+                    })
+                except Exception:
+                    pass
             if campaign:
                 return str(campaign["_id"])
-    
-    # 3. Global campaign
+
+    # 3. OS-specific campaign
+    if mapped_os:
+        campaign = await db.campaigns.find_one({
+            "device_os": mapped_os,
+            "status": "active",
+        })
+        if campaign:
+            return str(campaign["_id"])
+
+    # 4. Global campaign
     campaign = await db.campaigns.find_one({
         "device_os": "global",
         "status": "active",
     })
     if campaign:
         return str(campaign["_id"])
-    
-    # 4. Weighted random selection
-    campaigns = await db.campaigns.find({"status": "active"}).to_list(length=None)
+
+    # 5. Weighted random selection — restricted to global-capable campaigns so an
+    # OS-specific campaign is never served to the wrong OS.
+    campaigns = await db.campaigns.find({
+        "status": "active",
+        "$or": [
+            {"device_os": "global"},
+            {"device_os": None},
+            {"device_os": {"$exists": False}},
+        ],
+    }).to_list(length=None)
     if campaigns:
         from app.services.campaign_service import select_weighted_campaign
         campaign = select_weighted_campaign(campaigns)
         if campaign:
             return str(campaign.get("_id", campaign.get("id", "")))
-    
+
     return None
+
+
+def _campaign_oid(value):
+    """Coerce a campaign reference to ObjectId when possible, else pass through."""
+    try:
+        from bson import ObjectId
+        if isinstance(value, str) and ObjectId.is_valid(value):
+            return ObjectId(value)
+    except Exception:
+        pass
+    return value

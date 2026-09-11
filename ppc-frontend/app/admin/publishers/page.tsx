@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, Trash2, Edit, DollarSign, Plus, Globe } from 'lucide-react'
+import { Search, Download, Trash2, Edit, DollarSign, Plus, Globe, Link2, Copy, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import DataTable from '@/components/tables/DataTable'
@@ -14,6 +14,10 @@ import type { Publisher } from '@/types'
 const EMPTY_PUB_FORM = {
   name: '', email: '', password: '', website_domain: '',
   status: 'active', revenue_share: 0.80, custom_cpc: '',
+}
+
+const EMPTY_MANUAL_FORM = {
+  name: '', revenue_share: 0.80, custom_cpc: '',
 }
 
 const EMPTY_SITE_FORM = { domain: '', name: '' }
@@ -39,6 +43,18 @@ export default function PublishersPage() {
   const [addModal, setAddModal] = useState(false)
   const [addForm, setAddForm] = useState({ ...EMPTY_PUB_FORM })
   const [addLoading, setAddLoading] = useState(false)
+
+  // Manual publisher modal (name/tag only — no login, no website)
+  const [manualModal, setManualModal] = useState(false)
+  const [manualForm, setManualForm] = useState({ ...EMPTY_MANUAL_FORM })
+  const [manualLoading, setManualLoading] = useState(false)
+
+  // Smartlink modal (Admin → Publishers → Smartlink/Generate Link)
+  const [smartlinkModal, setSmartlinkModal] = useState<{ publisher: Publisher; data: any } | null>(null)
+  const [smartlinkLoading, setSmartlinkLoading] = useState(false)
+
+  // Permanent deletion confirmation input (spec: requires admin confirmation)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
 
   // New: add website for publisher modal
   const [siteModal, setSiteModal] = useState<Publisher | null>(null)
@@ -110,6 +126,49 @@ export default function PublishersPage() {
     }
   }
 
+  // ── Manual publisher (name/tag only) ───────────────────────────────────────
+  const handleAddManualPublisher = async () => {
+    if (!manualForm.name.trim()) { toast.error('A unique Name/Tag is required'); return }
+    setManualLoading(true)
+    try {
+      await adminApi.createManualPublisher({
+        name: manualForm.name.trim(),
+        revenue_share: parseFloat(manualForm.revenue_share as any) || 0.80,
+        custom_cpc: manualForm.custom_cpc ? parseFloat(manualForm.custom_cpc) : undefined,
+      })
+      toast.success('Manual publisher created — generate the Smartlink next')
+      setManualModal(false)
+      setManualForm({ ...EMPTY_MANUAL_FORM })
+      loadPublishers()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to create manual publisher')
+    } finally {
+      setManualLoading(false)
+    }
+  }
+
+  // ── Smartlink generation ────────────────────────────────────────────────────
+  const handleOpenSmartlink = async (publisher: Publisher) => {
+    setSmartlinkLoading(true)
+    try {
+      const res = await adminApi.getPublisherSmartlink(publisher.id)
+      setSmartlinkModal({ publisher, data: res.data })
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to generate Smartlink')
+    } finally {
+      setSmartlinkLoading(false)
+    }
+  }
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success('Copied to clipboard')
+    } catch {
+      toast.error('Copy failed — select and copy manually')
+    }
+  }
+
   // ── Existing actions ───────────────────────────────────────────────────────
   const handleEditSave = async () => {
     if (!editModal) return
@@ -129,11 +188,16 @@ export default function PublishersPage() {
 
   const handleDelete = async () => {
     if (!deleteModal) return
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      toast.error('Type DELETE to confirm permanent removal')
+      return
+    }
     setActionLoading(true)
     try {
       await adminApi.deletePublisher(deleteModal.id)
-      toast.success('Publisher deleted')
+      toast.success('Publisher permanently deleted')
       setDeleteModal(null)
+      setDeleteConfirmText('')
       loadPublishers()
     } catch { toast.error('Delete failed') }
     finally { setActionLoading(false) }
@@ -180,13 +244,15 @@ export default function PublishersPage() {
       <div className="flex items-center gap-1">
         <button onClick={() => { setEditModal(p); setEditForm({ status: p.status, revenue_share: p.revenue_share, custom_cpc: p.custom_cpc?.toString() || '' }) }}
           className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Edit"><Edit size={15} /></button>
+        <button onClick={() => handleOpenSmartlink(p)}
+          className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50" title="Smartlink / Generate Link"><Link2 size={15} /></button>
         <button onClick={() => { setSiteModal(p); setSiteForm({ ...EMPTY_SITE_FORM }) }}
           className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50" title="Add Website"><Globe size={15} /></button>
         <button onClick={() => setBalanceModal(p)}
           className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Adjust Balance"><DollarSign size={15} /></button>
         <button onClick={() => handleDownloadCSV(p)}
           className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Download CSV"><Download size={15} /></button>
-        <button onClick={() => setDeleteModal(p)}
+        <button onClick={() => { setDeleteModal(p); setDeleteConfirmText('') }}
           className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50" title="Delete"><Trash2 size={15} /></button>
       </div>
     )},
@@ -201,10 +267,16 @@ export default function PublishersPage() {
             <h1 className="text-2xl font-bold text-gray-900">Publishers</h1>
             <p className="text-gray-400 text-sm mt-0.5">Manage publisher accounts</p>
           </div>
-          <button onClick={() => { setAddModal(true); setAddForm({ ...EMPTY_PUB_FORM }) }}
-            className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2">
-            <Plus size={18} /> Add Publisher
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => { setManualModal(true); setManualForm({ ...EMPTY_MANUAL_FORM }) }}
+              className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2">
+              <UserPlus size={18} /> Manual Publisher
+            </button>
+            <button onClick={() => { setAddModal(true); setAddForm({ ...EMPTY_PUB_FORM }) }}
+              className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2">
+              <Plus size={18} /> Add Publisher
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -219,6 +291,8 @@ export default function PublishersPage() {
             <option value="active">Active</option>
             <option value="pending">Pending</option>
             <option value="suspended">Suspended</option>
+            <option value="banned">Banned</option>
+            <option value="removed">Removed</option>
           </select>
           <span className="text-gray-500 text-sm">{total} publishers</span>
         </div>
@@ -331,6 +405,8 @@ export default function PublishersPage() {
                     <option value="active">Active</option>
                     <option value="pending">Pending</option>
                     <option value="suspended">Suspended</option>
+                    <option value="banned">Banned (links keep redirecting, stats preserved, Direct Link Stats off)</option>
+                    <option value="removed">Removed (links keep redirecting, stats preserved, Direct Link Stats off)</option>
                   </select>
                 </div>
                 <div>
@@ -357,22 +433,118 @@ export default function PublishersPage() {
           </div>
         )}
 
-        {/* ── Delete Modal ────────────────────────────────────────────────── */}
+        {/* ── Delete Modal (permanent deletion — requires confirmation) ─────── */}
         {deleteModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl border border-gray-100">
               <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-red-50">
                 <Trash2 className="text-red-600" size={24} />
               </div>
-              <h3 className="text-lg font-bold text-gray-900 mb-2">Delete Publisher</h3>
-              <p className="text-gray-500 text-sm mb-6">Delete <strong className="text-gray-900">{deleteModal.name}</strong>? All clicks, withdrawals, and records will be removed.</p>
-              <div className="flex gap-3">
-                <button onClick={handleDelete} disabled={actionLoading}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center">
-                  {actionLoading ? <Spinner size={16} /> : 'Yes, Delete'}
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Permanently Delete Publisher</h3>
+              <p className="text-gray-500 text-sm mb-4">
+                Permanently delete <strong className="text-gray-900">{deleteModal.name}</strong>?
+                The publisher and all related records (clicks, withdrawals, fraud logs, websites) will be deleted.
+                This cannot be undone.
+              </p>
+              <p className="text-gray-400 text-xs mb-4">
+                To ban instead, set status to <strong>Banned</strong> in Edit — links keep redirecting and statistics are preserved.
+              </p>
+              <input value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm" className={inp} />
+              <div className="flex gap-3 mt-4">
+                <button onClick={handleDelete} disabled={actionLoading || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
+                  {actionLoading ? <Spinner size={16} /> : 'Delete Permanently'}
                 </button>
-                <button onClick={() => setDeleteModal(null)}
+                <button onClick={() => { setDeleteModal(null); setDeleteConfirmText('') }}
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Manual Publisher Modal (name/tag only) ──────────────────────── */}
+        {manualModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
+              <h3 className="text-lg font-bold text-gray-900 mb-1">Add Manual Publisher</h3>
+              <p className="text-sm text-gray-400 mb-5">
+                Name/Tag only — no login, no website. The Publisher ID is auto-generated;
+                the Smartlink is <span className="font-mono">?pub=PUB_ID</span> with no site param, ever.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">Unique Name/Tag <span className="text-red-500">*</span></label>
+                  <input value={manualForm.name} onChange={e => setManualForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. push-network-a" className={inp} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-1">Revenue Share</label>
+                    <input type="number" step="0.01" min="0" max="1" value={manualForm.revenue_share}
+                      onChange={e => setManualForm(p => ({ ...p, revenue_share: parseFloat(e.target.value) }))} className={inp} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-1">Custom CPC</label>
+                    <input type="number" step="0.001" min="0" value={manualForm.custom_cpc}
+                      onChange={e => setManualForm(p => ({ ...p, custom_cpc: e.target.value }))}
+                      placeholder="Default" className={inp} />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleAddManualPublisher} disabled={manualLoading}
+                  className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
+                  {manualLoading ? <Spinner size={16} /> : 'Create Manual Publisher'}
+                </button>
+                <button onClick={() => setManualModal(false)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Smartlink Modal ─────────────────────────────────────────────── */}
+        {smartlinkLoading && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-8 shadow-2xl border border-gray-100 flex items-center gap-3">
+              <Spinner size={20} /> <span className="text-gray-600 text-sm">Generating Smartlink…</span>
+            </div>
+          </div>
+        )}
+        {smartlinkModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
+              <h3 className="text-lg font-bold text-gray-900 mb-1">Smartlink — {smartlinkModal.publisher.name}</h3>
+              <p className="text-sm text-gray-400 mb-4">
+                Publisher ID: <span className="font-mono text-gray-700">{smartlinkModal.data?.public_id}</span>
+                {' · '}Type: {smartlinkModal.data?.publisher_type === 'manual' ? 'Manual (no site param, ever)' : 'Registered'}
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                    {smartlinkModal.data?.website_smartlinks?.length ? 'Publisher-level link' : 'Smartlink'}
+                  </label>
+                  <div className="flex gap-2">
+                    <input readOnly value={smartlinkModal.data?.smartlink || ''} className={`${inp} font-mono text-xs`} />
+                    <button onClick={() => copyText(smartlinkModal.data?.smartlink || '')}
+                      className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
+                  </div>
+                </div>
+                {(smartlinkModal.data?.website_smartlinks || []).map((ws: any) => (
+                  <div key={ws.website_id}>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Website link</label>
+                    <div className="flex gap-2">
+                      <input readOnly value={ws.smartlink} className={`${inp} font-mono text-xs`} />
+                      <button onClick={() => copyText(ws.smartlink)}
+                        className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setSmartlinkModal(null)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Close</button>
               </div>
             </div>
           </div>

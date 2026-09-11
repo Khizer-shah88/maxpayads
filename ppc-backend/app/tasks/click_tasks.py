@@ -93,8 +93,8 @@ async def _process_click_async(click_id: str, click_data: dict):
                 await update_website_stats(click_data["website_id"], 0.0, False, db)
             logger.info(f"Click {click_id} marked as fraud: {reason}")
         else:
-            # Check if there's a matching offer with custom payout
-            offer_payout = None
+            # Check if there's a matching Offer carrying its own CPC
+            offer_cpc = None
             try:
                 from app.services.traffic_router import find_matching_offer
                 click_doc = await db.clicks.find_one({"_id": oid})
@@ -107,13 +107,19 @@ async def _process_click_async(click_id: str, click_data: dict):
                         country_code=click_data.get("country_code"),
                         db=db,
                     )
-                    if matched_offer and matched_offer.get("payout", 0) > 0:
-                        offer_payout = float(matched_offer["payout"])
+                    if matched_offer:
+                        # `payout` is the pre-glossary key for the same value.
+                        matched_cpc = matched_offer.get("cpc")
+                        if matched_cpc is None:
+                            matched_cpc = matched_offer.get("payout")
+                        if matched_cpc and float(matched_cpc) > 0:
+                            offer_cpc = float(matched_cpc)
             except Exception as e:
-                logger.debug(f"Offer payout lookup failed: {e}")
+                logger.debug(f"Offer CPC lookup failed: {e}")
 
-            if offer_payout and offer_payout > 0:
-                cpc = offer_payout
+            if offer_cpc and offer_cpc > 0:
+                cpc = offer_cpc
+                cpc_source = "offer"
             else:
                 cpc = await calculate_cpc(
                     click_data["publisher_id"],
@@ -121,6 +127,7 @@ async def _process_click_async(click_id: str, click_data: dict):
                     click_data.get("device_type"),
                     db,
                 )
+                cpc_source = "cpc_engine"
             # Try ObjectId first (correct for new publishers), fall back to string
             publisher = None
             try:
@@ -134,20 +141,37 @@ async def _process_click_async(click_id: str, click_data: dict):
             revenue_share = publisher.get("revenue_share", 0.80) if publisher else 0.80
             earnings = calculate_earnings(cpc, revenue_share)
 
-            await db.clicks.update_one(
-                {"_id": oid},
-                {
-                    "$set": {
-                        "status": "valid",
-                        "is_valid": True,
-                        "fraud_score": fraud_score,
-                        "cpc": cpc,
-                        "earnings": earnings,
-                        "processed": True,
-                        "processed_at": datetime.utcnow(),
+            # Close out the click, and append this task's CPC decision to the
+            # trace the redirect pipeline started, so the stored trace covers the
+            # whole journey — including the part that ran after the redirect.
+            click_update = {
+                "$set": {
+                    "status": "valid",
+                    "is_valid": True,
+                    "fraud_score": fraud_score,
+                    "cpc": cpc,
+                    "earnings": earnings,
+                    "processed": True,
+                    "processed_at": datetime.utcnow(),
+                }
+            }
+            if getattr(settings, "REDIRECT_TRACE_ENABLED", True):
+                from app.services.redirect_pipeline import STAGE_CPC
+
+                click_update["$push"] = {
+                    "resolution_trace": {
+                        "stage": STAGE_CPC,
+                        "outcome": cpc_source,
+                        "detail": {
+                            "cpc": cpc,
+                            "earnings": earnings,
+                            "revenue_share": revenue_share,
+                        },
+                        "elapsed_ms": 0.0,
                     }
-                },
-            )
+                }
+
+            await db.clicks.update_one({"_id": oid}, click_update)
             await update_publisher_balance(click_data["publisher_id"], cpc, earnings, db)
             if click_data.get("website_id"):
                 await update_website_stats(click_data["website_id"], earnings, True, db)

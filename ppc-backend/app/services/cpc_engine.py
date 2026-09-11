@@ -33,6 +33,11 @@ async def calculate_cpc(
     #  country override or publisher custom CPC silently dropped device pricing.)
     cpc: Optional[float] = None
 
+    # Country CPC settings and rate tables store uppercase ISO codes
+    # (admin writes them via set_country_cpc(code.upper(), ...)); normalize the
+    # visitor's code the same way so a lower/mixed-case input still resolves.
+    country_key = (country_code or "").strip().upper() or None
+
     # 1. Publisher custom CPC (highest priority)
     publisher = await db.publishers.find_one({"_id": _oid(publisher_id)})
     if not publisher:
@@ -42,15 +47,15 @@ async def calculate_cpc(
         logger.debug(f"Using custom CPC {cpc} for publisher {publisher_id}")
 
     # 2. Country-specific CPC from system settings
-    if cpc is None and country_code:
-        setting = await db.system_settings.find_one({"key": f"cpc_country_{country_code}"})
+    if cpc is None and country_key:
+        setting = await db.system_settings.find_one({"key": f"cpc_country_{country_key}"})
         if setting:
             cpc = float(setting["value"])
-            logger.debug(f"Using country setting CPC {cpc} for {country_code}")
+            logger.debug(f"Using country setting CPC {cpc} for {country_key}")
 
     # 3. Global country rate from constants
-    if cpc is None and country_code and country_code in COUNTRY_CPC_RATES:
-        cpc = COUNTRY_CPC_RATES[country_code]
+    if cpc is None and country_key and country_key in COUNTRY_CPC_RATES:
+        cpc = COUNTRY_CPC_RATES[country_key]
 
     # 4. Global default CPC
     if cpc is None:

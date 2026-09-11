@@ -34,23 +34,25 @@ export default function PrelanderSlugPage() {
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
 
       try {
-        // Step 1: check if this hostname is the last domain.
-        // If not, redirect the browser to the last domain with the same slug.
-        // This avoids fetch() swallowing the 302 from the backend.
+        // Step 1: check if this hostname is the Prelander domain.
+        // If not, redirect the browser to the Prelander domain with the same
+        // slug. This avoids fetch() swallowing the 302 from the backend.
         const dtRes = await fetch(
           `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}`
         )
         if (dtRes.ok) {
           const dt = await dtRes.json()
-          if (dt.domain_type !== 'last' && dt.last_domain) {
-            // Not on the last domain — navigate directly (no fetch redirect magic)
+          // `last_domain` is the pre-glossary name the API still mirrors.
+          const prelanderDomain = dt.prelander_domain ?? dt.last_domain
+          if (dt.domain_type !== 'prelander' && prelanderDomain) {
+            // Not on the Prelander domain — navigate directly (no fetch redirect magic)
             // Use the raw slug (base64url chars are URL-safe, no encoding needed)
-            window.location.replace(`${dt.last_domain}/d/${slug}`)
+            window.location.replace(`${prelanderDomain}/d/${slug}`)
             return
           }
         }
 
-        // Step 2: on the last domain (or domain-type unknown) — fetch prelander data
+        // Step 2: on the Prelander domain (or type unknown) — fetch prelander data
         const res = await fetch(`/api/prelander/resolve/${slug}`, {
           headers: { 'X-Prelander-Host': hostname },
         })

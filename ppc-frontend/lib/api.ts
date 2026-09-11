@@ -96,6 +96,8 @@ export const adminApi = {
   changePassword: (current_password: string, new_password: string) =>
     api.post('/admin/change-password', { current_password, new_password }),
   createPublisher: (data: object) => api.post('/admin/publishers', data),
+  createManualPublisher: (data: object) => api.post('/admin/publishers/manual', data),
+  getPublisherSmartlink: (id: string) => api.get(`/admin/publishers/${id}/smartlink`),
   addPublisherWebsite: (publisherId: string, data: object) =>
     api.post(`/admin/publishers/${publisherId}/websites`, data),
 }

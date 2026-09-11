@@ -127,7 +127,17 @@ async def delete_device_rule(rule_id: str, db, redis=None) -> bool:
 
 async def get_campaign_for_website(website_id: str, db) -> Optional[dict]:
     """Get campaign assigned to a website, or select from global campaigns."""
-    website = await db.websites.find_one({"_id": website_id})
+    from bson import ObjectId
+
+    # Website `_id` is an ObjectId but callers pass its string form — try both
+    # shapes like every other lookup in this module.
+    website = None
+    try:
+        website = await db.websites.find_one({"_id": ObjectId(website_id)})
+    except Exception:
+        pass
+    if not website:
+        website = await db.websites.find_one({"_id": website_id})
     if website and website.get("assigned_campaign_id"):
         return await get_campaign_by_id(website["assigned_campaign_id"], db)
 

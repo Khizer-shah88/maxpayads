@@ -21,12 +21,26 @@ import logging
 from jinja2 import Environment, BaseLoader, TemplateSyntaxError, select_autoescape
 from jinja2.sandbox import SandboxedEnvironment
 
+from app.core.constants import DOMAIN_TYPE_PRELANDER
+from app.core.glossary import domain_type_filter
+
 logger = logging.getLogger(__name__)
 
 # Secret key for signing redirect context
-# Load from environment or use default (should be changed in production)
+# Sourced from settings/env (REDIRECT_SECRET_KEY); falls back to the app-wide
+# JWT secret so tokens stay verifiable even when the dedicated key is unset.
 import os
-REDIRECT_SECRET = os.getenv("REDIRECT_SECRET_KEY", "your-secret-key-change-in-production")
+from app.config import get_settings
+
+def _resolve_redirect_secret() -> str:
+    configured = (get_settings().REDIRECT_SECRET_KEY or "").strip()
+    if configured:
+        return configured
+    if os.getenv("REDIRECT_SECRET_KEY", "").strip():
+        return os.getenv("REDIRECT_SECRET_KEY").strip()
+    return get_settings().SECRET_KEY
+
+REDIRECT_SECRET = _resolve_redirect_secret()
 
 # Token expiration (5 minutes)
 TOKEN_EXPIRATION_SECONDS = 300
@@ -303,7 +317,7 @@ class PrelanderTemplateEngine:
 
 async def get_template_for_domain(db, domain: str) -> Optional[Dict[str, Any]]:
     """
-    Get active template assigned to a prelander domain.
+    Get active template assigned to a Prelander domain.
     Returns None if domain not found or no template assigned.
     """
     from app.services.domain_service import normalize_domain
@@ -313,7 +327,7 @@ async def get_template_for_domain(db, domain: str) -> Optional[Dict[str, Any]]:
     # Find domain
     domain_doc = await db.redirection_domains.find_one({
         "domain": normalized,
-        "domain_type": "last",
+        "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
         "status": "active",
     })
     

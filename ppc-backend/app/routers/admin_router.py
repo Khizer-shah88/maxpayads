@@ -6,6 +6,7 @@ from app.schemas.publisher_schema import AdminPublisherUpdate, BalanceAdjustment
 from app.services.publisher_service import (
     get_all_publishers, get_publisher_by_id, update_publisher,
     delete_publisher_and_records, count_publishers, get_publisher_stats,
+    create_manual_publisher,
 )
 from app.services.earnings_service import adjust_publisher_balance
 from app.services.cpc_engine import get_global_cpc_settings, set_country_cpc, delete_country_cpc
@@ -158,6 +159,106 @@ async def admin_create_publisher(
     }
 
 
+@router.post("/publishers/manual", status_code=201)
+async def admin_create_manual_publisher(
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Admin: create a Manual Publisher (Domain Glossary).
+
+    Only a unique Name/Tag is entered. The system auto-generates the Publisher
+    ID (public_id PUB_XXXXXXXX). No login, no website — the publisher exists
+    purely so their Smartlink (`?pub=PUB_ID`, never a `site` param) can be
+    generated and their traffic attributed.
+    """
+    from app.utils.public_id_utils import get_publisher_public_id
+
+    try:
+        publisher_id = await create_manual_publisher(data, db, admin_id=current_user["id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    public_id = await get_publisher_public_id(db, publisher_id)
+    return {
+        "success": True,
+        "publisher_id": publisher_id,
+        "public_id": public_id,
+        "message": "Manual publisher created",
+    }
+
+
+@router.get("/publishers/{publisher_id}/smartlink")
+async def admin_get_publisher_smartlink(
+    publisher_id: str,
+    db=Depends(get_db),
+    current_user: dict = Depends(get_current_admin),
+):
+    """
+    Admin: generate the Smartlink for a publisher.
+
+    Admin → Publishers → Select Publisher → Smartlink/Generate Link.
+
+    Registered publishers: `https://anchor-domain.com/?pub=PUB_ID&site=SITE_ID`
+    (per website) — pass ?site=SITE_PUBLIC_ID for a website-specific link.
+    Manual publishers:     `https://anchor-domain.com/?pub=PUB_ID`
+    (a `site` param is never included).
+    """
+    from urllib.parse import quote
+    from app.core.constants import PUBLISHER_TYPE_MANUAL, DOMAIN_TYPE_ANCHOR
+    from app.services.domain_service import resolve_domain_url, domain_to_url, normalize_domain
+    from app.services.smartlink_service import generate_smartlink
+    from app.utils.public_id_utils import get_publisher_public_id, get_website_public_id
+
+    publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)}) if ObjectId.is_valid(publisher_id) else None
+    if not publisher:
+        publisher = await db.publishers.find_one({"_id": publisher_id})
+    if not publisher:
+        raise NotFoundError("Publisher")
+
+    # Anchor base — publisher-assigned, else global default, else legacy setting.
+    base = await resolve_domain_url(db, DOMAIN_TYPE_ANCHOR, publisher_id)
+    if not base:
+        legacy = await db.system_settings.find_one({"key": "platform_domain"})
+        base = (legacy.get("value", "") or "").rstrip("/") if legacy else ""
+    if not base:
+        raise HTTPException(status_code=400, detail="No Anchor domain configured")
+
+    public_id = await get_publisher_public_id(db, publisher_id)
+    if not public_id:
+        raise HTTPException(status_code=400, detail="Publisher has no public ID")
+
+    anchor_base = base.rstrip("/")
+    is_manual = publisher.get("publisher_type") == PUBLISHER_TYPE_MANUAL
+    links = {}
+
+    if is_manual:
+        # Manual publishers never carry a site param.
+        links["default"] = f"{anchor_base}/click?pub={quote(public_id)}"
+    else:
+        # Registered publishers: one link per website + a publisher-level default.
+        cursor = db.websites.find({"publisher_id": publisher_id})
+        async for site in cursor:
+            site_pub = site.get("public_id") or await get_website_public_id(db, str(site["_id"]))
+            if site_pub:
+                links[str(site["_id"])] = f"{anchor_base}/click?pub={quote(public_id)}&site={quote(site_pub)}"
+        links["default"] = f"{anchor_base}/click?pub={quote(public_id)}"
+
+    return {
+        "success": True,
+        "publisher_id": publisher_id,
+        "public_id": public_id,
+        "publisher_type": publisher.get("publisher_type", "registered"),
+        "anchor_domain": normalize_domain(anchor_base),
+        "smartlink": links["default"],
+        "website_smartlinks": [
+            {"website_id": wid, "smartlink": link}
+            for wid, link in links.items() if wid != "default"
+        ],
+    }
+
+
 @router.post("/publishers/{publisher_id}/websites", status_code=201)
 async def admin_add_publisher_website(
     publisher_id: str,
@@ -242,6 +343,17 @@ async def update_publisher_endpoint(
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         return {"success": True, "message": "No changes"}
+
+    # Validate status against the allowed publisher statuses. Banning/removing
+    # never breaks Smartlinks — it only gates panel access and Direct Link Stats.
+    if "status" in update_data:
+        from app.core.constants import (
+            PUB_ACTIVE, PUB_PENDING, PUB_SUSPENDED, PUB_BANNED, PUB_REMOVED,
+        )
+        allowed = (PUB_ACTIVE, PUB_PENDING, PUB_SUSPENDED, PUB_BANNED, PUB_REMOVED)
+        if update_data["status"] not in allowed:
+            raise HTTPException(status_code=400, detail="Invalid status value")
+
     updated = await update_publisher(publisher_id, update_data, db)
     if not updated:
         raise NotFoundError("Publisher")

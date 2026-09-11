@@ -6,9 +6,15 @@ import random
 
 from app.database import get_database
 from app.dependencies import get_db, get_current_admin
+from app.core.constants import (
+    DOMAIN_TYPE_ANCHOR, DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER,
+)
+from app.core.glossary import domain_type_filter
 from app.models.redirect_chain import (
     RedirectChain, CreateRedirectChainRequest, UpdateRedirectChainRequest,
-    RedirectChainSession, RedirectChainStatus
+    RedirectChainSession, RedirectChainStatus,
+    LEGACY_INTER_DOMAIN_KEY, LEGACY_PRELANDER_POOL_KEY,
+    chain_inter_domain, chain_prelander_pool,
 )
 
 try:
@@ -21,7 +27,25 @@ except ImportError:
 router = APIRouter(prefix="/admin/redirect-chains", tags=["Redirect Chains"])
 
 
-@router.get("/", response_model=dict)
+def _serialize_chain(chain: dict) -> dict:
+    """
+    Shape a stored chain for the API: string id, and the Domain Glossary field
+    names regardless of whether the document has been through migration 005.
+
+    The legacy keys are mirrored alongside the canonical ones for admin sessions
+    still running a pre-glossary bundle; drop the mirror once those have cycled out.
+    """
+    out = dict(chain)
+    if "_id" in out:
+        out["id"] = str(out.pop("_id"))
+    out["inter_domain"] = chain_inter_domain(chain)
+    out["prelander_pool"] = chain_prelander_pool(chain)
+    out[LEGACY_INTER_DOMAIN_KEY] = out["inter_domain"]
+    out[LEGACY_PRELANDER_POOL_KEY] = out["prelander_pool"]
+    return out
+
+
+@router.get("", response_model=dict)
 async def get_redirect_chains(
     status: Optional[RedirectChainStatus] = None,
     page: int = Query(1, ge=1),
@@ -44,13 +68,8 @@ async def get_redirect_chains(
     cursor = db.redirect_chains.find(query_filter).skip(skip).limit(limit).sort("created_at", -1)
     chains = await cursor.to_list(length=limit)
     
-    # Convert ObjectId to string for response
-    for chain in chains:
-        chain["id"] = str(chain["_id"])
-        del chain["_id"]
-    
     return {
-        "chains": chains,
+        "chains": [_serialize_chain(chain) for chain in chains],
         "pagination": {
             "page": page,
             "limit": limit,
@@ -60,7 +79,7 @@ async def get_redirect_chains(
     }
 
 
-@router.post("/", response_model=dict)
+@router.post("", response_model=dict)
 async def create_redirect_chain(
     request: CreateRedirectChainRequest,
     db = Depends(get_db),
@@ -79,7 +98,7 @@ async def create_redirect_chain(
     # Validate that domains exist in redirection_domains collection
     anchor_domain = await db.redirection_domains.find_one({
         "domain": request.anchor_domain,
-        "domain_type": "link",
+        "domain_type": domain_type_filter(DOMAIN_TYPE_ANCHOR),
         "status": "active"
     })
     if not anchor_domain:
@@ -88,28 +107,28 @@ async def create_redirect_chain(
             detail=f"Anchor domain '{request.anchor_domain}' not found or not active"
         )
     
-    intermediate_domain = await db.redirection_domains.find_one({
-        "domain": request.intermediate_domain,
-        "domain_type": "intermediate", 
+    inter_domain = await db.redirection_domains.find_one({
+        "domain": request.inter_domain,
+        "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
         "status": "active"
     })
-    if not intermediate_domain:
+    if not inter_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Intermediate domain '{request.intermediate_domain}' not found or not active"
+            detail=f"Inter domain '{request.inter_domain}' not found or not active"
         )
     
-    # Validate pre-lander domains
-    for domain in request.pre_lander_pool:
+    # Validate Prelander Pool domains
+    for domain in request.prelander_pool:
         prelander_domain = await db.redirection_domains.find_one({
             "domain": domain,
-            "domain_type": "last",
+            "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
             "status": "active"
         })
         if not prelander_domain:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Pre-lander domain '{domain}' not found or not active"
+                detail=f"Prelander domain '{domain}' not found or not active"
             )
     
     # Create new chain
@@ -117,8 +136,8 @@ async def create_redirect_chain(
     chain_data = {
         "name": request.name,
         "anchor_domain": request.anchor_domain,
-        "intermediate_domain": request.intermediate_domain,
-        "pre_lander_pool": request.pre_lander_pool,
+        "inter_domain": request.inter_domain,
+        "prelander_pool": request.prelander_pool,
         "session_validation": request.session_validation,
         "cookie_lifetime": request.cookie_lifetime,
         "status": request.status.value,
@@ -132,14 +151,12 @@ async def create_redirect_chain(
     }
     
     result = await db.redirect_chains.insert_one(chain_data)
-    chain_data["id"] = str(result.inserted_id)
-    if "_id" in chain_data:
-        del chain_data["_id"]
-    
+    chain_data["_id"] = result.inserted_id
+
     return {
         "success": True,
         "message": "Redirect chain created successfully",
-        "chain": chain_data
+        "chain": _serialize_chain(chain_data)
     }
 
 
@@ -161,10 +178,7 @@ async def get_redirect_chain(
     if not chain:
         raise HTTPException(status_code=404, detail="Redirect chain not found")
     
-    chain["id"] = str(chain["_id"])
-    del chain["_id"]
-    
-    return {"chain": chain}
+    return {"chain": _serialize_chain(chain)}
 
 
 @router.put("/{chain_id}", response_model=dict)
@@ -206,7 +220,7 @@ async def update_redirect_chain(
     if request.anchor_domain is not None:
         anchor_domain = await db.redirection_domains.find_one({
             "domain": request.anchor_domain,
-            "domain_type": "link",
+            "domain_type": domain_type_filter(DOMAIN_TYPE_ANCHOR),
             "status": "active"
         })
         if not anchor_domain:
@@ -216,32 +230,32 @@ async def update_redirect_chain(
             )
         update_data["anchor_domain"] = request.anchor_domain
     
-    if request.intermediate_domain is not None:
-        intermediate_domain = await db.redirection_domains.find_one({
-            "domain": request.intermediate_domain,
-            "domain_type": "intermediate",
+    if request.inter_domain is not None:
+        inter_domain = await db.redirection_domains.find_one({
+            "domain": request.inter_domain,
+            "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
             "status": "active"
         })
-        if not intermediate_domain:
+        if not inter_domain:
             raise HTTPException(
                 status_code=400,
-                detail=f"Intermediate domain '{request.intermediate_domain}' not found or not active"
+                detail=f"Inter domain '{request.inter_domain}' not found or not active"
             )
-        update_data["intermediate_domain"] = request.intermediate_domain
+        update_data["inter_domain"] = request.inter_domain
     
-    if request.pre_lander_pool is not None:
-        for domain in request.pre_lander_pool:
+    if request.prelander_pool is not None:
+        for domain in request.prelander_pool:
             prelander_domain = await db.redirection_domains.find_one({
                 "domain": domain,
-                "domain_type": "last",
+                "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
                 "status": "active"
             })
             if not prelander_domain:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Pre-lander domain '{domain}' not found or not active"
+                    detail=f"Prelander domain '{domain}' not found or not active"
                 )
-        update_data["pre_lander_pool"] = request.pre_lander_pool
+        update_data["prelander_pool"] = request.prelander_pool
     
     if request.session_validation is not None:
         update_data["session_validation"] = request.session_validation
@@ -252,21 +266,29 @@ async def update_redirect_chain(
     if request.status is not None:
         update_data["status"] = request.status.value
     
-    # Update the chain
-    await db.redirect_chains.update_one(
-        {"_id": object_id},
-        {"$set": update_data}
-    )
+    # Update the chain. Any legacy key the canonical field replaces is dropped in
+    # the same write, so an edited chain never carries both spellings.
+    update_ops: dict = {"$set": update_data}
+    unset_legacy = {
+        legacy: ""
+        for canonical, legacy in (
+            ("inter_domain", LEGACY_INTER_DOMAIN_KEY),
+            ("prelander_pool", LEGACY_PRELANDER_POOL_KEY),
+        )
+        if canonical in update_data
+    }
+    if unset_legacy:
+        update_ops["$unset"] = unset_legacy
+
+    await db.redirect_chains.update_one({"_id": object_id}, update_ops)
     
     # Return updated chain
     updated_chain = await db.redirect_chains.find_one({"_id": object_id})
-    updated_chain["id"] = str(updated_chain["_id"])
-    del updated_chain["_id"]
-    
+
     return {
         "success": True,
         "message": "Redirect chain updated successfully",
-        "chain": updated_chain
+        "chain": _serialize_chain(updated_chain)
     }
 
 
@@ -328,8 +350,17 @@ async def create_chain_session(
     now = datetime.utcnow()
     expires_at = now + timedelta(minutes=chain["cookie_lifetime"])
     
-    # Select random pre-lander domain
-    selected_prelander = random.choice(chain["pre_lander_pool"])
+    # Select pre-lander domain — weighted among ACTIVE pool domains only.
+    from app.services.domain_service import select_active_prelander
+    selected_prelander = await select_active_prelander(db, chain_prelander_pool(chain))
+    if not selected_prelander:
+        pool = chain_prelander_pool(chain)
+        if not pool:
+            raise HTTPException(
+                status_code=404,
+                detail="Redirect chain has no active prelander domains"
+            )
+        selected_prelander = pool[0]
     
     # Create session
     session_data = {
@@ -355,7 +386,7 @@ async def create_chain_session(
     return {
         "success": True,
         "session_token": session_token,
-        "intermediate_domain": chain["intermediate_domain"],
+        "inter_domain": chain_inter_domain(chain),
         "expires_at": expires_at.isoformat()
     }
 
@@ -364,12 +395,12 @@ async def create_chain_session(
 async def validate_chain_session(
     chain_id: str,
     session_token: str,
-    step: str,  # "intermediate" or "prelander"
+    step: str,  # "inter" (legacy: "intermediate") or "prelander"
     visitor_ip: str,
     user_agent: str,
     db = Depends(get_db)
 ):
-    """Validate session token and return next step (called from intermediate/prelander domains)"""
+    """Validate session token and return next step (called from Inter/Prelander domains)"""
     
     # Find session
     session = await db.redirect_chain_sessions.find_one({
@@ -413,8 +444,12 @@ async def validate_chain_session(
     now = datetime.utcnow()
     update_data = {}
     
-    if step == "intermediate" and not session.get("intermediate_timestamp"):
-        update_data["intermediate_timestamp"] = now
+    if step == "intermediate":  # legacy step name
+        step = "inter"
+    if step == "inter" and not (
+        session.get("inter_timestamp") or session.get("intermediate_timestamp")
+    ):
+        update_data["inter_timestamp"] = now
     elif step == "prelander" and not session.get("prelander_timestamp"):
         update_data["prelander_timestamp"] = now
         # Update valid sessions count
@@ -433,7 +468,7 @@ async def validate_chain_session(
         "success": True,
         "valid": True,
         "selected_prelander": session["selected_prelander"],
-        "next_step": "prelander" if step == "intermediate" else "complete"
+        "next_step": "prelander" if step == "inter" else "complete"
     }
 
 

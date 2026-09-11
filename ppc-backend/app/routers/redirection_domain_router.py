@@ -11,7 +11,7 @@ router = APIRouter(prefix="/admin/redirection-domains", tags=["Redirection Domai
 
 @router.get("")
 async def list_redirection_domains(
-    domain_type: Optional[str] = Query(None, description="link | intermediate | last"),
+    domain_type: Optional[str] = Query(None, description="anchor | inter | prelander"),
     status: Optional[str] = Query(None),
     publisher_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_admin),
@@ -82,10 +82,53 @@ async def delete_redirection_domain(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
+    """
+    Delete a redirection domain.
+
+    Delete requires confirmation (handled in the admin UI). Historical
+    statistics remain after deletion. If the deleted domain was part of a
+    redirect chain, the affected chains are reported back so the Admin can
+    manually reconfigure them — the system never silently invents a
+    replacement domain.
+    """
+    doc = await domain_service.get_domain(db, domain_id)
+    if not doc:
+        raise NotFoundError("Redirection Domain")
+
     deleted = await domain_service.delete_domain(db, domain_id)
     if not deleted:
         raise NotFoundError("Redirection Domain")
-    return {"success": True, "message": "Domain removed"}
+
+    # Report chains that referenced the deleted domain (canonical + legacy keys).
+    from app.models.redirect_chain import (
+        LEGACY_INTER_DOMAIN_KEY,
+        LEGACY_PRELANDER_POOL_KEY,
+    )
+    host = doc.get("domain", "")
+    affected = []
+    async for chain in db.redirect_chains.find({
+        "$or": [
+            {"anchor_domain": host},
+            {"inter_domain": host},
+            {LEGACY_INTER_DOMAIN_KEY: host},
+            {"prelander_pool": host},
+            {LEGACY_PRELANDER_POOL_KEY: host},
+        ]
+    }):
+        affected.append({"id": str(chain["_id"]), "name": chain.get("name", "")})
+
+    message = "Domain removed"
+    if affected:
+        message = (
+            "Domain removed. Manually reconfigure the listed redirect chains — "
+            "no replacement was assigned automatically."
+        )
+
+    return {
+        "success": True,
+        "message": message,
+        "affected_chains": affected,
+    }
 
 
 @router.post("/{domain_id}/verify-dns")

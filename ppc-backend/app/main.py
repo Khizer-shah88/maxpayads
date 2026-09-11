@@ -134,9 +134,10 @@ async def serve_ad(
     db = get_database()
     redis = get_redis()
 
-    # Use publisher-aware link domain when available
+    # Use publisher-aware Anchor domain when available
+    from app.core.constants import DOMAIN_TYPE_ANCHOR
     from app.services.domain_service import resolve_domain_url
-    base_url = await resolve_domain_url(db, "link", pub)
+    base_url = await resolve_domain_url(db, DOMAIN_TYPE_ANCHOR, pub)
     if not base_url:
         domain_doc = await db.system_settings.find_one({"key": "platform_domain"})
         if domain_doc and domain_doc.get("value"):

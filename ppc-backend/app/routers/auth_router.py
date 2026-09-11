@@ -4,6 +4,7 @@ from app.services.publisher_service import create_publisher, get_publisher_by_em
 from app.core.security import verify_password, create_access_token, create_refresh_token, decode_token, blacklist_token
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.dependencies import get_db, get_redis_client, get_current_user
+from bson import ObjectId
 from datetime import datetime
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -56,11 +57,21 @@ async def login(data: LoginRequest, db=Depends(get_db)):
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
-    # Update last login
-    await db.publishers.update_one(
-        {"_id": publisher["id"]},
+    # Update last login — publisher id is a string; the stored `_id` is an
+    # ObjectId, so try both shapes (mirrors get_current_user's lookup).
+    try:
+        last_login_filter = {"_id": ObjectId(publisher["id"])}
+    except Exception:
+        last_login_filter = {"_id": publisher["id"]}
+    result = await db.publishers.update_one(
+        last_login_filter,
         {"$set": {"last_login": datetime.utcnow()}}
     )
+    if result.matched_count == 0:
+        await db.publishers.update_one(
+            {"_id": publisher["id"]},
+            {"$set": {"last_login": datetime.utcnow()}}
+        )
 
     return TokenResponse(
         access_token=access_token,

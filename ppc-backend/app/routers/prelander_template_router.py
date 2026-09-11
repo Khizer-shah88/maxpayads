@@ -17,6 +17,8 @@ from typing import Optional
 
 from app.dependencies import get_db, get_current_admin
 from app.core.exceptions import NotFoundError
+from app.core.constants import DOMAIN_TYPE_PRELANDER
+from app.core.glossary import domain_type_filter
 from app.schemas.prelander_template_schema import (
     PrlanderTemplateCreate,
     PrlanderTemplateUpdate,
@@ -66,7 +68,7 @@ async def _usage_count(template_id: str, db) -> int:
 @router.get("")
 async def list_templates(
     status: Optional[str] = Query(None, description="active | paused | archived"),
-    os_type: Optional[str] = Query(None, description="windows | mac | both"),
+    os_type: Optional[str] = Query(None, description="windows | android | mac | ios | both"),
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
@@ -298,7 +300,7 @@ async def get_template_assigned_domains(
     
     # Find all redirection domains using this template
     cursor = db.redirection_domains.find(
-        {"template_id": template_id, "domain_type": "last"},
+        {"template_id": template_id, "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER)},
         {"domain": 1, "status": 1, "dns_status": 1, "publisher_ids": 1},
     )
     

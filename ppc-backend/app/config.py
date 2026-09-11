@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     ENTRY_SESSION_TTL: int = 900
     ENTRY_SESSION_SECRET: str = ""
 
+    # Prelander signed redirect tokens (HMAC-SHA256 in prelander_service)
+    REDIRECT_SECRET_KEY: str = ""
+
+    # Redirect pipeline tracing — store each click's stage-by-stage resolution
+    # trace on the click document so a redirect can be explained after the fact.
+    # Turn off to keep click documents minimal on very high volume.
+    REDIRECT_TRACE_ENABLED: bool = True
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]

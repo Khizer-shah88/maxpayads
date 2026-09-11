@@ -8,6 +8,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 import logging
 
+from app.models.redirect_chain import (
+    LEGACY_INTER_DOMAIN_KEY,
+    LEGACY_PRELANDER_POOL_KEY,
+    chain_inter_domain,
+    chain_prelander_pool,
+)
+
 # Make imports more defensive for startup
 try:
     from app.database import get_database
@@ -34,7 +41,9 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         try:
-            host = request.headers.get("host", "").lower()
+            # Strip any port the proxy left on the Host header — chain domains
+            # are stored as bare hostnames.
+            host = request.headers.get("host", "").lower().split(":")[0]
             
             # Check if this is a redirect chain domain
             db = get_database()
@@ -53,9 +62,9 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             # Handle the redirect chain flow
             if host == chain["anchor_domain"]:
                 return await self._handle_anchor_step(request, chain, db, redis)
-            elif host == chain["intermediate_domain"]:
+            elif host == chain_inter_domain(chain):
                 return await self._handle_intermediate_step(request, chain, db, redis)
-            elif host in chain["pre_lander_pool"]:
+            elif host in chain_prelander_pool(chain):
                 return await self._handle_prelander_step(request, chain, db, redis)
             else:
                 # Unknown domain in chain, continue normally
@@ -67,33 +76,54 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
     
     async def _get_chain_for_domain(self, db, domain: str):
         """Find redirect chain that includes this domain."""
+        # Matches both the canonical keys and the pre-migration ones, so chains
+        # written before migration 005 still resolve.
         return await db.redirect_chains.find_one({
             "$or": [
                 {"anchor_domain": domain},
-                {"intermediate_domain": domain},
-                {"pre_lander_pool": domain}
+                {"inter_domain": domain},
+                {LEGACY_INTER_DOMAIN_KEY: domain},
+                {"prelander_pool": domain},
+                {LEGACY_PRELANDER_POOL_KEY: domain},
             ],
             "status": "active"
         })
     
     async def _handle_anchor_step(self, request: Request, chain: dict, db, redis):
         """
-        Anchor domain: Generate session cookie and redirect to intermediate domain.
+        Anchor domain: Generate session cookie and redirect to the Inter domain.
         """
+        from app.services.domain_service import select_active_prelander
+
         chain_id = str(chain["_id"])
         visitor_ip = self._get_client_ip(request)
         user_agent = request.headers.get("user-agent", "")
         
         # Generate session token
         session_token = secrets.token_urlsafe(32)
-        
-        # Store session in Redis with expiration
+
+        # Prelander selection: only ACTIVE pool domains participate, chosen by
+        # weight. Inactive prelanders get no traffic (redistribution rule);
+        # if none are active the session falls back to the first configured
+        # host so the chain never invents a replacement domain.
+        pool = chain_prelander_pool(chain)
+        selected_prelander = await select_active_prelander(db, pool)
+        if not selected_prelander:
+            if not pool:
+                import logging as _logging
+                _logging.error(
+                    "Redirect chain %s has an empty prelander pool", chain_id
+                )
+                return await self._block_request(request, chain, db, "no_active_prelander")
+            selected_prelander = pool[0]
+
+        # Store session in Redis with cookie lifetime
         session_data = {
             "chain_id": chain_id,
             "visitor_ip": visitor_ip,
             "user_agent": user_agent,
             "anchor_timestamp": datetime.utcnow().isoformat(),
-            "selected_prelander": random.choice(chain["pre_lander_pool"]),
+            "selected_prelander": selected_prelander,
             "is_valid": True,
         }
         
@@ -124,8 +154,8 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
         }
         await db.redirect_chain_sessions.insert_one(session_record)
         
-        # Redirect to intermediate domain with session cookie
-        intermediate_url = f"https://{chain['intermediate_domain']}{request.url.path}"
+        # Redirect to the Inter domain with session cookie
+        intermediate_url = f"https://{chain_inter_domain(chain)}{request.url.path}"
         if request.url.query:
             intermediate_url += f"?{request.url.query}"
         
@@ -178,10 +208,11 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             session_info.get("user_agent") != user_agent):
             return await self._block_request(request, chain, db, "fingerprint_mismatch")
         
-        # Update session record
+        # Update session record (glossary field per migration 005 / model:
+        # inter_timestamp, not the legacy intermediate_timestamp spelling)
         await db.redirect_chain_sessions.update_one(
             {"session_token": session_token},
-            {"$set": {"intermediate_timestamp": datetime.utcnow()}}
+            {"$set": {"inter_timestamp": datetime.utcnow()}}
         )
         
         # Redirect to selected pre-lander domain
@@ -255,8 +286,21 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
         return await self._serve_prelander_content(request, chain, db)
     
     async def _redirect_to_prelander(self, request: Request, chain: dict, db):
-        """Redirect to a random pre-lander domain (when validation is disabled)."""
-        prelander_domain = random.choice(chain["pre_lander_pool"])
+        """Redirect to a Prelander domain (when validation is disabled).
+
+        Uses weighted selection among active pool domains — an inactive
+        prelander must receive no traffic.
+        """
+        from app.services.domain_service import select_active_prelander
+
+        prelander_domain = await select_active_prelander(
+            db, chain_prelander_pool(chain)
+        )
+        if not prelander_domain:
+            pool = chain_prelander_pool(chain)
+            if not pool:
+                return await self._block_request(request, chain, db, "no_active_prelander")
+            prelander_domain = pool[0]
         prelander_url = f"https://{prelander_domain}{request.url.path}"
         if request.url.query:
             prelander_url += f"?{request.url.query}"

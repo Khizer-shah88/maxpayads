@@ -23,26 +23,26 @@ const DOMAIN_TYPES: {
   color: string
 }[] = [
   {
-    key: 'link',
-    label: 'Link Domain',
-    short: 'Link',
-    description: 'Entry point for click tracking, smart links, and ad embed codes.',
+    key: 'anchor',
+    label: 'Anchor Domain',
+    short: 'Anchor',
+    description: 'First redirect domain — receives the Smartlink and ad embed codes.',
     icon: Link2,
     color: 'text-blue-600 bg-blue-50 border-blue-100',
   },
   {
-    key: 'intermediate',
-    label: 'Intermediate Domain',
-    short: 'Intermediate',
-    description: 'Optional redirect hop before the template page (referrer stripping).',
+    key: 'inter',
+    label: 'Inter Domain',
+    short: 'Inter',
+    description: 'Intermediate redirect hop after the Anchor (referrer stripping).',
     icon: Layers,
     color: 'text-amber-600 bg-amber-50 border-amber-100',
   },
   {
-    key: 'last',
-    label: 'Last Domain',
-    short: 'Last',
-    description: 'Template page with copyable download link (/d/slug). Rarely used when direct redirect is on.',
+    key: 'prelander',
+    label: 'Prelander Domain',
+    short: 'Prelander',
+    description: 'Page shown before the Offer, with a copyable download link (/d/slug). Skipped when direct redirect is on.',
     icon: FileText,
     color: 'text-emerald-600 bg-emerald-50 border-emerald-100',
   },
@@ -50,11 +50,12 @@ const DOMAIN_TYPES: {
 
 const EMPTY_FORM = {
   domain: '',
-  domain_type: 'link' as RedirectionDomainType,
+  domain_type: 'anchor' as RedirectionDomainType,
   publisher_ids: [] as string[],
   is_default: false,
   status: 'active' as 'active' | 'paused',
   template: 'default' as 'default' | 'windows' | 'mac',
+  weight: 100,
   notes: '',
 }
 
@@ -85,13 +86,20 @@ export default function RedirectionDomainsPage() {
   const [domains, setDomains] = useState<RedirectionDomain[]>([])
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<RedirectionDomainType>('link')
+  const [activeTab, setActiveTab] = useState<RedirectionDomainType>('anchor')
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
   const [serverIp, setServerIp] = useState('')
+
+  // Delete confirmation modal — domain deletion requires confirmation; the
+  // backend reports chains that referenced the domain so admin can reconfigure.
+  const [deleteModal, setDeleteModal] = useState<RedirectionDomain | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [affectedChains, setAffectedChains] = useState<{ id: string; name: string }[]>([])
 
   useEffect(() => { initialize() }, [])
 
@@ -132,6 +140,7 @@ export default function RedirectionDomainsPage() {
       is_default: d.is_default,
       status: d.status,
       template: d.template || 'default',
+      weight: (d as any).weight ?? 100,
       notes: d.notes || '',
     })
     setModal('edit')
@@ -170,14 +179,31 @@ export default function RedirectionDomainsPage() {
     }
   }
 
-  const handleDelete = async (d: RedirectionDomain) => {
-    if (!confirm(`Remove domain "${d.domain}"?`)) return
+  const handleDelete = async () => {
+    if (!deleteModal) return
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') {
+      toast.error('Type DELETE to confirm removal')
+      return
+    }
+    setDeleteLoading(true)
     try {
-      await adminApi.deleteRedirectionDomain(d.id)
-      toast.success('Domain removed')
+      const res = await adminApi.deleteRedirectionDomain(deleteModal.id)
+      const chains = res.data?.affected_chains ?? []
+      if (chains.length > 0) {
+        toast.warning(`${chains.length} redirect chain(s) reference this domain — reconfigure them manually`, {
+          duration: 8000,
+        })
+      } else {
+        toast.success('Domain removed')
+      }
+      setDeleteModal(null)
+      setDeleteConfirmText('')
+      setAffectedChains([])
       load()
-    } catch {
-      toast.error('Delete failed')
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Delete failed')
+    } finally {
+      setDeleteLoading(false)
     }
   }
 
@@ -237,11 +263,17 @@ export default function RedirectionDomainsPage() {
         )
       },
     },
-    ...(activeTab === 'last' ? [{
+    ...(activeTab === 'prelander' ? [{
       key: 'template',
       label: 'Template',
       render: (d: RedirectionDomain) => (
         <span className="text-xs font-medium text-gray-600 capitalize">{d.template || 'default'}</span>
+      ),
+    }, {
+      key: 'weight',
+      label: 'Weight',
+      render: (d: RedirectionDomain) => (
+        <span className="text-xs font-medium text-gray-600 font-mono">{(d as any).weight ?? 100}</span>
       ),
     }] : []),
     {
@@ -270,7 +302,8 @@ export default function RedirectionDomainsPage() {
           <button onClick={() => openEdit(d)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100">
             <Edit size={14} />
           </button>
-          <button onClick={() => handleDelete(d)} className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50">
+          <button onClick={() => { setDeleteModal(d); setDeleteConfirmText(''); setAffectedChains([]) }}
+            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50">
             <Trash2 size={14} />
           </button>
         </div>
@@ -323,7 +356,7 @@ export default function RedirectionDomainsPage() {
             ))}
           </div>
           <p className="text-xs text-gray-500 mt-3">
-            Most campaigns use direct redirect and skip the last domain. When enabled, the last domain serves the download template with a copyable link at <code className="bg-gray-100 px-1 rounded">/d/&#123;slug&#125;</code>.
+            Most campaigns use direct redirect and skip the Prelander domain. When enabled, the Prelander domain serves the download template with a copyable link at <code className="bg-gray-100 px-1 rounded">/d/&#123;slug&#125;</code>.
           </p>
         </div>
 
@@ -418,18 +451,31 @@ export default function RedirectionDomainsPage() {
                   </div>
                 )}
 
-                {form.domain_type === 'last' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-900 mb-1">Page template</label>
-                    <select
-                      value={form.template}
-                      onChange={e => setForm(p => ({ ...p, template: e.target.value as typeof form.template }))}
-                      className={inputClass}
-                    >
-                      <option value="default">Auto (OS-based)</option>
-                      <option value="windows">Windows download page</option>
-                      <option value="mac">Mac Terminal page</option>
-                    </select>
+                {form.domain_type === 'prelander' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-900 mb-1">Page template</label>
+                      <select
+                        value={form.template}
+                        onChange={e => setForm(p => ({ ...p, template: e.target.value as typeof form.template }))}
+                        className={inputClass}
+                      >
+                        <option value="default">Auto (OS-based)</option>
+                        <option value="windows">Windows download page</option>
+                        <option value="mac">Mac Terminal page</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-900 mb-1">Weight</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.weight}
+                        onChange={e => setForm(p => ({ ...p, weight: parseInt(e.target.value) || 0 }))}
+                        className={inputClass}
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Relative — 0 pauses traffic</p>
+                    </div>
                   </div>
                 )}
 
@@ -510,6 +556,42 @@ export default function RedirectionDomainsPage() {
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Delete Confirmation Modal ─────────────────────────────────────── */}
+        {deleteModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl border border-gray-100">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-red-50">
+                <Trash2 className="text-red-600" size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Delete Domain</h3>
+              <p className="text-gray-500 text-sm mb-2">
+                Delete <strong className="text-gray-900 font-mono">{deleteModal.domain}</strong>?
+                Historical statistics remain after deletion.
+              </p>
+              {affectedChains.length > 0 && (
+                <p className="text-red-600 text-xs mb-3">
+                  {affectedChains.length} redirect chain(s) use this domain and must be reconfigured manually —
+                  no replacement will be assigned automatically.
+                </p>
+              )}
+              <input
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className={inputClass}
+              />
+              <div className="flex gap-3 mt-4">
+                <button onClick={handleDelete} disabled={deleteLoading || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
+                  {deleteLoading ? <Spinner size={16} /> : 'Delete Domain'}
+                </button>
+                <button onClick={() => { setDeleteModal(null); setDeleteConfirmText('') }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>
               </div>
             </div>
           </div>

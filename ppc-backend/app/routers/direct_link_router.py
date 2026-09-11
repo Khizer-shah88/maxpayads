@@ -172,6 +172,7 @@ async def cleanup_duplicate_links(
 
 
 
+@router.get("/conversions")
 async def list_conversions(
     link_id: Optional[str] = Query(None),
     publisher_id: Optional[str] = Query(None),
@@ -569,15 +570,17 @@ async def create_manual_conversion_override(
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid publisher ID")
     
-    # Get raw clicks for the date to calculate CR
+    # Get raw clicks for the date to calculate CR.
+    # Clicks are written by redirect_pipeline.stage_record_click, which stores
+    # `timestamp` (not `created_at`) and `is_valid` (not `is_fraud`), and never
+    # carries a `direct_link_id` — so the filter uses the fields clicks
+    # actually have, and a link_id (when given) cannot narrow the count.
     click_query = {
         "publisher_id": publisher_id,
-        "created_at": {"$gte": date_start, "$lte": date_end},
-        "is_fraud": False
+        "timestamp": {"$gte": date_start, "$lte": date_end},
+        "is_valid": True
     }
-    if link_id:
-        click_query["direct_link_id"] = link_id
-    
+
     raw_clicks = await db.clicks.count_documents(click_query)
     calculated_cr = (manual_conversions / raw_clicks * 100) if raw_clicks > 0 else 0
     

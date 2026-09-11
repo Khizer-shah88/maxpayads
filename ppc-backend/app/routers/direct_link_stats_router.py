@@ -164,6 +164,21 @@ async def update_stats_profile(
 
 # ─── Stats Aggregation Endpoints ──────────────────────────────────────────────
 
+async def _ensure_direct_link_stats_available(publisher_id: str, db) -> None:
+    """
+    Publisher status rule: banned/removed (or deleted) publishers lose Direct
+    Link Stats while their traffic keeps redirecting. Raise 403 so the admin UI
+    can show "unavailable" rather than a missing-publisher 404.
+    """
+    from app.services.publisher_service import is_publisher_banned_or_removed
+
+    if await is_publisher_banned_or_removed(publisher_id, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Direct Link Stats unavailable: publisher is banned or removed",
+        )
+
+
 @router.get("/stats/publisher/{publisher_id}")
 async def get_publisher_stats(
     publisher_id: str,
@@ -176,6 +191,8 @@ async def get_publisher_stats(
     Get aggregated stats for a publisher's direct links.
     Returns unique clicks, valid clicks, invalid clicks, OS breakdown, etc.
     """
+    await _ensure_direct_link_stats_available(publisher_id, db)
+
     # Date range
     from app.utils.date_utils import timestamp_range_query
     date_range = timestamp_range_query(date_from, date_to) or {}
@@ -269,7 +286,11 @@ async def get_link_stats(
             raise HTTPException(status_code=404, detail="Link not found")
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid link ID")
-    
+
+    # Publisher status rule: banned/removed publishers lose Direct Link Stats.
+    if link.get("publisher_id"):
+        await _ensure_direct_link_stats_available(link["publisher_id"], db)
+
     # Date range
     from app.utils.date_utils import timestamp_range_query
     date_range = timestamp_range_query(date_from, date_to) or {}
@@ -318,6 +339,10 @@ async def get_os_breakdown(
     db=Depends(get_db),
 ):
     """Get OS breakdown statistics."""
+    # Publisher status rule: banned/removed publishers lose Direct Link Stats.
+    if publisher_id:
+        await _ensure_direct_link_stats_available(publisher_id, db)
+
     from app.utils.date_utils import timestamp_range_query
     date_range = timestamp_range_query(date_from, date_to) or {}
     
@@ -384,7 +409,10 @@ async def create_manual_conversion(
             raise HTTPException(status_code=404, detail="Publisher not found")
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid publisher ID")
-    
+
+    # Publisher status rule: banned/removed publishers lose Direct Link Stats.
+    await _ensure_direct_link_stats_available(data.publisher_id, db)
+
     # Validate link if provided
     link_name = None
     if data.link_id:

@@ -29,6 +29,8 @@ class PublisherUpdate(BaseModel):
 
 
 class AdminPublisherUpdate(BaseModel):
+    # banned/removed: links keep redirecting, Admin Statistics keep recording,
+    # Direct Link Stats becomes unavailable. Never breaks existing Smartlinks.
     status: Optional[str] = None
     revenue_share: Optional[float] = None
     custom_cpc: Optional[float] = None

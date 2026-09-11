@@ -252,7 +252,7 @@ interface OfferForm {
   offer_url: string
   password: string
   status: string
-  payout: string
+  cpc: string
   campaign_id: string
   publisher_ids: string[]
   website_ids: string[]
@@ -262,7 +262,7 @@ interface OfferForm {
 }
 
 const emptyForm = (): OfferForm => ({
-  name: '', offer_url: '', password: '', status: 'active', payout: '0.05',
+  name: '', offer_url: '', password: '', status: 'active', cpc: '0.05',
   campaign_id: '',
   publisher_ids: [], website_ids: [], os_types: [], country_codes: [], direct_redirect_mode: false,
 })
@@ -321,8 +321,8 @@ export default function OffersPage() {
     const offer_url = form.offer_url.trim()
     if (!name) { toast.error('Offer name is required'); return }
     if (!isValidHttpUrl(offer_url)) { toast.error('Enter a valid URL starting with http:// or https://'); return }
-    const parsedPayout = parseFloat(form.payout)
-    const payout = Number.isFinite(parsedPayout) && parsedPayout >= 0 ? parsedPayout : 0
+    const parsedCpc = parseFloat(form.cpc)
+    const cpc = Number.isFinite(parsedCpc) && parsedCpc >= 0 ? parsedCpc : 0
 
     setSaving(true)
     try {
@@ -331,7 +331,7 @@ export default function OffersPage() {
         offer_url,
         password: form.password,
         status: form.status,
-        payout,
+        cpc,
         campaign_id: form.campaign_id || null,
         publisher_ids: form.publisher_ids,
         website_ids: form.website_ids,
@@ -365,7 +365,7 @@ export default function OffersPage() {
       offer_url: o.offer_url,
       password: o.password || '',
       status: o.status,
-      payout: (o.payout ?? 0).toString(),
+      cpc: (o.cpc ?? o.payout ?? 0).toString(),
       campaign_id: o.campaign_id || '',
       publisher_ids: o.publisher_ids || [],
       website_ids: o.website_ids || [],
@@ -417,7 +417,7 @@ export default function OffersPage() {
     { key: 'os', label: 'OS', render: (o: Offer) => tagDisplay(o.os_types, 'OS') },
     { key: 'countries', label: 'Countries', render: (o: Offer) => tagDisplay(o.country_codes, 'Countries') },
     { key: 'status', label: 'Status', render: (o: Offer) => <StatusBadge status={o.status} /> },
-    { key: 'payout', label: 'Payout', render: (o: Offer) => <span className="font-mono text-primary font-semibold">${(o.payout ?? 0).toFixed(3)}</span> },
+    { key: 'cpc', label: 'CPC', render: (o: Offer) => <span className="font-mono text-primary font-semibold">${(o.cpc ?? o.payout ?? 0).toFixed(3)}</span> },
     { key: 'actions', label: '', render: (o: Offer) => (
       <div className="flex gap-1">
         <button onClick={() => openEdit(o)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100"><Edit size={15} /></button>
@@ -475,8 +475,8 @@ export default function OffersPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Payout ($)</label>
-                      <input type="number" name="offer_payout" autoComplete="off" step="0.001" min="0" value={form.payout} onChange={e => setForm(p => ({...p, payout: e.target.value}))} className={inputClass} />
+                      <label className="block text-sm font-medium text-gray-700 mb-1">CPC ($)</label>
+                      <input type="number" name="offer_cpc" autoComplete="off" step="0.001" min="0" value={form.cpc} onChange={e => setForm(p => ({...p, cpc: e.target.value}))} className={inputClass} />
                     </div>
                   </div>
                 </div>

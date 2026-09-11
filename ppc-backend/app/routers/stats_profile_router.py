@@ -468,6 +468,10 @@ async def get_public_stats(
     # Parse dates
     from_date = _parse_date(date_from, datetime.utcnow() - timedelta(days=30))
     to_date = _parse_date(date_to, datetime.utcnow())
+    if date_to:
+        # A date-only upper bound must cover the WHOLE end day: the service
+        # filters with $lte, and midnight would silently drop the entire day.
+        to_date = to_date.replace(hour=23, minute=59, second=59, microsecond=999999)
     
     # Aggregate stats
     stats = await sps.aggregate_stats(db, slug, from_date, to_date)

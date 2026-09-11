@@ -14,6 +14,10 @@ const statusConfig: Record<string, string> = {
   rejected: 'badge-suspended',
   paused: 'badge-pending',
   deleted: 'badge-suspended',
+  // Banned/removed publishers: links keep redirecting, stats still record,
+  // Direct Link Stats unavailable.
+  banned: 'badge-invalid',
+  removed: 'badge-suspended',
   desktop: 'bg-gray-100 text-gray-700 border border-gray-200',
   mobile: 'bg-blue-50 text-blue-700 border border-blue-200',
   tablet: 'bg-yellow-50 text-yellow-700 border border-yellow-200',

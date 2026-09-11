@@ -56,6 +56,59 @@ async def create_publisher(data: dict, db, admin_id: Optional[str] = None) -> st
     return str(result.inserted_id)
 
 
+async def create_manual_publisher(data: dict, db, admin_id: Optional[str] = None) -> str:
+    """
+    Create a Manual Publisher (Domain Glossary).
+
+    A Manual Publisher is created directly by Admin with ONLY a unique
+    Name/Tag. There is no login (no email/password), no website, and their
+    Smartlink never carries a `site` parameter. The system auto-generates
+    the Publisher ID (public_id PUB_XXXXXXXX) which is all the Smartlink needs.
+
+    Returns the new publisher's internal _id string.
+    """
+    import secrets
+    from app.utils.public_id_utils import generate_unique_publisher_id
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("A unique Name/Tag is required")
+
+    # Name/Tag must be unique among publishers.
+    dup = await db.publishers.find_one({"name": name, "role": "publisher"})
+    if dup:
+        raise ValueError(f"Name/Tag '{name}' is already in use")
+
+    now = datetime.utcnow()
+    # Placeholder identity — manual publishers never log in, so the values are
+    # random and inert; uniqueness keeps auth lookups from ever colliding.
+    slug = secrets.token_hex(6)
+    password_hash = hash_password(secrets.token_urlsafe(24))
+
+    doc = {
+        "name": name,
+        "email": f"manual+{slug}@manual.invalid",
+        "password_hash": password_hash,
+        "role": "publisher",
+        "status": "active",  # Admin-created: immediately routable
+        "publisher_type": "manual",
+        "revenue_share": float(data.get("revenue_share", 0.80)),
+        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
+        "balance": 0.0,
+        "total_earnings": 0.0,
+        "total_clicks": 0,
+        "valid_clicks": 0,
+        "invalid_clicks": 0,
+        "public_id": await generate_unique_publisher_id(db),
+        "is_admin_created": True,
+        "created_by": admin_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await db.publishers.insert_one(doc)
+    return str(result.inserted_id)
+
+
 async def get_publisher_by_email(email: str, db) -> Optional[dict]:
     publisher = await db.publishers.find_one({"email": email})
     if publisher:
@@ -72,6 +125,25 @@ async def get_publisher_by_id(publisher_id: str, db) -> Optional[dict]:
     return publisher
 
 
+async def is_publisher_banned_or_removed(publisher_id: str, db) -> bool:
+    """
+    True when the publisher is banned or removed (or fully deleted).
+
+    Publisher status rules (Domain Glossary):
+      banned/removed → traffic still redirects, Admin Statistics still works,
+                       but Direct Link Stats is UNAVAILABLE.
+    A permanently deleted publisher resolves to True as well — there is no
+    record left to show stats for.
+    """
+    from app.core.constants import PUB_BANNED, PUB_REMOVED
+    publisher = await db.publishers.find_one({"_id": _oid(publisher_id)})
+    if not publisher:
+        publisher = await db.publishers.find_one({"_id": publisher_id})
+    if not publisher:
+        return True
+    return publisher.get("status") in (PUB_BANNED, PUB_REMOVED)
+
+
 async def get_all_publishers(db, status: Optional[str] = None, skip: int = 0, limit: int = 50) -> List[dict]:
     query = {"role": "publisher"}  # never return admin accounts in the publisher list
     if status:
@@ -81,6 +153,10 @@ async def get_all_publishers(db, status: Optional[str] = None, skip: int = 0, li
     for p in publishers:
         p["id"] = str(p.pop("_id"))
         p.pop("password_hash", None)
+        # Surface the glossary fields the admin UI relies on.
+        p.setdefault("publisher_type", "registered")
+        p.setdefault("public_id", None)
+        p.setdefault("is_admin_created", False)
         for key in ("created_at", "updated_at"):
             if isinstance(p.get(key), datetime):
                 p[key] = p[key].isoformat()

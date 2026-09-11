@@ -7,10 +7,23 @@ separate from Landing Pages (which define the domain + campaign binding) and
 from Redirection Domains (which define the domain routing infrastructure).
 """
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Literal
+from typing import Any, Optional, List, Literal
 
-TemplateOs = Literal["windows", "mac", "both"]
+from app.core.glossary import normalize_os
+
+# Which OS a template is written for. The values are the fixed OS enum, plus
+# "both" — the stored value meaning "any OS", kept because existing templates
+# carry it.
+TemplateOs = Literal["windows", "android", "mac", "ios", "both"]
+TEMPLATE_OS_ANY = "both"
 TemplateStatus = Literal["active", "paused", "archived"]
+
+
+def _coerce_template_os(v: Any) -> Any:
+    """Resolve an OS name onto the fixed OS enum; pass "both" (any OS) through."""
+    if isinstance(v, str) and v.strip().lower() == TEMPLATE_OS_ANY:
+        return TEMPLATE_OS_ANY
+    return normalize_os(v, default=v)
 
 
 class PrlanderTemplateCreate(BaseModel):
@@ -32,6 +45,11 @@ class PrlanderTemplateCreate(BaseModel):
     notes: Optional[str] = None
     # Full source code template (optional)
     full_html_template: Optional[str] = None
+
+    @field_validator("os_type", mode="before")
+    @classmethod
+    def _os_type(cls, v: Any) -> Any:
+        return _coerce_template_os(v)
 
     @field_validator("name")
     @classmethod
@@ -62,6 +80,11 @@ class PrlanderTemplateUpdate(BaseModel):
     notes: Optional[str] = None
     # Full source code template (optional)
     full_html_template: Optional[str] = None
+
+    @field_validator("os_type", mode="before")
+    @classmethod
+    def _os_type(cls, v: Any) -> Any:
+        return _coerce_template_os(v) if v is not None else v
 
     @field_validator("name")
     @classmethod

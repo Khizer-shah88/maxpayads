@@ -1,5 +1,31 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+"""
+Offer schemas.
+
+Glossary: an Offer is an eligibility rule — which Campaign is allowed for which
+publisher(s)/website(s)/country/OS — and carries the CPC, a fixed monetary
+amount credited per valid click (never a percentage).
+
+`cpc` was previously spelled `payout`; that name is still accepted on input and
+still read from pre-migration documents.
+"""
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from typing import List, Optional
+
+from app.core.glossary import normalize_os
+
+LEGACY_CPC_KEY = "payout"
+
+
+def _normalize_os_types(values: Optional[List[str]]) -> Optional[List[str]]:
+    """Resolve each entry onto the fixed OS enum, dropping unknown values."""
+    if values is None:
+        return None
+    cleaned: List[str] = []
+    for item in values:
+        key = normalize_os(item)
+        if key and key not in cleaned:
+            cleaned.append(key)
+    return cleaned
 
 
 def _validate_url(v: str) -> str:
@@ -20,29 +46,28 @@ def _validate_status(v: str) -> str:
 
 
 class OfferCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     offer_url: str
     password: str = ""
     status: str = "active"
-    payout: float = Field(default=0.0, ge=0)
+    # CPC — fixed amount credited per valid click.
+    cpc: float = Field(
+        default=0.0, ge=0,
+        validation_alias=AliasChoices("cpc", LEGACY_CPC_KEY),
+    )
     campaign_id: Optional[str] = None
     publisher_ids: List[str] = []   # empty = all publishers
     website_ids: List[str] = []     # empty = all websites
-    os_types: List[str] = []        # empty = all OS (windows, mac, android)
+    os_types: List[str] = []        # empty = all OS
     country_codes: List[str] = []   # empty = all countries
     direct_redirect_mode: bool = False
-
-    _ALLOWED_OS = frozenset({"windows", "mac", "android"})
 
     @field_validator("os_types")
     @classmethod
     def _os_types(cls, v: List[str]) -> List[str]:
-        cleaned = []
-        for item in v or []:
-            key = (item or "").strip().lower()
-            if key and key in cls._ALLOWED_OS and key not in cleaned:
-                cleaned.append(key)
-        return cleaned
+        return _normalize_os_types(v or [])
 
     @field_validator("country_codes")
     @classmethod
@@ -69,11 +94,16 @@ class OfferCreate(BaseModel):
 
 
 class OfferUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: Optional[str] = None
     offer_url: Optional[str] = None
     password: Optional[str] = None
     status: Optional[str] = None
-    payout: Optional[float] = Field(default=None, ge=0)
+    cpc: Optional[float] = Field(
+        default=None, ge=0,
+        validation_alias=AliasChoices("cpc", LEGACY_CPC_KEY),
+    )
     campaign_id: Optional[str] = None
     publisher_ids: Optional[List[str]] = None
     website_ids: Optional[List[str]] = None
@@ -81,19 +111,10 @@ class OfferUpdate(BaseModel):
     country_codes: Optional[List[str]] = None
     direct_redirect_mode: Optional[bool] = None
 
-    _ALLOWED_OS = OfferCreate._ALLOWED_OS
-
     @field_validator("os_types")
     @classmethod
     def _os_types(cls, v: Optional[List[str]]) -> Optional[List[str]]:
-        if v is None:
-            return v
-        cleaned = []
-        for item in v:
-            key = (item or "").strip().lower()
-            if key and key in cls._ALLOWED_OS and key not in cleaned:
-                cleaned.append(key)
-        return cleaned
+        return _normalize_os_types(v)
 
     @field_validator("country_codes")
     @classmethod

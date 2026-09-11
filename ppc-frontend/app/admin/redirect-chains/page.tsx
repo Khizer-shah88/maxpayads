@@ -19,8 +19,8 @@ interface RedirectChain {
   id: string
   name: string
   anchor_domain: string
-  intermediate_domain: string
-  pre_lander_pool: string[]
+  inter_domain: string
+  prelander_pool: string[]
   session_validation: boolean
   cookie_lifetime: number // in minutes
   status: 'active' | 'paused' | 'archived'
@@ -34,7 +34,7 @@ interface RedirectChain {
 interface Domain {
   id: string
   domain: string
-  domain_type: 'link' | 'intermediate' | 'last'
+  domain_type: 'anchor' | 'inter' | 'prelander'
   status: 'active' | 'paused'
   dns_status: 'verified' | 'failed' | 'pending'
 }
@@ -42,8 +42,8 @@ interface Domain {
 const EMPTY_CHAIN = {
   name: '',
   anchor_domain: '',
-  intermediate_domain: '',
-  pre_lander_pool: [] as string[],
+  inter_domain: '',
+  prelander_pool: [] as string[],
   session_validation: true,
   cookie_lifetime: 60, // 1 hour
   status: 'active' as 'active' | 'paused' | 'archived',
@@ -69,30 +69,30 @@ function ChainFlow({ chain }: { chain: RedirectChain | typeof EMPTY_CHAIN }) {
 
         <ArrowRight size={16} className="text-gray-300 flex-shrink-0 hidden md:block" />
 
-        {/* Intermediate Domain */}
+        {/* Inter Domain */}
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
             <Layers size={16} className="text-amber-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-amber-700 uppercase tracking-wide">Intermediate Domain</p>
-            <p className="font-mono text-sm text-gray-900 truncate">{chain.intermediate_domain || 'Not set'}</p>
+            <p className="text-xs font-medium text-amber-700 uppercase tracking-wide">Inter Domain</p>
+            <p className="font-mono text-sm text-gray-900 truncate">{chain.inter_domain || 'Not set'}</p>
             <p className="text-xs text-gray-500">Cookie validation + referrer strip</p>
           </div>
         </div>
 
         <ArrowRight size={16} className="text-gray-300 flex-shrink-0 hidden md:block" />
 
-        {/* Pre-Lander Pool */}
+        {/* Prelander Pool */}
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center flex-shrink-0">
             <Shuffle size={16} className="text-emerald-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-emerald-700 uppercase tracking-wide">Pre-Lander Pool</p>
+            <p className="text-xs font-medium text-emerald-700 uppercase tracking-wide">Prelander Pool</p>
             <p className="font-mono text-sm text-gray-900">
-              {chain.pre_lander_pool.length > 0 
-                ? `${chain.pre_lander_pool.length} domain${chain.pre_lander_pool.length !== 1 ? 's' : ''}`
+              {chain.prelander_pool.length > 0 
+                ? `${chain.prelander_pool.length} domain${chain.prelander_pool.length !== 1 ? 's' : ''}`
                 : 'No domains'
               }
             </p>
@@ -150,8 +150,8 @@ export default function RedirectChainsPage() {
     setForm({
       name: chain.name,
       anchor_domain: chain.anchor_domain,
-      intermediate_domain: chain.intermediate_domain,
-      pre_lander_pool: [...chain.pre_lander_pool],
+      inter_domain: chain.inter_domain,
+      prelander_pool: [...chain.prelander_pool],
       session_validation: chain.session_validation,
       cookie_lifetime: chain.cookie_lifetime,
       status: chain.status,
@@ -160,10 +160,10 @@ export default function RedirectChainsPage() {
   }
 
   const addToPool = (domain: string) => {
-    if (domain && !form.pre_lander_pool.includes(domain)) {
+    if (domain && !form.prelander_pool.includes(domain)) {
       setForm(prev => ({
         ...prev,
-        pre_lander_pool: [...prev.pre_lander_pool, domain]
+        prelander_pool: [...prev.prelander_pool, domain]
       }))
     }
   }
@@ -171,7 +171,7 @@ export default function RedirectChainsPage() {
   const removeFromPool = (domain: string) => {
     setForm(prev => ({
       ...prev,
-      pre_lander_pool: prev.pre_lander_pool.filter(d => d !== domain)
+      prelander_pool: prev.prelander_pool.filter(d => d !== domain)
     }))
   }
 
@@ -184,12 +184,12 @@ export default function RedirectChainsPage() {
       toast.error('Anchor domain is required')
       return
     }
-    if (!form.intermediate_domain.trim()) {
-      toast.error('Intermediate domain is required')
+    if (!form.inter_domain.trim()) {
+      toast.error('Inter domain is required')
       return
     }
-    if (form.pre_lander_pool.length === 0) {
-      toast.error('At least one pre-lander domain is required')
+    if (form.prelander_pool.length === 0) {
+      toast.error('At least one Prelander domain is required')
       return
     }
 
@@ -199,7 +199,7 @@ export default function RedirectChainsPage() {
         ...form,
         name: form.name.trim(),
         anchor_domain: form.anchor_domain.trim(),
-        intermediate_domain: form.intermediate_domain.trim(),
+        inter_domain: form.inter_domain.trim(),
       }
 
       if (modal === 'edit' && editTarget) {
@@ -232,9 +232,9 @@ export default function RedirectChainsPage() {
   }
 
   // ── Filter domains ─────────────────────────────────────────────────────────
-  const anchorDomains = domains.filter(d => d.domain_type === 'link' && d.status === 'active')
-  const intermediateDomains = domains.filter(d => d.domain_type === 'intermediate' && d.status === 'active')
-  const preLanderDomains = domains.filter(d => d.domain_type === 'last' && d.status === 'active')
+  const anchorDomains = domains.filter(d => d.domain_type === 'anchor' && d.status === 'active')
+  const interDomains = domains.filter(d => d.domain_type === 'inter' && d.status === 'active')
+  const prelanderDomains = domains.filter(d => d.domain_type === 'prelander' && d.status === 'active')
 
   const inputClass = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm'
 
@@ -248,7 +248,7 @@ export default function RedirectChainsPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Domain Chain Builder</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              3-tier redirection flow with session validation and dynamic pre-lander rotation
+              3-tier redirection flow with session validation and dynamic Prelander rotation
             </p>
           </div>
           <button
@@ -267,7 +267,7 @@ export default function RedirectChainsPage() {
               <h3 className="font-bold text-lg mb-2">Advanced Traffic Security</h3>
               <p className="text-blue-100 text-sm leading-relaxed mb-3">
                 Enforce a 3-tier routing architecture that prevents direct access to offer pages. 
-                Session cookies validate legitimate traffic flow and pre-lander domains rotate dynamically to avoid detection.
+                Session cookies validate legitimate traffic flow and Prelander domains rotate dynamically to avoid detection.
               </p>
               <div className="flex flex-wrap gap-4 text-xs">
                 <div className="flex items-center gap-1.5">
@@ -361,7 +361,7 @@ export default function RedirectChainsPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <Shuffle size={14} />
-                          <span>Pool: {chain.pre_lander_pool.length} domains</span>
+                          <span>Pool: {chain.prelander_pool.length} domains</span>
                         </div>
                       </div>
                     </div>
@@ -462,18 +462,18 @@ export default function RedirectChainsPage() {
                     </p>
                   </div>
 
-                  {/* Intermediate Domain */}
+                  {/* Inter Domain */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Intermediate Domain <span className="text-red-500">*</span>
+                      Inter Domain <span className="text-red-500">*</span>
                     </label>
                     <select
-                      value={form.intermediate_domain}
-                      onChange={e => setForm(prev => ({ ...prev, intermediate_domain: e.target.value }))}
+                      value={form.inter_domain}
+                      onChange={e => setForm(prev => ({ ...prev, inter_domain: e.target.value }))}
                       className={inputClass}
                     >
-                      <option value="">Select intermediate domain...</option>
-                      {intermediateDomains.map(domain => (
+                      <option value="">Select Inter domain...</option>
+                      {interDomains.map(domain => (
                         <option key={domain.id} value={domain.domain}>
                           {domain.domain}
                         </option>
@@ -485,10 +485,10 @@ export default function RedirectChainsPage() {
                   </div>
                 </div>
 
-                {/* Pre-Lander Pool */}
+                {/* Prelander Pool */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Pre-Lander Domain Pool <span className="text-red-500">*</span>
+                    Prelander Domain Pool <span className="text-red-500">*</span>
                   </label>
                   
                   {/* Add Domain Selector */}
@@ -503,8 +503,8 @@ export default function RedirectChainsPage() {
                       }}
                     >
                       <option value="">Add domain to pool...</option>
-                      {preLanderDomains
-                        .filter(d => !form.pre_lander_pool.includes(d.domain))
+                      {prelanderDomains
+                        .filter(d => !form.prelander_pool.includes(d.domain))
                         .map(domain => (
                           <option key={domain.id} value={domain.domain}>
                             {domain.domain}
@@ -515,12 +515,12 @@ export default function RedirectChainsPage() {
 
                   {/* Pool Display */}
                   <div className="space-y-2">
-                    {form.pre_lander_pool.length === 0 ? (
+                    {form.prelander_pool.length === 0 ? (
                       <p className="text-sm text-gray-400 py-3 px-4 bg-gray-50 rounded-xl text-center">
                         No domains in pool. Add at least one domain.
                       </p>
                     ) : (
-                      form.pre_lander_pool.map((domain, index) => (
+                      form.prelander_pool.map((domain, index) => (
                         <div key={domain} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                           <div className="flex items-center gap-3">
                             <span className="text-xs font-medium text-gray-500 bg-white px-2 py-1 rounded">

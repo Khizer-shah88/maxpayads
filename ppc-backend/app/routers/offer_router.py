@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from bson import ObjectId
 from bson.errors import InvalidId
 from datetime import datetime
-from app.schemas.offer_schema import OfferCreate, OfferUpdate
+from app.schemas.offer_schema import LEGACY_CPC_KEY, OfferCreate, OfferUpdate
 from app.dependencies import get_db, get_current_admin
 from app.core.exceptions import NotFoundError
 
@@ -32,7 +32,11 @@ def serialize_offer(offer: dict) -> dict:
     offer.setdefault("direct_redirect_mode", False)
     # Display-critical scalar fields — coerce to safe defaults so the UI never
     # crashes on a document that predates a field or has a null value.
-    offer["payout"] = offer.get("payout") or 0.0
+    # CPC — read the canonical key, falling back to the pre-migration `payout`
+    # key. `payout` is mirrored in the response for admin sessions still running
+    # a pre-glossary bundle; drop it once those have cycled out.
+    offer["cpc"] = offer.get("cpc") or offer.get(LEGACY_CPC_KEY) or 0.0
+    offer[LEGACY_CPC_KEY] = offer["cpc"]
     offer.setdefault("name", "")
     offer.setdefault("offer_url", "")
     offer.setdefault("status", "active")

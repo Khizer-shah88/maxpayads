@@ -19,10 +19,31 @@ async def serve_ad_js(publisher_id: str, website_id: str, base_url: str, db, red
 
     click_url = f"{base_url}?pub={publisher_id}&site={website_id}"
 
+    # The embed code served on the Websites page carries PUBLIC ids
+    # (PUB_XXX / SITE_XXX), but ad_settings documents are keyed by the
+    # INTERNAL ids. Resolve public → internal before the lookup so saved
+    # customizations apply regardless of which embed code the publisher used.
+    settings_publisher_id = publisher_id
+    settings_website_id = website_id
+    try:
+        from app.utils.public_id_utils import (
+            resolve_publisher_id, resolve_website_id,
+        )
+        if publisher_id:
+            resolved_pub = await resolve_publisher_id(db, publisher_id)
+            if resolved_pub:
+                settings_publisher_id = resolved_pub
+        if website_id:
+            resolved_site = await resolve_website_id(db, website_id)
+            if resolved_site:
+                settings_website_id = resolved_site
+    except Exception as e:
+        logger.debug(f"Public id resolution failed in ad server: {e}")
+
     # Load custom ad settings from DB if available
     settings = await db.ad_settings.find_one({
-        "website_id": website_id,
-        "publisher_id": publisher_id,
+        "website_id": settings_website_id,
+        "publisher_id": settings_publisher_id,
     })
     if not settings:
         settings = {}

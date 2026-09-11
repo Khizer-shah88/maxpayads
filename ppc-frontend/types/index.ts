@@ -3,7 +3,8 @@ export interface Publisher {
   name: string
   email: string
   role: string
-  status: 'pending' | 'active' | 'suspended'
+  status: 'pending' | 'active' | 'suspended' | 'banned' | 'removed'
+  publisher_type?: 'registered' | 'manual'
   revenue_share: number
   custom_cpc?: number | null
   balance: number
@@ -173,7 +174,10 @@ export interface Offer {
   offer_url: string
   password?: string
   status: 'active' | 'paused'
-  payout: number
+  /** CPC — fixed amount credited per valid click. */
+  cpc: number
+  /** @deprecated pre-glossary name for `cpc`; still mirrored by the API. */
+  payout?: number
   campaign_id?: string | null
   publisher_ids?: string[]
   website_ids?: string[]
@@ -193,10 +197,11 @@ export interface LandingPage {
   created_at: string
 }
 
-export type RedirectionDomainType = 'link' | 'intermediate' | 'last'
+// Domain Glossary: Anchor → Inter → Prelander is the order traffic travels.
+export type RedirectionDomainType = 'anchor' | 'inter' | 'prelander'
 export type RedirectionDomainStatus = 'active' | 'paused'
 export type DnsStatus = 'pending' | 'verified' | 'failed'
-export type LastDomainTemplate = 'default' | 'windows' | 'mac'
+export type PrelanderTemplateChoice = 'default' | 'windows' | 'mac'
 
 export interface RedirectionDomain {
   id: string
@@ -206,7 +211,8 @@ export interface RedirectionDomain {
   publisher_names: string[]
   is_default: boolean
   status: RedirectionDomainStatus
-  template: LastDomainTemplate
+  template: PrelanderTemplateChoice
+  weight?: number
   dns_status: DnsStatus
   dns_checked_at?: string | null
   resolved_ips: string[]

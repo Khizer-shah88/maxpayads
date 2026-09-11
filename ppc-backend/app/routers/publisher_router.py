@@ -9,6 +9,7 @@ from app.utils.date_utils import timestamp_range_query
 from app.dependencies import get_db, get_redis_client, get_current_active_publisher
 from app.core.exceptions import NotFoundError
 from app.core.exceptions import ValidationError
+from app.core.constants import DOMAIN_TYPE_ANCHOR
 import csv
 import io
 import os
@@ -43,7 +44,7 @@ def _is_internal_url(url: str) -> bool:
 async def _get_base_url(db, request: Request, publisher_id: Optional[str] = None) -> str:
     """Get the link domain (anchor/redirect) for click URLs and smart links."""
     from app.services.domain_service import resolve_domain_url
-    managed = await resolve_domain_url(db, "link", publisher_id)
+    managed = await resolve_domain_url(db, DOMAIN_TYPE_ANCHOR, publisher_id)
     if managed:
         return managed.rstrip("/")
     doc = await db.system_settings.find_one({"key": "platform_domain"})
@@ -65,7 +66,7 @@ async def _get_base_url(db, request: Request, publisher_id: Optional[str] = None
 async def _get_tracking_url(db, publisher_id: Optional[str] = None) -> str:
     """Get the click tracking domain for ad.js script serving."""
     from app.services.domain_service import resolve_domain_url
-    managed = await resolve_domain_url(db, "link", publisher_id)
+    managed = await resolve_domain_url(db, DOMAIN_TYPE_ANCHOR, publisher_id)
     if managed:
         return managed.rstrip("/")
     doc = await db.system_settings.find_one({"key": "click_tracking_domain"})

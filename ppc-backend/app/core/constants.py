@@ -1,4 +1,19 @@
-from typing import Dict
+from typing import Dict, FrozenSet
+
+# Operating Systems (Domain Glossary Standard)
+# These are the ONLY valid OS values - do not add new ones
+OS_WINDOWS = "windows"
+OS_ANDROID = "android"
+OS_MAC = "mac"
+OS_IOS = "ios"
+
+# Frozen set of all valid OS types (use this for validation)
+VALID_OS_TYPES: FrozenSet[str] = frozenset({
+    OS_WINDOWS,
+    OS_ANDROID,
+    OS_MAC,
+    OS_IOS,
+})
 
 # Click status
 CLICK_VALID = "valid"
@@ -17,6 +32,21 @@ FRAUD_SELF_CLICK = "self_click"
 PUB_ACTIVE = "active"
 PUB_PENDING = "pending"
 PUB_SUSPENDED = "suspended"
+# Banned/removed publishers keep redirecting through existing Smartlinks and
+# stay in Admin Statistics, but lose Direct Link Stats. Never break their links.
+PUB_BANNED = "banned"
+PUB_REMOVED = "removed"
+# Publisher statuses that must still be routed through existing Smartlinks.
+PUB_REDIRECT_STATUSES = frozenset({
+    PUB_ACTIVE,
+    PUB_PENDING,
+    PUB_SUSPENDED,
+    PUB_BANNED,
+    PUB_REMOVED,
+})
+# Publisher kinds
+PUBLISHER_TYPE_REGISTERED = "registered"
+PUBLISHER_TYPE_MANUAL = "manual"
 
 # Campaign status
 CAMPAIGN_ACTIVE = "active"
@@ -108,3 +138,30 @@ DASHBOARD_CACHE_TTL = 60   # 1 minute
 
 # ML fraud threshold
 ML_FRAUD_THRESHOLD = 0.65
+
+# Domain Types (Domain Glossary Standard)
+# These are the canonical domain type names per the business specification
+DOMAIN_TYPE_ANCHOR = "anchor"         # First redirect domain (receives smartlink)
+DOMAIN_TYPE_INTER = "inter"           # Intermediate redirect domain
+DOMAIN_TYPE_PRELANDER = "prelander"   # Prelander domain (shows landing page)
+
+# Legacy domain type mappings (for backward compatibility during migration)
+# These will be deprecated after full migration
+DOMAIN_TYPE_LEGACY_MAP = {
+    "link": DOMAIN_TYPE_ANCHOR,
+    "intermediate": DOMAIN_TYPE_INTER,
+    "last": DOMAIN_TYPE_PRELANDER,
+}
+
+DOMAIN_TYPE_REVERSE_LEGACY_MAP = {
+    DOMAIN_TYPE_ANCHOR: "link",
+    DOMAIN_TYPE_INTER: "intermediate",
+    DOMAIN_TYPE_PRELANDER: "last",
+}
+
+# Frozen set of all valid domain types
+VALID_DOMAIN_TYPES: FrozenSet[str] = frozenset({
+    DOMAIN_TYPE_ANCHOR,
+    DOMAIN_TYPE_INTER,
+    DOMAIN_TYPE_PRELANDER,
+})

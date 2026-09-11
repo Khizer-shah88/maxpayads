@@ -3,20 +3,20 @@ Prelander API — returns file details, offer URL, and password.
 
 Endpoint: GET /prelander/resolve/{slug}
   - Decodes the XOR-encrypted slug from traffic_router.py
-  - If the request host is an intermediate domain → 302 to last domain /d/{slug}
-    (completing the three-step flow: anchor → intermediate → last)
+  - If the request host is an Inter domain → 302 to the Prelander domain /d/{slug}
+    (completing the three-step flow: Anchor → Inter → Prelander)
   - Otherwise → returns prelander data (offer_url, password, os, etc.)
 
-Three-step flow (bypass OFF, both intermediate + last configured):
-  1. /click  →  intermediate_domain/d/{slug}       (entry point)
-  2. intermediate/d/{slug} loads, calls /api/prelander/resolve/{slug}
-     → backend detects intermediate host → 302 to last_domain/d/{slug}
-  3. last/d/{slug} loads, calls /api/prelander/resolve/{slug}
+Three-step flow (bypass OFF, both Inter + Prelander configured):
+  1. /click  →  inter_domain/d/{slug}              (entry point)
+  2. inter/d/{slug} loads, calls /api/prelander/resolve/{slug}
+     → backend detects Inter host → 302 to prelander_domain/d/{slug}
+  3. prelander/d/{slug} loads, calls /api/prelander/resolve/{slug}
      → backend returns prelander data → page renders template
 
-Two-step flow (bypass OFF, only last OR only intermediate configured):
-  1. /click  →  last_domain/d/{slug}
-  2. last/d/{slug} calls /api/prelander/resolve/{slug} → data returned
+Two-step flow (bypass OFF, only Prelander OR only Inter configured):
+  1. /click  →  prelander_domain/d/{slug}
+  2. prelander/d/{slug} calls /api/prelander/resolve/{slug} → data returned
 
 Bypass ON (direct_redirect_mode):
   1. /click  →  campaign URL directly (no prelander at all)
@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from typing import Optional
 from bson import ObjectId
 import base64
+from app.core.constants import DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
+from app.core.glossary import domain_type_filter, normalize_domain_type
 from app.dependencies import get_db
 
 logger = logging.getLogger(__name__)
@@ -85,27 +87,34 @@ async def get_domain_type(
     """
     Returns the configured domain_type for a hostname.
     Called by /d/[slug] page on load to decide whether to redirect.
-    Response: { "domain_type": "last" | "intermediate" | "link" | "unknown",
-                "last_domain": "https://lastdomain.com" | null }
+    Response: { "domain_type": "anchor" | "inter" | "prelander" | "unknown",
+                "prelander_domain": "https://prelander.com" | null }
+
+    `last_domain` mirrors `prelander_domain` for browser sessions still running
+    a pre-glossary bundle; drop it once those have cycled out.
     """
     from app.services.domain_service import normalize_domain, resolve_domain_url
 
     h = normalize_domain(host)
     if not h:
-        return {"domain_type": "unknown", "last_domain": None}
+        return {"domain_type": "unknown", "prelander_domain": None, "last_domain": None}
 
     doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
-    domain_type = doc.get("domain_type", "unknown") if doc else "unknown"
+    domain_type = normalize_domain_type(doc.get("domain_type"), default="unknown") if doc else "unknown"
 
-    last_domain = None
-    if domain_type != "last":
+    prelander_domain = None
+    if domain_type != DOMAIN_TYPE_PRELANDER:
         publisher_ids = (doc or {}).get("publisher_ids") or []
         publisher_id = publisher_ids[0] if publisher_ids else None
-        last_base = await resolve_domain_url(db, "last", publisher_id)
-        if last_base and normalize_domain(last_base) != h:
-            last_domain = last_base.rstrip("/")
+        prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
+        if prelander_base and normalize_domain(prelander_base) != h:
+            prelander_domain = prelander_base.rstrip("/")
 
-    return {"domain_type": domain_type, "last_domain": last_domain}
+    return {
+        "domain_type": domain_type,
+        "prelander_domain": prelander_domain,
+        "last_domain": prelander_domain,
+    }
 
 
 @router.get("/resolve/{slug}")
@@ -113,10 +122,10 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
     Main prelander resolver. Called by the /d/[slug] Next.js page.
 
-    When the requesting host is an intermediate domain:
-      → 302 redirect to {last_domain}/d/{slug}  (completes the intermediate hop)
+    When the requesting host is an Inter domain:
+      → 302 redirect to {prelander_domain}/d/{slug}  (completes the Inter hop)
 
-    When the requesting host is a last domain or any other host:
+    When the requesting host is a Prelander domain or any other host:
       → Returns prelander data JSON (offer_url, password, os, etc.)
     """
     from app.services.domain_service import normalize_domain, resolve_domain_url
@@ -136,40 +145,40 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         prelander_host = normalize_domain(host_header)
 
     # ── Domain-type detection & hop ───────────────────────────────────────────
-    # Always try to redirect to the last domain unless the current host IS
-    # already the last domain. This handles three cases:
-    #   1. Host is registered as intermediate  → redirect to last
-    #   2. Host is registered as link/anchor   → redirect to last
-    #   3. Host is NOT in DB at all            → redirect to last (if one exists)
-    #   4. Host IS the last domain             → serve prelander data directly
+    # Always try to redirect to the Prelander domain unless the current host IS
+    # already the Prelander domain. This handles four cases:
+    #   1. Host is registered as Inter      → redirect to Prelander
+    #   2. Host is registered as Anchor     → redirect to Prelander
+    #   3. Host is NOT in DB at all         → redirect to Prelander (if one exists)
+    #   4. Host IS the Prelander domain     → serve prelander data directly
     if prelander_host:
-        # Is this host already the last/prelander domain?
-        last_doc = await db.redirection_domains.find_one({
+        # Is this host already the Prelander domain?
+        prelander_doc = await db.redirection_domains.find_one({
             "domain": prelander_host,
-            "domain_type": "last",
+            "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
             "status": "active",
         })
 
-        if not last_doc:
-            # Not a last domain — try to find the last domain and hop to it
+        if not prelander_doc:
+            # Not a Prelander domain — find the Prelander domain and hop to it
             inter_doc = await db.redirection_domains.find_one({
                 "domain": prelander_host,
-                "domain_type": "intermediate",
+                "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
                 "status": "active",
             })
             publisher_ids = (inter_doc or {}).get("publisher_ids") or []
             publisher_id = publisher_ids[0] if publisher_ids else None
 
-            last_base = await resolve_domain_url(db, "last", publisher_id)
-            if last_base and normalize_domain(last_base) != prelander_host:
-                dest = f"{last_base.rstrip('/')}/d/{slug}"
+            prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
+            if prelander_base and normalize_domain(prelander_base) != prelander_host:
+                dest = f"{prelander_base.rstrip('/')}/d/{slug}"
                 logger.info("[PRELANDER] Hopping %s → %s", prelander_host, dest)
                 return RedirectResponse(
                     url=dest,
                     status_code=302,
                     headers={"Referrer-Policy": "no-referrer"},
                 )
-        # Either on last domain already, or no last domain configured → serve data
+        # Either on the Prelander domain already, or none configured → serve data
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
@@ -206,17 +215,18 @@ async def _get_prelander_data(
     """Core prelander data resolution logic."""
     os_lower = os.lower()
 
-    # Last-domain template override — if the host IS a last domain, use its template setting
+    # Prelander template override — if the host IS a Prelander domain, use its
+    # template setting to pin the page to a specific OS.
     host = request.headers.get("host", "").split(":")[0].lower()
     if host:
         from app.services.domain_service import normalize_domain
-        last_domain_doc = await db.redirection_domains.find_one({
-            "domain_type": "last",
+        prelander_domain_doc = await db.redirection_domains.find_one({
+            "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
             "domain": normalize_domain(host),
             "status": "active",
         })
-        if last_domain_doc:
-            tpl = last_domain_doc.get("template", "default")
+        if prelander_domain_doc:
+            tpl = prelander_domain_doc.get("template", "default")
             if tpl == "mac":
                 os_lower = "mac"
             elif tpl == "windows":
@@ -234,10 +244,12 @@ async def _get_prelander_data(
     password = None
     campaign_name = None
 
-    # 1. GEO rule — country-specific URL has highest priority
+    # 1. GEO rule — country-specific URL has highest priority.
+    # Geo rules store uppercase ISO codes; normalize the slug's value so a
+    # lower/mixed-case code still matches.
     if campaign_id and country_code:
         geo_rule = await db.geo_rules.find_one(
-            {"campaign_id": campaign_id, "country_code": country_code},
+            {"campaign_id": campaign_id, "country_code": country_code.upper()},
             sort=[("priority", -1)],
         )
         if geo_rule and geo_rule.get("offer_url"):

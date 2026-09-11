@@ -10,6 +10,8 @@ from datetime import datetime
 from bson import ObjectId
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.constants import DOMAIN_TYPE_PRELANDER
+
 
 @pytest.mark.asyncio
 async def test_bypass_off_returns_prelander_url():
@@ -63,9 +65,9 @@ async def test_bypass_off_returns_prelander_url():
             ))
             
             with patch("app.services.domain_service.resolve_domain_url") as mock_domain:
-                # Return last domain URL
+                # Return the Prelander domain URL
                 async def domain_resolver(db, domain_type, publisher_id):
-                    if domain_type == "last":
+                    if domain_type == DOMAIN_TYPE_PRELANDER:
                         return "https://prelander.example.com"
                     return None
                 mock_domain.side_effect = domain_resolver
