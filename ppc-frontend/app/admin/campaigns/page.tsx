@@ -260,7 +260,15 @@ export default function CampaignsPage() {
       toast.error('Please enter a campaign URL')
       return
     }
-    // Countries are optional — bypass mode works without country rules
+    // Reject email addresses in the URL field
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.offer_url.trim())) {
+      toast.error('Campaign URL must be a URL (https://...), not an email address')
+      return
+    }
+    if (!/^https?:\/\//i.test(form.offer_url.trim())) {
+      toast.error('Campaign URL must start with http:// or https://')
+      return
+    }
     setSavingDevice(device)
     try {
       await campaignApi.saveDeviceCampaign(device, {

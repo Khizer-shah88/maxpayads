@@ -665,10 +665,10 @@ export default function PublishersPage() {
                   </div>
                 )}
 
-                {(smartlinkModal.data?.website_smartlinks || []).map((ws: any) => (
+                {(smartlinkModal.data?.website_smartlinks || []).map((ws: any, idx: number) => (
                   <div key={ws.website_id}>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">
-                      Website: <span className="font-mono text-blue-600">{ws.domain || ws.name || 'Website link'}</span>
+                      Website: <span className="font-mono text-blue-600">{ws.domain || ws.name || ws.website_id || `Site ${idx + 1}`}</span>
                     </label>
                     <div className="flex gap-2">
                       <input readOnly value={ws.smartlink} className={`${inp} font-mono text-xs`} />

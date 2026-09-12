@@ -30,8 +30,8 @@ class Publisher(BaseModel):
     role: str = "publisher"  # "publisher" or "admin"
     status: str = "pending"  # pending, active, suspended, banned, removed
     publisher_type: str = "registered"  # "registered" (self-signup) or "manual" (admin-created, no login)
-    revenue_share: float = 0.80
-    custom_cpc: Optional[float] = None
+    revenue_share: float = 1.0  # Default 100% revenue share
+    custom_cpc: Optional[float] = 0.0  # Default 0.0 CPL
     balance: float = 0.0
     total_earnings: float = 0.0
     total_clicks: int = 0
