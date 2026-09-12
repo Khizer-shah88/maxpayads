@@ -145,7 +145,7 @@ export default function AdminDashboard() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
         {/* Header */}
         <div className="mb-8 pt-12 lg:pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>

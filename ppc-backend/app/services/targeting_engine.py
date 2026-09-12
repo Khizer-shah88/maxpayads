@@ -239,11 +239,35 @@ class TargetingEngine:
                 pass
 
         # Build query for eligible active offers.
-        # An offer is eligible if:
-        # 1. It belongs to the click's campaign, OR
-        # 2. It has no campaign assigned ("All Campaigns"), OR
-        # 3. It specifically targets this publisher (overriding the main campaign).
-        query = {"status": "active"}
+        #
+        # An offer is eligible when BOTH of these are true:
+        #
+        # A) Campaign gate: the offer matches this click's campaign.
+        #    • Offer belongs to the click's campaign_id, OR
+        #    • Offer has no campaign ("All Campaigns"), OR
+        #    • Offer explicitly targets this publisher (publisher-level override —
+        #      allows an offer to override the main campaign for a specific publisher
+        #      regardless of which campaign the click resolved to).
+        #
+        # B) Publisher gate: the offer is open to this publisher.
+        #    • Offer has an empty/absent publisher_ids list (open to all), OR
+        #    • Offer's publisher_ids list contains this publisher.
+        #
+        # Both gates are AND-ed together so we never return an offer that
+        # belongs to the wrong campaign AND targets a different publisher.
+
+        query: dict = {"status": "active"}
+
+        pub_filter = (
+            {"$or": [
+                {"publisher_ids": {"$size": 0}},
+                {"publisher_ids": {"$exists": False}},
+                {"publisher_ids": None},
+                {"publisher_ids": {"$in": pub_variants}},
+            ]}
+            if pub_variants else None
+        )
+
         if context.campaign_id:
             from app.utils.db_utils import campaign_id_filter
             cid_filter = campaign_id_filter(context.campaign_id)
@@ -253,21 +277,19 @@ class TargetingEngine:
                 {"campaign_id": {"$exists": False}},
                 {"campaign_id": ""},
             ]
+            # A publisher-targeted offer can override the campaign gate entirely —
+            # if this publisher is explicitly listed, the offer is eligible even if
+            # its campaign_id doesn't match the current click's campaign.
             if pub_variants:
                 camp_conditions.append({"publisher_ids": {"$in": pub_variants}})
-            query["$or"] = camp_conditions
+            campaign_filter = {"$or": camp_conditions}
+        else:
+            campaign_filter = None
 
-        # Pre-filter at DB level: fetch offers that either target all publishers (empty/absent/null)
-        # or explicitly include this visitor's publisher.
-        if pub_variants:
-            query["$and"] = [
-                {"$or": [
-                    {"publisher_ids": {"$size": 0}},
-                    {"publisher_ids": {"$exists": False}},
-                    {"publisher_ids": None},
-                    {"publisher_ids": {"$in": pub_variants}},
-                ]}
-            ]
+        # Merge campaign + publisher gates with $and so both must be satisfied.
+        and_clauses = [f for f in [campaign_filter, pub_filter] if f is not None]
+        if and_clauses:
+            query["$and"] = and_clauses
 
         offers = await self.db.offers.find(query).to_list(length=200)
         logger.debug(f"[TARGETING] Evaluating {len(offers)} offers for publisher={context.publisher_id} campaign={context.campaign_id}")

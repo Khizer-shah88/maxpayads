@@ -360,7 +360,7 @@ export default function DirectLinksPage() {
     return (
       <div className="flex min-h-screen bg-[#f8f9fb]">
         <Sidebar />
-        <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+        <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
           <div className="text-center py-20">
             <div className="text-red-500 mb-4">
               <Link size={48} className="mx-auto mb-4 opacity-30" />
@@ -382,7 +382,7 @@ export default function DirectLinksPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pt-12 lg:pt-0">

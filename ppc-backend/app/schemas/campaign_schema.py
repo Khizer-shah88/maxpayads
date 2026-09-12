@@ -1,6 +1,20 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_validator
 from typing import Optional, List
 from datetime import datetime
+import re
+
+
+def _validate_offer_url(v: str) -> str:
+    """Reject emails and non-HTTP values stored in offer_url fields."""
+    v = (v or "").strip()
+    if not v:
+        raise ValueError("offer_url is required")
+    # Reject strings that look like email addresses
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+        raise ValueError("offer_url must be a URL (http:// or https://), not an email address")
+    if not (v.startswith("http://") or v.startswith("https://")):
+        raise ValueError("offer_url must start with http:// or https://")
+    return v
 
 
 class GeoRuleCreate(BaseModel):
@@ -90,6 +104,11 @@ class DeviceCampaignSave(BaseModel):
     country_rules: List[CountryRuleItem] = []
     direct_redirect_mode: bool = False
     referrer_suppression: bool = False
+
+    @field_validator("offer_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        return _validate_offer_url(v)
 
 
 class AssignCampaignRequest(BaseModel):

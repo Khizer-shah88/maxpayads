@@ -316,7 +316,7 @@ export default function RedirectionDomainsPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 pt-12 lg:pt-0">
           <div>
@@ -497,8 +497,14 @@ export default function RedirectionDomainsPage() {
                           />
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
-                            <p className="text-[11px] text-gray-400 truncate">{p.email}</p>
+                            {p.publisher_type !== 'manual' && !p.email?.includes('@manual.invalid') && !p.email?.includes('@auto.invalid') && (
+                              <p className="text-[11px] text-gray-400 truncate">{p.email}</p>
+                            )}
+                            <p className="text-[11px] text-gray-300 font-mono truncate">{p.public_id}</p>
                           </div>
+                          {p.publisher_type === 'manual' && (
+                            <span className="ml-auto flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">Manual</span>
+                          )}
                         </label>
                       ))
                     )}

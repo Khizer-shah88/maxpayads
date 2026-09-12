@@ -193,7 +193,7 @@ export default function LandingPagesPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
         <div className="flex items-center justify-between mb-8 pt-12 lg:pt-0">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Landing Pages</h1>

@@ -171,7 +171,7 @@ export default function AdminWithdrawalsPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
         <div className="mb-8 pt-12 lg:pt-0">
           <h1 className="text-2xl font-bold text-gray-900">Withdrawals</h1>
           <p className="text-gray-400 text-sm mt-0.5">Manage publisher payment requests</p>
