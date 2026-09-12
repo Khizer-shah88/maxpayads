@@ -431,7 +431,7 @@ export default function OffersPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]" style={{ zoom: 0.9 }}>
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0">
         <div className="flex items-center justify-between mb-8 pt-12 lg:pt-0">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Offers</h1>
@@ -443,7 +443,7 @@ export default function OffersPage() {
           </button>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 overflow-x-auto">
           <DataTable columns={columns} data={offers} loading={loading} emptyMessage="No offers yet. Create your first offer." />
         </div>
 

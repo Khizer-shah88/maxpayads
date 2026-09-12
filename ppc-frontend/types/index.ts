@@ -5,6 +5,7 @@ export interface Publisher {
   role: string
   status: 'pending' | 'active' | 'suspended' | 'banned' | 'removed'
   publisher_type?: 'registered' | 'manual'
+  public_id?: string | null
   revenue_share: number
   custom_cpc?: number | null
   balance: number

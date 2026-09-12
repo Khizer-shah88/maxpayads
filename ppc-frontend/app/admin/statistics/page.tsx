@@ -280,7 +280,7 @@ export default function StatisticsPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]" style={{ zoom: 0.9 }}>
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-3 lg:p-4">
+      <div className="flex-1 lg:ml-64 p-3 lg:p-4 min-w-0">
         {/* Header */}
         <div className="flex items-center justify-between mb-2 pt-12 lg:pt-0">
           <div>
@@ -432,7 +432,7 @@ export default function StatisticsPage() {
         )}
 
         {/* Data Table — always visible */}
-        <div className="bg-white rounded-xl border border-gray-100 p-2">
+        <div className="bg-white rounded-xl border border-gray-100 p-2 overflow-x-auto">
           <DataTable columns={columns} data={clicks} loading={loading} compact
             pagination={{ page, total, limit: 50, onPageChange: setPage }}
             emptyMessage="No clicks found for the selected filters" />

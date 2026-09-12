@@ -101,56 +101,69 @@ async def admin_create_publisher(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Admin: directly create a publisher account (optionally with a website)."""
+    """
+    Admin: directly create a publisher account.
+
+    Only the publisher name is required. Email and password are optional;
+    when omitted the system auto-generates secure placeholder values so the
+    publisher can later be given login credentials manually.
+    """
     from app.services.publisher_service import create_publisher, get_publisher_by_email
 
     name = (data.get("name") or "").strip()
-    email = (data.get("email") or "").strip().lower()
-    password = (data.get("password") or "").strip()
-    website_domain = (data.get("website_domain") or "").strip()
+    email = (data.get("email") or "").strip().lower() or None
+    password = (data.get("password") or "").strip() or None
 
-    if not name or not email or not password:
-        raise HTTPException(status_code=400, detail="name, email, and password are required")
-    if len(password) < 8:
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if password and len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    existing = await get_publisher_by_email(email, db)
-    if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
+    if email:
+        existing = await get_publisher_by_email(email, db)
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
 
     status_val = data.get("status", "active")
-    if status_val not in ("active", "pending", "suspended"):
+    if status_val not in ("active", "pending", "suspended", "banned", "removed"):
         status_val = "active"
 
     publisher_data = {
         "name": name,
-        "email": email,
-        "password": password,
         "status": status_val,
-        "revenue_share": float(data.get("revenue_share", 0.80)),
-        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
+        "revenue_share": float(data.get("revenue_share", 1.0)),
+        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") not in (None, "") else 0.0,
     }
+    if email:
+        publisher_data["email"] = email
+    if password:
+        publisher_data["password"] = password
+
     # Pass admin_id to mark as admin-created
     publisher_id = await create_publisher(publisher_data, db, admin_id=current_user["id"])
 
     # Optionally create the first website
+    website_domain = (data.get("website_domain") or "").strip()
     if website_domain:
         from app.utils.public_id_utils import generate_unique_website_id
         domain = website_domain.lower().replace("https://", "").replace("http://", "").strip("/")
-        await db.websites.insert_one({
-            "publisher_id": publisher_id,
-            "public_id": await generate_unique_website_id(db),
-            "domain": domain,
-            "name": domain,
-            "status": "active",
-            "assigned_campaign_id": None,
-            "total_clicks": 0,
-            "valid_clicks": 0,
-            "invalid_clicks": 0,
-            "total_earnings": 0.0,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
-        })
+        # Global uniqueness check
+        existing_site = await db.websites.find_one({"domain": domain})
+        if not existing_site:
+            await db.websites.insert_one({
+                "publisher_id": publisher_id,
+                "public_id": await generate_unique_website_id(db),
+                "domain": domain,
+                "name": domain,
+                "status": "active",
+                "assigned_campaign_id": None,
+                "total_clicks": 0,
+                "valid_clicks": 0,
+                "invalid_clicks": 0,
+                "total_earnings": 0.0,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            })
 
     return {
         "success": True,
@@ -231,19 +244,24 @@ async def admin_get_publisher_smartlink(
 
     anchor_base = base.rstrip("/")
     is_manual = publisher.get("publisher_type") == PUBLISHER_TYPE_MANUAL
-    links = {}
+    site_links = []
 
     if is_manual:
         # Manual publishers never carry a site param.
-        links["default"] = f"{anchor_base}/click?pub={quote(public_id)}"
+        default_link = f"{anchor_base}/click?pub={quote(public_id)}"
     else:
         # Registered publishers: one link per website + a publisher-level default.
         cursor = db.websites.find({"publisher_id": publisher_id})
         async for site in cursor:
             site_pub = site.get("public_id") or await get_website_public_id(db, str(site["_id"]))
             if site_pub:
-                links[str(site["_id"])] = f"{anchor_base}/click?pub={quote(public_id)}&site={quote(site_pub)}"
-        links["default"] = f"{anchor_base}/click?pub={quote(public_id)}"
+                site_links.append({
+                    "website_id": str(site["_id"]),
+                    "domain": site.get("domain", ""),
+                    "name": site.get("name", "") or site.get("domain", ""),
+                    "smartlink": f"{anchor_base}/click?pub={quote(public_id)}&site={quote(site_pub)}",
+                })
+        default_link = f"{anchor_base}/click?pub={quote(public_id)}"
 
     return {
         "success": True,
@@ -251,11 +269,8 @@ async def admin_get_publisher_smartlink(
         "public_id": public_id,
         "publisher_type": publisher.get("publisher_type", "registered"),
         "anchor_domain": normalize_domain(anchor_base),
-        "smartlink": links["default"],
-        "website_smartlinks": [
-            {"website_id": wid, "smartlink": link}
-            for wid, link in links.items() if wid != "default"
-        ],
+        "smartlink": default_link,
+        "website_smartlinks": site_links,
     }
 
 
@@ -276,6 +291,14 @@ async def admin_add_publisher_website(
     publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)})
     if not publisher:
         raise NotFoundError("Publisher")
+
+    # Global uniqueness — one website domain can only appear once in the system.
+    existing_site = await db.websites.find_one({"domain": domain})
+    if existing_site:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Domain '{domain}' is already registered in the system.",
+        )
 
     from app.utils.public_id_utils import generate_unique_website_id
     result = await db.websites.insert_one({

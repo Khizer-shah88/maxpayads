@@ -12,12 +12,12 @@ import { useAuth } from '@/lib/hooks/useAuth'
 import type { Publisher } from '@/types'
 
 const EMPTY_PUB_FORM = {
-  name: '', email: '', password: '', website_domain: '',
-  status: 'active', revenue_share: 0.80, custom_cpc: '',
+  name: '',
+  status: 'active', revenue_share: 1.0, custom_cpc: '0.0',
 }
 
 const EMPTY_MANUAL_FORM = {
-  name: '', revenue_share: 0.80, custom_cpc: '',
+  name: '', revenue_share: 1.0, custom_cpc: '0.0',
 }
 
 const EMPTY_SITE_FORM = { domain: '', name: '' }
@@ -35,11 +35,11 @@ export default function PublishersPage() {
   const [editModal, setEditModal] = useState<Publisher | null>(null)
   const [deleteModal, setDeleteModal] = useState<Publisher | null>(null)
   const [balanceModal, setBalanceModal] = useState<Publisher | null>(null)
-  const [editForm, setEditForm] = useState({ status: '', revenue_share: 0, custom_cpc: '' })
+  const [editForm, setEditForm] = useState({ status: '', revenue_share: 1.0, custom_cpc: '0.0' })
   const [balanceAmount, setBalanceAmount] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
-  // New: add publisher modal
+  // New: add publisher modal (name only)
   const [addModal, setAddModal] = useState(false)
   const [addForm, setAddForm] = useState({ ...EMPTY_PUB_FORM })
   const [addLoading, setAddLoading] = useState(false)
@@ -78,23 +78,19 @@ export default function PublishersPage() {
 
   useEffect(() => { loadPublishers() }, [loadPublishers])
 
-  // ── Add publisher ──────────────────────────────────────────────────────────
+  // ── Add publisher (Name-only creation) ──────────────────────────────────────
   const handleAddPublisher = async () => {
-    if (!addForm.name.trim() || !addForm.email.trim() || !addForm.password.trim()) {
-      toast.error('Name, email and password are required')
+    if (!addForm.name.trim()) {
+      toast.error('Publisher name is required')
       return
     }
-    if (addForm.password.length < 8) { toast.error('Password must be at least 8 characters'); return }
     setAddLoading(true)
     try {
       await adminApi.createPublisher({
         name: addForm.name.trim(),
-        email: addForm.email.trim().toLowerCase(),
-        password: addForm.password,
-        website_domain: addForm.website_domain.trim() || undefined,
         status: addForm.status,
-        revenue_share: parseFloat(addForm.revenue_share as any) || 0.80,
-        custom_cpc: addForm.custom_cpc ? parseFloat(addForm.custom_cpc) : undefined,
+        revenue_share: parseFloat(addForm.revenue_share as any) || 1.0,
+        custom_cpc: addForm.custom_cpc !== '' ? parseFloat(addForm.custom_cpc) : 0.0,
       })
       toast.success('Publisher created')
       setAddModal(false)
@@ -133,10 +129,10 @@ export default function PublishersPage() {
     try {
       await adminApi.createManualPublisher({
         name: manualForm.name.trim(),
-        revenue_share: parseFloat(manualForm.revenue_share as any) || 0.80,
-        custom_cpc: manualForm.custom_cpc ? parseFloat(manualForm.custom_cpc) : undefined,
+        revenue_share: parseFloat(manualForm.revenue_share as any) || 1.0,
+        custom_cpc: manualForm.custom_cpc !== '' ? parseFloat(manualForm.custom_cpc) : 0.0,
       })
-      toast.success('Manual publisher created — generate the Smartlink next')
+      toast.success('Manual publisher created')
       setManualModal(false)
       setManualForm({ ...EMPTY_MANUAL_FORM })
       loadPublishers()
@@ -176,8 +172,12 @@ export default function PublishersPage() {
     try {
       const data: any = {}
       if (editForm.status) data.status = editForm.status
-      if (editForm.revenue_share) data.revenue_share = editForm.revenue_share
-      if (editForm.custom_cpc) data.custom_cpc = parseFloat(editForm.custom_cpc)
+      if (editForm.revenue_share !== undefined) data.revenue_share = editForm.revenue_share
+      if (editForm.custom_cpc !== undefined && editForm.custom_cpc !== '') {
+        data.custom_cpc = parseFloat(editForm.custom_cpc)
+      } else {
+        data.custom_cpc = 0.0
+      }
       await adminApi.updatePublisher(editModal.id, data)
       toast.success('Publisher updated')
       setEditModal(null)
@@ -227,41 +227,152 @@ export default function PublishersPage() {
   const filtered = searchTerm
     ? publishers.filter(p =>
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.email.toLowerCase().includes(searchTerm.toLowerCase()))
+        p.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.public_id && p.public_id.toLowerCase().includes(searchTerm.toLowerCase())))
     : publishers
 
   const inp = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm'
 
   const columns = [
-    { key: 'name', label: 'Name', render: (p: Publisher) => <span className="font-medium text-gray-900">{p.name}</span> },
-    { key: 'email', label: 'Email' },
-    { key: 'status', label: 'Status', render: (p: Publisher) => <StatusBadge status={p.status} /> },
-    { key: 'revenue_share', label: 'Rev Share', render: (p: Publisher) => <span className="font-mono">{((p.revenue_share ?? 0) * 100).toFixed(0)}%</span> },
-    { key: 'balance', label: 'Balance', render: (p: Publisher) => <span className="text-red-600 font-mono font-semibold">${(p.balance ?? 0).toFixed(2)}</span> },
-    { key: 'total_clicks', label: 'Clicks', render: (p: Publisher) => (p.total_clicks ?? 0).toLocaleString() },
-    { key: 'created_at', label: 'Joined', render: (p: Publisher) => new Date(p.created_at).toLocaleDateString() },
-    { key: 'actions', label: 'Actions', render: (p: Publisher) => (
-      <div className="flex items-center gap-1">
-        <button onClick={() => { setEditModal(p); setEditForm({ status: p.status, revenue_share: p.revenue_share, custom_cpc: p.custom_cpc?.toString() || '' }) }}
-          className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Edit"><Edit size={15} /></button>
-        <button onClick={() => handleOpenSmartlink(p)}
-          className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50" title="Smartlink / Generate Link"><Link2 size={15} /></button>
-        <button onClick={() => { setSiteModal(p); setSiteForm({ ...EMPTY_SITE_FORM }) }}
-          className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50" title="Add Website"><Globe size={15} /></button>
-        <button onClick={() => setBalanceModal(p)}
-          className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Adjust Balance"><DollarSign size={15} /></button>
-        <button onClick={() => handleDownloadCSV(p)}
-          className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Download CSV"><Download size={15} /></button>
-        <button onClick={() => { setDeleteModal(p); setDeleteConfirmText('') }}
-          className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50" title="Delete"><Trash2 size={15} /></button>
-      </div>
-    )},
+    {
+      key: 'name',
+      label: 'Name',
+      render: (p: Publisher) => (
+        <div>
+          <span className="font-medium text-gray-900">{p.name}</span>
+          {p.public_id && <span className="block text-xs font-mono text-gray-400">{p.public_id}</span>}
+        </div>
+      )
+    },
+    {
+      key: 'publisher_type',
+      label: 'Type',
+      render: (p: Publisher) => (
+        p.publisher_type === 'manual' ? (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+            Manual
+          </span>
+        ) : (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+            Registered
+          </span>
+        )
+      )
+    },
+    {
+      key: 'email',
+      label: 'Email',
+      render: (p: Publisher) => (
+        p.publisher_type === 'manual' || p.email?.includes('@manual.invalid') ? (
+          <span className="text-gray-400 font-mono">(-)</span>
+        ) : (
+          <span className="text-gray-600">{p.email || '(-)'}</span>
+        )
+      )
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (p: Publisher) => <StatusBadge status={p.status} />
+    },
+    {
+      key: 'custom_cpc',
+      label: 'CPL',
+      render: (p: Publisher) => (
+        <span className="font-mono text-gray-700">
+          ${(p.custom_cpc != null && p.custom_cpc !== undefined ? Number(p.custom_cpc) : 0.0).toFixed(2)}
+        </span>
+      )
+    },
+    {
+      key: 'revenue_share',
+      label: 'Rev Share',
+      render: (p: Publisher) => (
+        <span className="font-mono">{((p.revenue_share ?? 1.0) * 100).toFixed(0)}%</span>
+      )
+    },
+    {
+      key: 'balance',
+      label: 'Balance',
+      render: (p: Publisher) => (
+        <span className="text-red-600 font-mono font-semibold">${(p.balance ?? 0).toFixed(2)}</span>
+      )
+    },
+    {
+      key: 'total_clicks',
+      label: 'Clicks',
+      render: (p: Publisher) => (p.total_clicks ?? 0).toLocaleString()
+    },
+    {
+      key: 'created_at',
+      label: 'Joined',
+      render: (p: Publisher) => new Date(p.created_at).toLocaleDateString()
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (p: Publisher) => (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              setEditModal(p)
+              setEditForm({
+                status: p.status,
+                revenue_share: p.revenue_share ?? 1.0,
+                custom_cpc: p.custom_cpc != null ? p.custom_cpc.toString() : '0.0'
+              })
+            }}
+            className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+            title="Edit"
+          >
+            <Edit size={15} />
+          </button>
+          <button
+            onClick={() => handleOpenSmartlink(p)}
+            className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+            title={p.publisher_type === 'manual' ? 'Smartlink & Ad Code' : 'Smartlink / Generate Link'}
+          >
+            <Link2 size={15} />
+          </button>
+          {p.publisher_type !== 'manual' && (
+            <button
+              onClick={() => { setSiteModal(p); setSiteForm({ ...EMPTY_SITE_FORM }) }}
+              className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+              title="Add Website"
+            >
+              <Globe size={15} />
+            </button>
+          )}
+          <button
+            onClick={() => setBalanceModal(p)}
+            className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+            title="Adjust Balance"
+          >
+            <DollarSign size={15} />
+          </button>
+          <button
+            onClick={() => handleDownloadCSV(p)}
+            className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+            title="Download CSV"
+          >
+            <Download size={15} />
+          </button>
+          <button
+            onClick={() => { setDeleteModal(p); setDeleteConfirmText('') }}
+            className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
+            title="Delete"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      )
+    },
   ]
 
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0">
         <div className="flex items-center justify-between mb-8 pt-12 lg:pt-0">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Publishers</h1>
@@ -284,7 +395,7 @@ export default function PublishersPage() {
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
             <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-              placeholder="Search by name or email..." className={`${inp} pl-9`} />
+              placeholder="Search by name, email, or PUB ID..." className={`${inp} pl-9`} />
           </div>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className={inp} style={{ width: 'auto' }}>
             <option value="">All Status</option>
@@ -297,37 +408,25 @@ export default function PublishersPage() {
           <span className="text-gray-500 text-sm">{total} publishers</span>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 p-6">
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 overflow-x-auto">
           <DataTable columns={columns} data={filtered} loading={loading}
             pagination={{ page, total, limit: 20, onPageChange: setPage }}
             emptyMessage="No publishers found" />
         </div>
 
-        {/* ── Add Publisher Modal ─────────────────────────────────────────── */}
+        {/* ── Add Publisher Modal (Name-only) ─────────────────────────────── */}
         {addModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
-              <h3 className="text-lg font-bold text-gray-900 mb-5">Add Publisher</h3>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Add Publisher</h3>
+              <p className="text-xs text-gray-500 mb-5">
+                Add publisher by name only. Account credentials and public ID will be generated automatically.
+              </p>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Full Name <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">Publisher Name <span className="text-red-500">*</span></label>
                   <input value={addForm.name} onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))}
-                    placeholder="John Doe" className={inp} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Email <span className="text-red-500">*</span></label>
-                  <input type="email" value={addForm.email} onChange={e => setAddForm(p => ({ ...p, email: e.target.value }))}
-                    placeholder="publisher@example.com" className={inp} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Password <span className="text-red-500">*</span> <span className="text-gray-400 font-normal">(min 8 chars)</span></label>
-                  <input type="password" value={addForm.password} onChange={e => setAddForm(p => ({ ...p, password: e.target.value }))}
-                    placeholder="Min 8 characters" className={inp} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Website Domain <span className="text-gray-400 font-normal">(optional)</span></label>
-                  <input value={addForm.website_domain} onChange={e => setAddForm(p => ({ ...p, website_domain: e.target.value }))}
-                    placeholder="myblog.com" className={inp} />
+                    placeholder="e.g. John Doe or Media Network" className={inp} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -336,23 +435,27 @@ export default function PublishersPage() {
                       <option value="active">Active</option>
                       <option value="pending">Pending</option>
                       <option value="suspended">Suspended</option>
+                      <option value="banned">Banned</option>
+                      <option value="removed">Removed</option>
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-900 mb-1">Revenue Share</label>
                     <input type="number" step="0.01" min="0" max="1" value={addForm.revenue_share}
                       onChange={e => setAddForm(p => ({ ...p, revenue_share: parseFloat(e.target.value) }))} className={inp} />
+                    <span className="text-[11px] text-gray-400 mt-0.5 block">Default 1.0 (100%)</span>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Custom CPC <span className="text-gray-400 font-normal">(optional)</span></label>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">Custom CPL (CPC)</label>
                   <input type="number" step="0.001" min="0" value={addForm.custom_cpc}
                     onChange={e => setAddForm(p => ({ ...p, custom_cpc: e.target.value }))}
-                    placeholder="Leave blank for default" className={inp} />
+                    placeholder="0.0" className={inp} />
+                  <span className="text-[11px] text-gray-400 mt-0.5 block">Default 0.0</span>
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
-                <button onClick={handleAddPublisher} disabled={addLoading}
+                <button onClick={handleAddPublisher} disabled={addLoading || !addForm.name.trim()}
                   className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
                   {addLoading ? <Spinner size={16} /> : 'Create Publisher'}
                 </button>
@@ -515,15 +618,22 @@ export default function PublishersPage() {
         {smartlinkModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
-              <h3 className="text-lg font-bold text-gray-900 mb-1">Smartlink — {smartlinkModal.publisher.name}</h3>
+              <h3 className="text-lg font-bold text-gray-900 mb-1">
+                {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink & Ad Code' : 'Smartlink'} — {smartlinkModal.publisher.name}
+              </h3>
               <p className="text-sm text-gray-400 mb-4">
-                Publisher ID: <span className="font-mono text-gray-700">{smartlinkModal.data?.public_id}</span>
-                {' · '}Type: {smartlinkModal.data?.publisher_type === 'manual' ? 'Manual (no site param, ever)' : 'Registered'}
+                Publisher ID: <span className="font-mono font-bold text-gray-700">{smartlinkModal.data?.public_id}</span>
+                {' · '}Type:{' '}
+                {smartlinkModal.data?.publisher_type === 'manual' ? (
+                  <span className="text-amber-700 font-semibold">Manual (?pub={smartlinkModal.data?.public_id})</span>
+                ) : (
+                  <span className="text-blue-700 font-semibold">Registered (?pub={smartlinkModal.data?.public_id}&site=SITE_ID)</span>
+                )}
               </p>
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    {smartlinkModal.data?.website_smartlinks?.length ? 'Publisher-level link' : 'Smartlink'}
+                    {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink URL' : (smartlinkModal.data?.website_smartlinks?.length ? 'Publisher-level fallback link' : 'Smartlink')}
                   </label>
                   <div className="flex gap-2">
                     <input readOnly value={smartlinkModal.data?.smartlink || ''} className={`${inp} font-mono text-xs`} />
@@ -531,9 +641,35 @@ export default function PublishersPage() {
                       className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
                   </div>
                 </div>
+
+                {smartlinkModal.data?.publisher_type === 'manual' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Ad Code (Embed Script)
+                    </label>
+                    <div className="flex gap-2">
+                      <textarea
+                        readOnly
+                        rows={2}
+                        value={`<script src="${smartlinkModal.data?.anchor_domain ? 'https://' + smartlinkModal.data.anchor_domain : ''}/ad.js?pub=${smartlinkModal.data?.public_id}"></script>`}
+                        className={`${inp} font-mono text-xs resize-none`}
+                      />
+                      <button
+                        onClick={() => copyText(`<script src="${smartlinkModal.data?.anchor_domain ? 'https://' + smartlinkModal.data.anchor_domain : ''}/ad.js?pub=${smartlinkModal.data?.public_id}"></script>`)}
+                        className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center"
+                        title="Copy"
+                      >
+                        <Copy size={16} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {(smartlinkModal.data?.website_smartlinks || []).map((ws: any) => (
                   <div key={ws.website_id}>
-                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Website link</label>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      Website: <span className="font-mono text-blue-600">{ws.domain || ws.name || 'Website link'}</span>
+                    </label>
                     <div className="flex gap-2">
                       <input readOnly value={ws.smartlink} className={`${inp} font-mono text-xs`} />
                       <button onClick={() => copyText(ws.smartlink)}

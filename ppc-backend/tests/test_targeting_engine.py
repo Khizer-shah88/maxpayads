@@ -529,3 +529,62 @@ class TestPriorityOrder:
         await db.geo_rules.delete_many({"campaign_id": str(campaign_id)})
         await db.device_rules.delete_many({"campaign_id": str(campaign_id)})
         await db.offers.delete_many({"campaign_id": str(campaign_id)})
+
+    async def test_single_publisher_offer_overrides_main_campaign(self, db):
+        """Offer targeted to a specific publisher must override the main campaign."""
+        from bson import ObjectId
+        from app.services.targeting_engine import TargetingEngine, ClickContext
+
+        pub_oid = ObjectId()
+        pub_id_str = str(pub_oid)
+        pub_public_id = "PUB_SPECIFIC1"
+
+        await db.publishers.insert_one({
+            "_id": pub_oid,
+            "name": "Targeted Publisher",
+            "public_id": pub_public_id,
+            "role": "publisher",
+            "status": "active",
+        })
+
+        main_campaign = await db.campaigns.insert_one({
+            "name": "Main Campaign",
+            "default_offer_url": "https://main-campaign.com",
+            "status": "active",
+        })
+        main_cid = str(main_campaign.inserted_id)
+
+        # Offer targeted to this publisher (overrides main campaign)
+        pub_offer = await db.offers.insert_one({
+            "name": "Single Publisher Exclusive Offer",
+            "offer_url": "https://publisher-exclusive.com",
+            "publisher_ids": [pub_id_str],
+            "campaign_id": None,
+            "status": "active",
+        })
+
+        engine = TargetingEngine(db)
+
+        # Click from the targeted publisher
+        ctx_targeted = ClickContext(
+            campaign_id=main_cid,
+            publisher_id=pub_public_id,  # visitor came via public_id
+        )
+        url, _, meta = await engine.resolve_destination(ctx_targeted)
+        assert url == "https://publisher-exclusive.com"
+        assert meta["rule_type"] == "offer"
+
+        # Click from a different publisher should get main campaign
+        ctx_other = ClickContext(
+            campaign_id=main_cid,
+            publisher_id=str(ObjectId()),
+        )
+        url_other, _, meta_other = await engine.resolve_destination(ctx_other)
+        assert url_other == "https://main-campaign.com"
+        assert meta_other["rule_type"] == "campaign_default"
+
+        # Cleanup
+        await db.publishers.delete_one({"_id": pub_oid})
+        await db.campaigns.delete_one({"_id": main_campaign.inserted_id})
+        await db.offers.delete_one({"_id": pub_offer.inserted_id})
+

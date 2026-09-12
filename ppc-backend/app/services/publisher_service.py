@@ -3,6 +3,8 @@ from typing import List, Optional
 from bson import ObjectId
 from app.core.security import hash_password
 import logging
+import secrets
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -15,35 +17,64 @@ def _oid(id_str: str):
         return id_str
 
 
+def _generate_auto_email(name: str) -> str:
+    """Generate a unique placeholder email for admin-created publishers (name-only creation)."""
+    slug = hashlib.sha256(f"{name}{secrets.token_hex(4)}".encode()).hexdigest()[:12]
+    safe = name.lower().replace(" ", "").replace(".", "")[:16]
+    return f"pub.{safe}.{slug}@auto.invalid"
+
+
+def _generate_auto_password() -> str:
+    """Generate a secure random placeholder password."""
+    return secrets.token_urlsafe(24)
+
+
 async def create_publisher(data: dict, db, admin_id: Optional[str] = None) -> str:
     """
     Create a new publisher account.
-    
+
+    Supports name-only creation: if email or password are omitted, the system
+    auto-generates placeholder values. The publisher_type is always "registered"
+    (they can log in once credentials are shared), distinguishing them from
+    "manual" publishers that can never log in.
+
     Args:
-        data: Publisher data (name, email, password, etc.)
+        data: Publisher data (name required; email/password optional)
         db: Database connection
         admin_id: If provided, marks publisher as admin-created
-    
+
     Returns:
         Publisher ID string
     """
     from app.utils.public_id_utils import generate_unique_publisher_id
-    
+
+    name = (data.get("name") or "").strip()
+
+    # Auto-generate email/password when not supplied (name-only creation)
+    if not data.get("email"):
+        data["email"] = _generate_auto_email(name)
+    if not data.get("password"):
+        data["password"] = _generate_auto_password()
+
     data["password_hash"] = hash_password(data.pop("password"))
     data["role"] = "publisher"
-    data["status"] = data.get("status", "pending")  # Allow override for admin-created
+    # Admin-created publishers are active immediately; self-registered are pending.
+    data["status"] = data.get("status", "active" if admin_id else "pending")
+    data["publisher_type"] = data.get("publisher_type", "registered")
     data["balance"] = 0.0
     data["total_earnings"] = 0.0
     data["total_clicks"] = 0
     data["valid_clicks"] = 0
     data["invalid_clicks"] = 0
-    data["revenue_share"] = data.get("revenue_share", 0.80)
+    # Default: 100% revenue share, 0.0 CPL
+    data["revenue_share"] = data.get("revenue_share", 1.0)
+    data["custom_cpc"] = float(data["custom_cpc"]) if data.get("custom_cpc") is not None else 0.0
     data["created_at"] = datetime.utcnow()
     data["updated_at"] = datetime.utcnow()
-    
+
     # Generate unique public ID
     data["public_id"] = await generate_unique_publisher_id(db)
-    
+
     # Admin-created tracking
     if admin_id:
         data["is_admin_created"] = True
@@ -51,7 +82,7 @@ async def create_publisher(data: dict, db, admin_id: Optional[str] = None) -> st
     else:
         data["is_admin_created"] = False
         data["created_by"] = None
-    
+
     result = await db.publishers.insert_one(data)
     return str(result.inserted_id)
 
@@ -67,7 +98,6 @@ async def create_manual_publisher(data: dict, db, admin_id: Optional[str] = None
 
     Returns the new publisher's internal _id string.
     """
-    import secrets
     from app.utils.public_id_utils import generate_unique_publisher_id
 
     name = (data.get("name") or "").strip()
@@ -92,8 +122,8 @@ async def create_manual_publisher(data: dict, db, admin_id: Optional[str] = None
         "role": "publisher",
         "status": "active",  # Admin-created: immediately routable
         "publisher_type": "manual",
-        "revenue_share": float(data.get("revenue_share", 0.80)),
-        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else None,
+        "revenue_share": float(data.get("revenue_share", 1.0)),  # Default 100%
+        "custom_cpc": float(data["custom_cpc"]) if data.get("custom_cpc") else 0.0,  # Default 0.0
         "balance": 0.0,
         "total_earnings": 0.0,
         "total_clicks": 0,

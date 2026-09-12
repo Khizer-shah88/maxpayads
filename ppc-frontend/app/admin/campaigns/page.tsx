@@ -307,7 +307,7 @@ export default function CampaignsPage() {
   return (
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
-      <div className="flex-1 lg:ml-64 p-6 lg:p-8">
+      <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0">
         <div className="mb-8 pt-12 lg:pt-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Campaigns</h1>
@@ -385,6 +385,7 @@ export default function CampaignsPage() {
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-1.5">Campaign URL</label>
                         <input
+                          type="text"
                           value={form.offer_url}
                           onChange={e => updateForm(key, 'offer_url', e.target.value)}
                           placeholder="https://example.com/offer"
@@ -484,6 +485,7 @@ export default function CampaignsPage() {
                                     <div>
                                       <label className="block text-[11px] font-medium text-gray-500 mb-1">URL</label>
                                       <input
+                                        type="text"
                                         value={rule.offer_url}
                                         onChange={e => updateCountryRule(key, rule.code, 'offer_url', e.target.value)}
                                         placeholder="https://example.com/offer"

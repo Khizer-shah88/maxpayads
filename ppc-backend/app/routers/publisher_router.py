@@ -334,8 +334,21 @@ async def add_website(
     db=Depends(get_db),
 ):
     from app.utils.public_id_utils import generate_unique_website_id
-    domain = data.get("domain", "").strip().lower().replace("https://", "").replace("http://", "")
+    from fastapi import HTTPException as _HTTPException
+    domain = data.get("domain", "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     name = data.get("name", domain)
+
+    if not domain:
+        raise _HTTPException(status_code=400, detail="Domain is required")
+
+    # Global uniqueness — one domain can only exist once in the system.
+    existing = await db.websites.find_one({"domain": domain})
+    if existing:
+        raise _HTTPException(
+            status_code=409,
+            detail=f"Domain '{domain}' is already registered in the system.",
+        )
+
     website = {
         "publisher_id": current_user["id"],
         "public_id": await generate_unique_website_id(db),

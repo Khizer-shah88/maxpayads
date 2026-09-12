@@ -16,6 +16,8 @@ Public IDs are:
 
 import secrets
 import string
+import hashlib
+import time
 from typing import Optional
 import logging
 
@@ -29,8 +31,9 @@ CHARS = string.ascii_uppercase + string.digits
 
 
 def generate_public_id(prefix: str, length: int = ID_LENGTH) -> str:
-    """Generate a public ID with the given prefix."""
-    random_part = ''.join(secrets.choice(CHARS) for _ in range(length))
+    """Generate a public ID with the given prefix using SHA-256 mixed entropy."""
+    entropy = hashlib.sha256(secrets.token_bytes(32) + str(time.time_ns()).encode() + secrets.token_hex(16).encode()).digest()
+    random_part = ''.join(CHARS[b % len(CHARS)] for b in entropy[:length])
     return f"{prefix}_{random_part}"
 
 

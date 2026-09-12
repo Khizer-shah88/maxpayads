@@ -590,7 +590,9 @@ export default function AdUnitsPage() {
 
                         {/* Smart Link */}
                         <div className="bg-blue-600 rounded-t-lg px-4 py-2.5">
-                          <h4 className="text-white font-bold text-sm">Step 2-2 (Smart Link)</h4>
+                          <h4 className="text-white font-bold text-sm">
+                            Step 2-2 (Smart Link{selectedWebsite ? ` — ${selectedWebsite.domain}` : ''})
+                          </h4>
                         </div>
                         <div className="relative -mt-4 bg-gray-50 border border-gray-200 rounded-b-lg p-4">
                           <div className="flex items-center gap-2">

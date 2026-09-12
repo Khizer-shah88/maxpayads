@@ -244,22 +244,13 @@ async def _get_prelander_data(
     password = None
     campaign_name = None
 
-    # 1. GEO rule — country-specific URL has highest priority.
-    # Geo rules store uppercase ISO codes; normalize the slug's value so a
-    # lower/mixed-case code still matches.
-    if campaign_id and country_code:
-        geo_rule = await db.geo_rules.find_one(
-            {"campaign_id": campaign_id, "country_code": country_code.upper()},
-            sort=[("priority", -1)],
-        )
-        if geo_rule and geo_rule.get("offer_url"):
-            offer_url = geo_rule["offer_url"]
-            password = geo_rule.get("password") or None
-
-    # 2. Specific offer from slug
-    if not offer_url and offer_id:
+    # 1. Specific offer from slug — highest priority because TargetingEngine
+    # resolved this specific offer as the winning destination.
+    if offer_id:
         try:
             offer = await db.offers.find_one({"_id": ObjectId(offer_id), "status": "active"})
+            if not offer:
+                offer = await db.offers.find_one({"_id": offer_id, "status": "active"})
             if offer:
                 offer_url = offer.get("offer_url")
                 password = offer.get("password") or None
@@ -274,6 +265,16 @@ async def _get_prelander_data(
                         pass
         except Exception:
             pass
+
+    # 2. GEO rule — country-specific URL if no specific offer was matched
+    if not offer_url and campaign_id and country_code:
+        geo_rule = await db.geo_rules.find_one(
+            {"campaign_id": campaign_id, "country_code": country_code.upper()},
+            sort=[("priority", -1)],
+        )
+        if geo_rule and geo_rule.get("offer_url"):
+            offer_url = geo_rule["offer_url"]
+            password = geo_rule.get("password") or None
 
     # 3. Campaign from slug
     if not campaign_name and campaign_id:

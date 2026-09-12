@@ -20,6 +20,7 @@ from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 
 from app.core.glossary import normalize_os
+from app.utils.db_utils import normalize_id
 import logging
 
 logger = logging.getLogger(__name__)
@@ -175,68 +176,161 @@ class TargetingEngine:
         - Base: 1000
         - +500 per matched criterion (publisher, website, geo, os)
         - More criteria = higher priority
+
+        Offers with an empty publisher_ids/website_ids list match ALL publishers/websites.
+        Offers with a non-empty list only match if the click's publisher/website is listed.
         """
         rules = []
-        
-        # Build query for eligible offers
+
+        # Collect all ID variants for the visitor's publisher and website
+        pub_variants = []
+        visitor_pub_set = set()
+        if context.publisher_id:
+            from bson import ObjectId as _OId
+            raw_pub = str(context.publisher_id)
+            visitor_pub_set.add(raw_pub)
+            pub_variants.append(raw_pub)
+            try:
+                pub_variants.append(_OId(raw_pub))
+            except Exception:
+                pass
+            # Resolve counterpart (public_id <-> ObjectId)
+            try:
+                if raw_pub.startswith("PUB_"):
+                    pdoc = await self.db.publishers.find_one({"public_id": raw_pub})
+                    if pdoc:
+                        pid_str = str(pdoc["_id"])
+                        visitor_pub_set.add(pid_str)
+                        pub_variants.append(pid_str)
+                        pub_variants.append(pdoc["_id"])
+                else:
+                    pdoc = await self.db.publishers.find_one({"_id": _OId(raw_pub)}, {"public_id": 1})
+                    if pdoc and pdoc.get("public_id"):
+                        visitor_pub_set.add(pdoc["public_id"])
+                        pub_variants.append(pdoc["public_id"])
+            except Exception:
+                pass
+
+        web_variants = []
+        visitor_web_set = set()
+        if context.website_id:
+            from bson import ObjectId as _OId
+            raw_web = str(context.website_id)
+            visitor_web_set.add(raw_web)
+            web_variants.append(raw_web)
+            try:
+                web_variants.append(_OId(raw_web))
+            except Exception:
+                pass
+            try:
+                if raw_web.startswith("SITE_"):
+                    wdoc = await self.db.websites.find_one({"public_id": raw_web})
+                    if wdoc:
+                        wid_str = str(wdoc["_id"])
+                        visitor_web_set.add(wid_str)
+                        web_variants.append(wid_str)
+                        web_variants.append(wdoc["_id"])
+                else:
+                    wdoc = await self.db.websites.find_one({"_id": _OId(raw_web)}, {"public_id": 1})
+                    if wdoc and wdoc.get("public_id"):
+                        visitor_web_set.add(wdoc["public_id"])
+                        web_variants.append(wdoc["public_id"])
+            except Exception:
+                pass
+
+        # Build query for eligible active offers.
+        # An offer is eligible if:
+        # 1. It belongs to the click's campaign, OR
+        # 2. It has no campaign assigned ("All Campaigns"), OR
+        # 3. It specifically targets this publisher (overriding the main campaign).
         query = {"status": "active"}
         if context.campaign_id:
             from app.utils.db_utils import campaign_id_filter
             cid_filter = campaign_id_filter(context.campaign_id)
-            query["$or"] = [
+            camp_conditions = [
                 cid_filter,
                 {"campaign_id": None},
                 {"campaign_id": {"$exists": False}},
+                {"campaign_id": ""},
             ]
-        
-        offers = await self.db.offers.find(query).to_list(length=100)
-        
+            if pub_variants:
+                camp_conditions.append({"publisher_ids": {"$in": pub_variants}})
+            query["$or"] = camp_conditions
+
+        # Pre-filter at DB level: fetch offers that either target all publishers (empty/absent/null)
+        # or explicitly include this visitor's publisher.
+        if pub_variants:
+            query["$and"] = [
+                {"$or": [
+                    {"publisher_ids": {"$size": 0}},
+                    {"publisher_ids": {"$exists": False}},
+                    {"publisher_ids": None},
+                    {"publisher_ids": {"$in": pub_variants}},
+                ]}
+            ]
+
+        offers = await self.db.offers.find(query).to_list(length=200)
+        logger.debug(f"[TARGETING] Evaluating {len(offers)} offers for publisher={context.publisher_id} campaign={context.campaign_id}")
+
         for offer in offers:
             matched_criteria = []
             priority = 1000  # Base priority for offers
-            
+
             # Check OS targeting
-            os_types = offer.get("os_types", [])
+            os_types = offer.get("os_types") or []
             if os_types:
                 if not context.normalized_os or context.normalized_os not in [
                     t.lower() for t in os_types
                 ]:
+                    logger.debug(f"[TARGETING] Offer {offer.get('_id')} skipped: OS mismatch (visitor={context.normalized_os}, offer={os_types})")
                     continue  # OS doesn't match, skip
                 matched_criteria.append("os")
                 priority += 500
-            
+
             # Check country targeting
-            country_codes = offer.get("country_codes", [])
+            country_codes = offer.get("country_codes") or []
             if country_codes:
                 if not context.country_code or context.country_code.upper() not in [
                     c.upper() for c in country_codes
                 ]:
+                    logger.debug(f"[TARGETING] Offer {offer.get('_id')} skipped: country mismatch (visitor={context.country_code}, offer={country_codes})")
                     continue  # Country doesn't match, skip
                 matched_criteria.append("geo")
                 priority += 500
-            
-            # Check publisher targeting
-            from app.utils.db_utils import normalize_id
-            pub_ids = offer.get("publisher_ids", [])
+
+            # Check publisher targeting — an empty list means "all publishers".
+            pub_ids = offer.get("publisher_ids") or []
             if pub_ids:
-                norm_pubs = {normalize_id(pid) for pid in pub_ids}
-                if not context.publisher_id or normalize_id(context.publisher_id) not in norm_pubs:
+                norm_pubs = {str(pid) for pid in pub_ids}
+                if not visitor_pub_set or not (visitor_pub_set & norm_pubs):
+                    logger.debug(
+                        f"[TARGETING] Offer {offer.get('_id')} skipped: publisher mismatch "
+                        f"(visitor={visitor_pub_set}, offer={list(norm_pubs)[:5]})"
+                    )
                     continue  # Publisher doesn't match, skip
                 matched_criteria.append("publisher")
                 priority += 500
-            
-            # Check website targeting
-            web_ids = offer.get("website_ids", [])
+
+            # Check website targeting — an empty list means "all websites".
+            web_ids = offer.get("website_ids") or []
             if web_ids:
-                norm_webs = {normalize_id(wid) for wid in web_ids}
-                if not context.website_id or normalize_id(context.website_id) not in norm_webs:
+                norm_webs = {str(wid) for wid in web_ids}
+                if not visitor_web_set or not (visitor_web_set & norm_webs):
+                    logger.debug(
+                        f"[TARGETING] Offer {offer.get('_id')} skipped: website mismatch "
+                        f"(visitor={visitor_web_set}, offer={list(norm_webs)[:5]})"
+                    )
                     continue  # Website doesn't match, skip
                 matched_criteria.append("website")
                 priority += 500
-            
+
             # Offer matched!
             offer_url = offer.get("offer_url")
             if offer_url:
+                logger.info(
+                    f"[TARGETING] Offer {offer.get('_id')} matched: priority={priority} "
+                    f"criteria={matched_criteria} url={offer_url}"
+                )
                 rules.append(TargetingRule(
                     priority=priority,
                     destination_url=offer_url,
@@ -244,7 +338,7 @@ class TargetingEngine:
                     source_id=str(offer.get("_id")),
                     matched_criteria=matched_criteria,
                 ))
-        
+
         return rules
     
     async def _evaluate_geo_rules(self, context: ClickContext) -> List[TargetingRule]:

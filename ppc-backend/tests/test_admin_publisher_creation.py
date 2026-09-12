@@ -115,17 +115,26 @@ class TestAdminPublisherCreation:
         assert "already registered" in error_msg or "email" in error_msg
     
     async def test_admin_create_publisher_missing_fields(self, client, admin_token):
-        """Test admin creation fails with missing required fields."""
+        """Test admin creation fails when name is missing, but succeeds with only name."""
+        # Missing name must fail
         response = await client.post(
             "/admin/publishers",
             headers={"Authorization": f"Bearer {admin_token}"},
             json={
-                "name": "Incomplete"
-                # Missing email and password
+                "email": "noname@example.com"
             }
         )
-        
         assert response.status_code == 400
+
+        # Name-only must succeed
+        response_ok = await client.post(
+            "/admin/publishers",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "name": "Only Name Pub"
+            }
+        )
+        assert response_ok.status_code == 201
     
     async def test_admin_create_publisher_short_password(self, client, admin_token):
         """Test admin creation enforces minimum password length."""
