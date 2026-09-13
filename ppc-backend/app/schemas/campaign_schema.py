@@ -5,15 +5,16 @@ import re
 
 
 def _validate_offer_url(v: str) -> str:
-    """Reject emails and non-HTTP values stored in offer_url fields."""
+    """Reject emails in offer_url fields and auto-prepend https:// when protocol is missing."""
     v = (v or "").strip()
     if not v:
         raise ValueError("offer_url is required")
     # Reject strings that look like email addresses
     if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
-        raise ValueError("offer_url must be a URL (http:// or https://), not an email address")
+        raise ValueError("offer_url must be a URL, not an email address")
+    # Auto-prepend protocol rather than blocking the user
     if not (v.startswith("http://") or v.startswith("https://")):
-        raise ValueError("offer_url must start with http:// or https://")
+        v = "https://" + v
     return v
 
 

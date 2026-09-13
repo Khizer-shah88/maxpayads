@@ -8,6 +8,7 @@ amount credited per valid click (never a percentage).
 `cpc` was previously spelled `payout`; that name is still accepted on input and
 still read from pre-migration documents.
 """
+import re
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
 
@@ -29,12 +30,14 @@ def _normalize_os_types(values: Optional[List[str]]) -> Optional[List[str]]:
 
 
 def _validate_url(v: str) -> str:
-    """Ensure an offer/redirect URL is a well-formed http(s) URL."""
+    """Reject emails and auto-prepend https:// when protocol is missing."""
     v = (v or "").strip()
     if not v:
         raise ValueError("offer_url is required")
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+        raise ValueError("offer_url must be a URL, not an email address")
     if not (v.startswith("http://") or v.startswith("https://")):
-        raise ValueError("offer_url must start with http:// or https://")
+        v = "https://" + v
     return v
 
 

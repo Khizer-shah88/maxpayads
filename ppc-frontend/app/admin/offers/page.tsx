@@ -262,16 +262,19 @@ interface OfferForm {
 }
 
 const emptyForm = (): OfferForm => ({
-  name: '', offer_url: '', password: '', status: 'active', cpc: '0.05',
+  name: '', offer_url: '', password: '', status: 'active', cpc: '0.0',
   campaign_id: '',
   publisher_ids: [], website_ids: [], os_types: [], country_codes: [], direct_redirect_mode: false,
 })
 
-/* Accepts only well-formed http(s) URLs — matches backend offer_url validation. */
+/* Validates URL: allows any non-email string, auto-prepends https:// if no protocol. */
 function isValidHttpUrl(value: string): boolean {
   const v = (value || '').trim()
-  if (!/^https?:\/\//i.test(v)) return false
-  try { new URL(v); return true } catch { return false }
+  if (!v) return false
+  // Reject email addresses
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return false
+  // Accept anything that looks like a domain/path (protocol will be auto-added on save)
+  return v.length > 3
 }
 
 export default function OffersPage() {
@@ -318,9 +321,11 @@ export default function OffersPage() {
 
   const handleSave = async () => {
     const name = form.name.trim()
-    const offer_url = form.offer_url.trim()
+    const offer_url_raw = form.offer_url.trim()
     if (!name) { toast.error('Offer name is required'); return }
-    if (!isValidHttpUrl(offer_url)) { toast.error('Enter a valid URL starting with http:// or https://'); return }
+    if (!isValidHttpUrl(offer_url_raw)) { toast.error('Enter a valid URL (e.g. example.com/offer)'); return }
+    // Auto-prepend https:// when protocol is missing
+    const offer_url = /^https?:\/\//i.test(offer_url_raw) ? offer_url_raw : `https://${offer_url_raw}`
     const parsedCpc = parseFloat(form.cpc)
     const cpc = Number.isFinite(parsedCpc) && parsedCpc >= 0 ? parsedCpc : 0
 
@@ -485,10 +490,10 @@ export default function OffersPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Offer URL</label>
-                    <input type="url" inputMode="url" name="offer_url" autoComplete="off" value={form.offer_url} onChange={e => setForm(p => ({...p, offer_url: e.target.value}))} placeholder="https://example.com/offer"
+                    <input type="text" inputMode="url" name="offer_url" autoComplete="off" value={form.offer_url} onChange={e => setForm(p => ({...p, offer_url: e.target.value}))} placeholder="example.com/offer or https://example.com/offer"
                       className={`${inputClass} ${form.offer_url.trim() && !isValidHttpUrl(form.offer_url) ? 'border-red-300 focus:ring-red-200 focus:border-red-400' : ''}`} />
                     {form.offer_url.trim() && !isValidHttpUrl(form.offer_url) && (
-                      <p className="text-xs text-red-500 mt-1">Must be a valid URL starting with http:// or https://</p>
+                      <p className="text-xs text-red-500 mt-1">Enter a URL or domain — https:// will be added automatically</p>
                     )}
                   </div>
                   <div>

@@ -113,11 +113,11 @@ COUNTRY_CPC_RATES: Dict[str, float] = {
     "AE": 0.07, "SA": 0.06, "QA": 0.07, "KW": 0.06,
     "TH": 0.03, "VN": 0.02, "PH": 0.02, "ID": 0.03,
     "MY": 0.04, "RU": 0.03, "UA": 0.02,
-    "DEFAULT": 0.03,
+    "DEFAULT": 0.0,
 }
 
 # Revenue share default
-DEFAULT_REVENUE_SHARE: float = 0.80
+DEFAULT_REVENUE_SHARE: float = 1.0
 
 # Redis key prefixes
 REDIS_CLICK_RATE_PREFIX = "click_rate:"

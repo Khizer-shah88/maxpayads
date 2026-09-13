@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     GEOIP_DB_PATH: str = "./GeoLite2-Country.mmdb"
 
     # CPC defaults
-    DEFAULT_CPC: float = 0.05
-    DEFAULT_REVENUE_SHARE: float = 0.80
+    DEFAULT_CPC: float = 0.0
+    DEFAULT_REVENUE_SHARE: float = 1.0
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000"

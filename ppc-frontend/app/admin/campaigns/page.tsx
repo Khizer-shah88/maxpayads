@@ -262,31 +262,32 @@ export default function CampaignsPage() {
     }
     // Reject email addresses in the URL field
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.offer_url.trim())) {
-      toast.error('Campaign URL must be a URL (https://...), not an email address')
+      toast.error('Campaign URL must be a URL, not an email address')
       return
     }
-    if (!/^https?:\/\//i.test(form.offer_url.trim())) {
-      toast.error('Campaign URL must start with http:// or https://')
-      return
+    // Auto-prepend https:// if no protocol is given (never block the user)
+    let urlToSave = form.offer_url.trim()
+    if (urlToSave && !/^https?:\/\//i.test(urlToSave)) {
+      urlToSave = 'https://' + urlToSave
+      updateForm(device, 'offer_url', urlToSave)
     }
     setSavingDevice(device)
     try {
       await campaignApi.saveDeviceCampaign(device, {
-        offer_url: form.offer_url.trim(),
+        offer_url: urlToSave,
         password: form.password,
         countries: form.countries,
         country_rules: form.country_rules.map(r => ({
           country_code: r.code,
-          offer_url: r.offer_url || form.offer_url.trim(),
+          offer_url: r.offer_url || urlToSave,
           password: r.password || '',
         })),
         direct_redirect_mode: form.direct_redirect_mode,
         referrer_suppression: form.referrer_suppression,
       })
-      toast.success(`${DEVICES.find(d => d.key === device)?.label || device} campaign saved!`)
+      // Mark as saved in local state — no full page reload
       setSavedDevices(prev => new Set(prev).add(device))
-      // Re-sync from DB so toggle state reflects what was actually persisted
-      await loadData()
+      toast.success(`${DEVICES.find(d => d.key === device)?.label || device} campaign saved`)
     } catch {
       toast.error('Failed to save campaign')
     } finally {
