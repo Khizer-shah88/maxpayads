@@ -43,6 +43,7 @@ def _serialize(doc: dict, usage_count: int = 0) -> dict:
         "description": doc.get("description"),
         "os_type": doc.get("os_type", "both"),
         "status": doc.get("status", "active"),
+        "is_default": bool(doc.get("is_default", False)),
         "title": doc.get("title", "Your file is ready to download"),
         "subtitle": doc.get("subtitle", ""),
         "button_text": doc.get("button_text", "Copy"),
@@ -51,6 +52,7 @@ def _serialize(doc: dict, usage_count: int = 0) -> dict:
         "video_url": doc.get("video_url"),
         "tags": doc.get("tags") or [],
         "notes": doc.get("notes"),
+        "full_html_template": doc.get("full_html_template"),
         "usage_count": usage_count,
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
         "updated_at": doc["updated_at"].isoformat() if doc.get("updated_at") else None,
@@ -133,20 +135,36 @@ async def create_template(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Create a new prelander template."""
+    """Create a new prelander template. Warns on unknown shortcodes."""
+    from app.services.prelander_service import PrelanderTemplateEngine
     now = datetime.utcnow()
     doc = {
         **data.model_dump(),
         "created_at": now,
         "updated_at": now,
     }
+    # If setting as default, clear existing defaults for same OS first
+    if doc.get("is_default"):
+        await db.prelander_templates.update_many(
+            {"is_default": True, "os_type": doc.get("os_type", "both")},
+            {"$set": {"is_default": False, "updated_at": now}},
+        )
     result = await db.prelander_templates.insert_one(doc)
     doc["_id"] = result.inserted_id
+
+    # Validate HTML and collect warnings (do not block save)
+    warnings = []
+    if doc.get("full_html_template"):
+        engine = PrelanderTemplateEngine()
+        val = engine.validate_template(doc["full_html_template"])
+        warnings = val.get("warnings", [])
+
     return {
         "success": True,
         "template_id": str(result.inserted_id),
         "template": _serialize(doc),
         "message": "Prelander template created",
+        "warnings": warnings,
     }
 
 
@@ -157,9 +175,20 @@ async def update_template(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Update an existing prelander template."""
+    """Update an existing prelander template. Warns on unknown shortcodes."""
+    from app.services.prelander_service import PrelanderTemplateEngine
     update_data = data.model_dump(exclude_unset=True)
     update_data["updated_at"] = datetime.utcnow()
+
+    # If setting as default, clear other defaults for same OS
+    if update_data.get("is_default"):
+        existing = await db.prelander_templates.find_one({"_id": _oid(template_id)})
+        os_type = update_data.get("os_type") or (existing or {}).get("os_type", "both")
+        await db.prelander_templates.update_many(
+            {"is_default": True, "os_type": os_type, "_id": {"$ne": _oid(template_id)}},
+            {"$set": {"is_default": False, "updated_at": datetime.utcnow()}},
+        )
+
     result = await db.prelander_templates.update_one(
         {"_id": _oid(template_id)},
         {"$set": update_data},
@@ -168,7 +197,16 @@ async def update_template(
         raise NotFoundError("Prelander Template")
     doc = await db.prelander_templates.find_one({"_id": _oid(template_id)})
     usage = await _usage_count(template_id, db)
-    return {"success": True, "template": _serialize(doc, usage), "message": "Template updated"}
+
+    # Validate HTML for warnings (do not block save)
+    warnings = []
+    html = update_data.get("full_html_template") or (doc or {}).get("full_html_template")
+    if html:
+        engine = PrelanderTemplateEngine()
+        val = engine.validate_template(html)
+        warnings = val.get("warnings", [])
+
+    return {"success": True, "template": _serialize(doc, usage), "message": "Template updated", "warnings": warnings}
 
 
 @router.patch("/{template_id}/status")
@@ -321,3 +359,88 @@ async def get_template_assigned_domains(
         "domains": domains,
         "total_domains": len(domains),
     }
+
+
+@router.post("/{template_id}/set-default")
+async def set_template_as_default(
+    template_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Mark a template as the active Default Template for its OS.
+    Each OS can only have one default — this clears other defaults for same OS.
+    """
+    doc = await db.prelander_templates.find_one({"_id": _oid(template_id)})
+    if not doc:
+        raise NotFoundError("Prelander Template")
+
+    os_type = doc.get("os_type", "both")
+    now = datetime.utcnow()
+
+    # Clear existing defaults for this OS
+    await db.prelander_templates.update_many(
+        {"is_default": True, "os_type": os_type},
+        {"$set": {"is_default": False, "updated_at": now}},
+    )
+    # Set this template as default
+    await db.prelander_templates.update_one(
+        {"_id": _oid(template_id)},
+        {"$set": {"is_default": True, "status": "active", "updated_at": now}},
+    )
+    return {"success": True, "message": f"Template set as default for OS: {os_type}"}
+
+
+@router.post("/{template_id}/preview")
+async def preview_template(
+    template_id: str,
+    data: dict,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Preview a template with the Global Campaign's URL/password for its OS.
+    Renders the HTML with shortcodes substituted so admin can verify output.
+    Returns rendered HTML string.
+    """
+    from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext, _normalise_shortcodes
+    from fastapi import HTTPException
+    from fastapi.responses import HTMLResponse
+
+    doc = await db.prelander_templates.find_one({"_id": _oid(template_id)})
+    if not doc:
+        raise NotFoundError("Prelander Template")
+
+    html = doc.get("full_html_template") or ""
+    if not html:
+        raise HTTPException(status_code=400, detail="Template has no HTML content to preview")
+
+    os_type = doc.get("os_type", "windows")
+    if os_type == "both":
+        os_type = data.get("os", "windows")
+
+    # Use Global Campaign value for preview (always)
+    device_os = "mac" if os_type == "mac" else "windows"
+    campaign = await db.campaigns.find_one({
+        "status": "active",
+        "device_os": device_os,
+    })
+    if not campaign:
+        campaign = await db.campaigns.find_one({"status": "active", "device_os": "global"})
+
+    campaign_url = (campaign or {}).get("default_offer_url", "https://example.com")
+    password = (campaign or {}).get("password", "")
+
+    context = RedirectContext(
+        click_id="PREVIEW",
+        campaign_url=campaign_url,
+        os=os_type,
+    )
+    context.password = password  # type: ignore[attr-defined]
+
+    try:
+        engine = PrelanderTemplateEngine()
+        rendered = engine.render(html, context)
+        return {"success": True, "html": rendered, "campaign_url": campaign_url, "password": password}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Render failed: {e}")

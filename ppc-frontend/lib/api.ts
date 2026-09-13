@@ -161,6 +161,10 @@ export const prlanderTemplateApi = {
   update: (id: string, data: object) => api.put(`/prelander-templates/${id}`, data),
   setStatus: (id: string, status: string) =>
     api.patch(`/prelander-templates/${id}/status`, { status }),
+  setDefault: (id: string) =>
+    api.post(`/prelander-templates/${id}/set-default`, {}),
+  preview: (id: string, data: { os?: string }) =>
+    api.post(`/prelander-templates/${id}/preview`, data),
   delete: (id: string) => api.delete(`/prelander-templates/${id}`),
 }
 

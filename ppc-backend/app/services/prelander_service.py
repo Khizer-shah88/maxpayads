@@ -45,16 +45,32 @@ REDIRECT_SECRET = _resolve_redirect_secret()
 # Token expiration (5 minutes)
 TOKEN_EXPIRATION_SECONDS = 300
 
-# Allowed placeholders (whitelist for security)
+# Known shortcodes (both {X} and {{ X }} formats accepted on input)
+# {Campaign_URL} and {Password} are the documented shortcodes.
+# {{ CAMPAIGN_URL }}, {{ PASSWORD }} etc. are the internal Jinja2 forms.
 ALLOWED_PLACEHOLDERS = {
     "CAMPAIGN_URL",
-    "CLICK_ID", 
+    "PASSWORD",
+    "CLICK_ID",
     "PUBLISHER_ID",
     "SITE_ID",
     "COUNTRY",
     "OS",
     "DEVICE_TYPE",
     "TIMESTAMP",
+}
+
+# Friendly shortcode aliases (case-insensitive, documented names → internal key)
+_SHORTCODE_ALIASES: dict = {
+    "campaign_url":  "CAMPAIGN_URL",
+    "password":      "PASSWORD",
+    "click_id":      "CLICK_ID",
+    "publisher_id":  "PUBLISHER_ID",
+    "site_id":       "SITE_ID",
+    "country":       "COUNTRY",
+    "os":            "OS",
+    "device_type":   "DEVICE_TYPE",
+    "timestamp":     "TIMESTAMP",
 }
 
 
@@ -198,6 +214,20 @@ class RedirectContext:
             return None
 
 
+def _normalise_shortcodes(html: str) -> str:
+    """
+    Translate documented {X} shortcodes into Jinja2 {{ INTERNAL }} vars.
+    {Campaign_URL} → {{ CAMPAIGN_URL }}, {Password} → {{ PASSWORD }}, etc.
+    Unknown {X} patterns are left as-is so validate_template can warn.
+    """
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        internal = _SHORTCODE_ALIASES.get(name.lower())
+        return f"{{{{ {internal} }}}}" if internal else m.group(0)
+
+    return re.sub(r'(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)\}(?!\})', _replace, html)
+
+
 class PrelanderTemplateEngine:
     """
     Secure template rendering engine with sandboxing.
@@ -227,17 +257,23 @@ class PrelanderTemplateEngine:
     ) -> str:
         """
         Render template with safe placeholder substitution.
-        
-        Only allowed placeholders are replaced.
-        Template cannot execute arbitrary code.
+
+        Accepts both documented shortcode forms:
+          {Campaign_URL}  →  friendly / documented
+          {{ CAMPAIGN_URL }}  →  internal Jinja2 form
+        Both are normalised to Jinja2 before rendering.
         """
         try:
-            # Validate template syntax
-            self._validate_template_placeholders(template_html)
-            
+            # Translate {X} shortcodes → {{ INTERNAL }} Jinja2 vars
+            normalised_html = _normalise_shortcodes(template_html)
+
+            # Validate that only allowed placeholders remain
+            self._validate_template_placeholders(normalised_html)
+
             # Prepare safe context data
             safe_context = {
                 "CAMPAIGN_URL": context.campaign_url,
+                "PASSWORD": getattr(context, "password", "") or "",
                 "CLICK_ID": context.click_id,
                 "PUBLISHER_ID": context.publisher_id or "",
                 "SITE_ID": context.site_id or "",
@@ -246,13 +282,13 @@ class PrelanderTemplateEngine:
                 "DEVICE_TYPE": context.device_type or "",
                 "TIMESTAMP": str(context.timestamp),
             }
-            
+
             # Render template in sandbox
-            template = self.env.from_string(template_html)
+            template = self.env.from_string(normalised_html)
             rendered = template.render(**safe_context)
-            
+
             return rendered
-            
+
         except TemplateSyntaxError as e:
             logger.error(f"Template syntax error: {e}")
             raise ValueError(f"Invalid template syntax: {e}")
@@ -277,85 +313,129 @@ class PrelanderTemplateEngine:
     def validate_template(self, template_html: str) -> Dict[str, Any]:
         """
         Validate template syntax and security.
-        Returns dict with validation result.
+        Returns dict with validation result including warnings for unknown shortcodes.
         """
+        # Translate friendly shortcodes first
+        normalised_html = _normalise_shortcodes(template_html)
+
+        # Detect any {Xyz} patterns that were NOT translated (unknown shortcodes)
+        raw_shortcodes = set(re.findall(r'\{([A-Za-z_][A-Za-z0-9_]*)\}', template_html))
+        unknown_raw = {s for s in raw_shortcodes if s.lower() not in _SHORTCODE_ALIASES}
+
         try:
-            self._validate_template_placeholders(template_html)
+            self._validate_template_placeholders(normalised_html)
             
             # Try to compile template
-            self.env.from_string(template_html)
+            self.env.from_string(normalised_html)
             
             # Extract used placeholders
             pattern = r'\{\{\s*([A-Z_]+)\s*\}\}'
-            used_placeholders = set(re.findall(pattern, template_html))
-            
-            return {
+            used_placeholders = set(re.findall(pattern, normalised_html))
+
+            result: Dict[str, Any] = {
                 "valid": True,
                 "message": "Template is valid",
                 "used_placeholders": list(used_placeholders),
             }
+            if unknown_raw:
+                result["warnings"] = [
+                    f"Unknown shortcode {{{s}}} — it will not be replaced. "
+                    f"Supported: {{Campaign_URL}}, {{Password}}"
+                    for s in sorted(unknown_raw)
+                ]
+            return result
             
         except ValueError as e:
             return {
                 "valid": False,
                 "message": str(e),
                 "used_placeholders": [],
+                "warnings": [f"Unknown shortcode {{{s}}}" for s in sorted(unknown_raw)] if unknown_raw else [],
             }
         except TemplateSyntaxError as e:
             return {
                 "valid": False,
                 "message": f"Syntax error: {e}",
                 "used_placeholders": [],
+                "warnings": [],
             }
         except Exception as e:
             return {
                 "valid": False,
                 "message": f"Validation error: {e}",
                 "used_placeholders": [],
+                "warnings": [],
             }
 
 
 async def get_template_for_domain(db, domain: str) -> Optional[Dict[str, Any]]:
     """
     Get active template assigned to a Prelander domain.
-    Returns None if domain not found or no template assigned.
+    Returns None if domain not found, inactive, or template is inactive/deleted.
+    Falls back to OS default template when assigned template is gone.
     """
     from app.services.domain_service import normalize_domain
-    
+
     normalized = normalize_domain(domain)
-    
-    # Find domain
     domain_doc = await db.redirection_domains.find_one({
         "domain": normalized,
         "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
         "status": "active",
     })
-    
     if not domain_doc:
         return None
-    
+
     template_id = domain_doc.get("template_id")
-    if not template_id:
-        return None
-    
-    # Get template
-    from bson import ObjectId
-    try:
-        template = await db.prelander_templates.find_one({
-            "_id": ObjectId(template_id),
+    if template_id:
+        from bson import ObjectId
+        try:
+            template = await db.prelander_templates.find_one({
+                "_id": ObjectId(template_id),
+                "status": "active",
+            })
+            if template:
+                return template
+            # Template is inactive or deleted — fall through to OS default
+        except Exception:
+            pass
+
+    # Domain OS hint (from the domain doc's template field)
+    os_hint = domain_doc.get("template")  # "windows" | "mac" | "default"
+    return await get_default_template(db, os_hint=os_hint)
+
+
+async def get_default_template(db, os_hint: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Get the active Default Template for the given OS.
+
+    Priority:
+    1. Active default for the specific OS (is_default=True, os_type=<os>)
+    2. Active default for os_type="both"
+    3. Any active default (is_default=True)
+
+    Returns None if no active default exists → caller should skip prelander.
+    """
+    if os_hint and os_hint not in ("default", "both"):
+        # Try OS-specific default first
+        tpl = await db.prelander_templates.find_one({
+            "is_default": True,
             "status": "active",
+            "os_type": os_hint,
         })
-        return template
-    except Exception:
-        return None
+        if tpl:
+            return tpl
 
-
-async def get_default_template(db) -> Optional[Dict[str, Any]]:
-    """Get the default active template."""
-    return await db.prelander_templates.find_one({
+    # Try "both" default
+    tpl = await db.prelander_templates.find_one({
         "is_default": True,
         "status": "active",
+        "os_type": "both",
     })
+    if tpl:
+        return tpl
+
+    # Any active default
+    return await db.prelander_templates.find_one({"is_default": True, "status": "active"})
 
 
 def generate_fallback_html(message: str = "Loading...") -> str:

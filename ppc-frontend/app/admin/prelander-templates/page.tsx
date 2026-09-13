@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, LayoutTemplate, Eye, EyeOff, Archive,
-  CheckCircle, Tag, MonitorSmartphone, Monitor, Apple, Globe,
+  CheckCircle, Tag, MonitorSmartphone, Monitor, Apple, Globe, Star, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -20,6 +20,7 @@ interface PrlanderTemplate {
   description?: string | null
   os_type: 'windows' | 'mac' | 'both'
   status: 'active' | 'paused' | 'archived'
+  is_default: boolean
   title: string
   subtitle: string
   button_text: string
@@ -85,6 +86,8 @@ export default function PrlanderTemplatesPage() {
   const [selected, setSelected] = useState<PrlanderTemplate | null>(null)
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   useEffect(() => { initialize() }, [initialize])
 
@@ -162,13 +165,20 @@ export default function PrlanderTemplatesPage() {
         video_url: form.video_url.trim() || null,
         tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
         notes: form.notes.trim() || null,
+        full_html_template: form.full_html_template.trim() || null,
       }
+      let res: any
       if (modal === 'edit' && selected) {
-        await prlanderTemplateApi.update(selected.id, payload)
+        res = await prlanderTemplateApi.update(selected.id, payload)
         toast.success('Template updated')
       } else {
-        await prlanderTemplateApi.create(payload)
+        res = await prlanderTemplateApi.create(payload)
         toast.success('Template created')
+      }
+      // Show shortcode warnings returned by backend
+      const warnings: string[] = res?.data?.warnings || []
+      if (warnings.length > 0) {
+        warnings.forEach(w => toast.warning(w, { duration: 6000 }))
       }
       setModal(null)
       load()
@@ -176,6 +186,30 @@ export default function PrlanderTemplatesPage() {
       toast.error(err?.response?.data?.detail || 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleSetDefault = async (t: PrlanderTemplate) => {
+    try {
+      await prlanderTemplateApi.setDefault(t.id)
+      toast.success(`"${t.name}" is now the default for OS: ${t.os_type}`)
+      load()
+    } catch {
+      toast.error('Failed to set default')
+    }
+  }
+
+  const handlePreview = async (t: PrlanderTemplate) => {
+    try {
+      const res = await prlanderTemplateApi.preview(t.id, { os: t.os_type === 'both' ? 'windows' : t.os_type })
+      if (res.data?.html) {
+        setPreviewHtml(res.data.html)
+        setPreviewOpen(true)
+      } else {
+        toast.error('No HTML content to preview')
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Preview failed')
     }
   }
 
@@ -274,6 +308,11 @@ export default function PrlanderTemplatesPage() {
                 {/* Chips */}
                 <div className="flex flex-wrap gap-1.5">
                   <OsChip os={t.os_type} />
+                  {t.is_default && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                      <Star size={10} className="fill-amber-400 text-amber-400" /> Default
+                    </span>
+                  )}
                   {t.show_video && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                       📹 Video
@@ -282,6 +321,11 @@ export default function PrlanderTemplatesPage() {
                   {t.show_password_field && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
                       🔑 Password
+                    </span>
+                  )}
+                  {t.full_html_template && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                      &lt;/&gt; HTML
                     </span>
                   )}
                 </div>
@@ -309,13 +353,25 @@ export default function PrlanderTemplatesPage() {
                 {/* Actions */}
                 <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
                   <button onClick={() => openView(t)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-50 border border-gray-200 transition-colors">
+                    className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-50 border border-gray-200 transition-colors">
                     <Eye size={13} /> View
                   </button>
                   <button onClick={() => openEdit(t)}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors">
+                    className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors">
                     <Edit size={13} /> Edit
                   </button>
+                  {t.full_html_template && (
+                    <button onClick={() => handlePreview(t)} title="Preview rendered HTML"
+                      className="flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-medium text-blue-600 hover:bg-blue-50 border border-blue-200 transition-colors">
+                      <MonitorSmartphone size={13} />
+                    </button>
+                  )}
+                  {!t.is_default && t.status === 'active' && (
+                    <button onClick={() => handleSetDefault(t)} title="Set as default for this OS"
+                      className="flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-xs font-medium text-amber-600 hover:bg-amber-50 border border-amber-200 transition-colors">
+                      <Star size={13} />
+                    </button>
+                  )}
                   {t.status === 'active' ? (
                     <button onClick={() => handleSetStatus(t, 'paused')} title="Pause"
                       className="p-2 rounded-xl text-amber-500 hover:bg-amber-50 border border-amber-200 transition-colors">
@@ -650,6 +706,30 @@ export default function PrlanderTemplatesPage() {
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">
                   Close
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Preview Modal ───────────────────────────────────────────────── */}
+        {previewOpen && previewHtml && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-gray-100">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
+                <p className="text-sm font-semibold text-gray-900">Template Preview — rendered with Global Campaign values</p>
+                <button onClick={() => setPreviewOpen(false)}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden rounded-b-2xl">
+                <iframe
+                  srcDoc={previewHtml}
+                  className="w-full h-full border-0 rounded-b-2xl"
+                  style={{ minHeight: '70vh' }}
+                  sandbox="allow-scripts allow-same-origin"
+                  title="Template Preview"
+                />
               </div>
             </div>
           </div>

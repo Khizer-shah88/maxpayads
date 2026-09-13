@@ -31,6 +31,7 @@ class PrlanderTemplateCreate(BaseModel):
     description: Optional[str] = None
     os_type: TemplateOs = "both"
     status: TemplateStatus = "active"
+    is_default: bool = False
     # Visual customisation
     title: str = "Your file is ready to download"
     subtitle: str = "Your file is prepared. Copy the link to download."
@@ -70,6 +71,7 @@ class PrlanderTemplateUpdate(BaseModel):
     description: Optional[str] = None
     os_type: Optional[TemplateOs] = None
     status: Optional[TemplateStatus] = None
+    is_default: Optional[bool] = None
     title: Optional[str] = None
     subtitle: Optional[str] = None
     button_text: Optional[str] = None

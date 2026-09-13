@@ -64,7 +64,7 @@ async def render_prelander(
         template_doc = await get_template_for_domain(db, host)
     
     if not template_doc:
-        template_doc = await get_default_template(db)
+        template_doc = await get_default_template(db, os_hint=host)
     
     if not template_doc or not template_doc.get("full_html_template"):
         # Fallback: Generate simple prelander
