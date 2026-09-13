@@ -431,6 +431,7 @@ class TestPrelanderSecurity:
         """Test that only whitelisted placeholders are allowed."""
         expected_placeholders = {
             "CAMPAIGN_URL",
+            "PASSWORD",
             "CLICK_ID",
             "PUBLISHER_ID",
             "SITE_ID",
