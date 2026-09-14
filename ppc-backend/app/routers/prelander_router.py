@@ -401,4 +401,25 @@ async def _get_prelander_data(
             "show_video": bool(template_doc.get("show_video", False)),
             "video_url": template_doc.get("video_url"),
         }
+
+        # Spec (Prelander Templates → HTML): when the admin pasted a complete
+        # HTML template, it is rendered server-side with the applicable
+        # campaign URL substituted for {Campaign_URL} and the Password/text
+        # content substituted for {Password}. Either, both, or neither
+        # shortcode may appear — the engine leaves missing values empty.
+        # Render failure falls back to the simple customisation fields above.
+        if template_doc.get("full_html_template"):
+            from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext
+            try:
+                ctx = RedirectContext(
+                    click_id=str(offer_id or campaign_id or ""),
+                    campaign_url=offer_url or "",
+                    os=os_lower,
+                    password=password or "",
+                )
+                response["rendered_html"] = PrelanderTemplateEngine().render(
+                    template_doc["full_html_template"], ctx
+                )
+            except Exception as e:
+                logger.warning("[PRELANDER] Server-side template render failed: %s", e)
     return response

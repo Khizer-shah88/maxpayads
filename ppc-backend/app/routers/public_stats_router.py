@@ -76,6 +76,11 @@ async def get_public_stats(
         "show_cr": True,
         "show_fraud_score": False,
         "show_daily_breakdown": True,
+        # Per-OS click breakdown — shown unless the admin turns that OS off for
+        # this link.
+        "show_windows_clicks": True,
+        "show_mac_clicks": True,
+        "show_android_clicks": True,
     }
     # Priority: link preferences > profile preferences > defaults
     prefs = link_preferences or (profile.get("preferences") if profile else None) or default_prefs
@@ -193,9 +198,15 @@ async def get_public_stats(
                 "clicks": clicks,
                 "conversions": conversions,
                 "cr": cr,
-                "windows_clicks": row.get("windows_clicks", 0),
-                "mac_clicks": row.get("mac_clicks", 0),
-                "android_clicks": row.get("android_clicks", 0),
+                "windows_clicks": (
+                    row.get("windows_clicks", 0) if prefs.get("show_windows_clicks", True) else 0
+                ),
+                "mac_clicks": (
+                    row.get("mac_clicks", 0) if prefs.get("show_mac_clicks", True) else 0
+                ),
+                "android_clicks": (
+                    row.get("android_clicks", 0) if prefs.get("show_android_clicks", True) else 0
+                ),
             })
 
         # Days that only have manual conversions (no clicks) still need to show
@@ -245,10 +256,18 @@ async def get_public_stats(
     if prefs.get("show_cr", True):
         response_data["conversion_rate"] = round(conversion_rate, 2)
 
-    # Always include these for platform breakdown/filters
-    response_data["unique_windows_clicks"] = windows_clicks
-    response_data["unique_mac_clicks"] = mac_clicks
-    response_data["unique_android_clicks"] = android_clicks
+    # Always include these for platform breakdown/filters, but zero-out any OS
+    # the admin did not opt into showing — the publisher must not see that OS's
+    # clicks when its toggle is off.
+    response_data["unique_windows_clicks"] = (
+        windows_clicks if prefs.get("show_windows_clicks", True) else 0
+    )
+    response_data["unique_mac_clicks"] = (
+        mac_clicks if prefs.get("show_mac_clicks", True) else 0
+    )
+    response_data["unique_android_clicks"] = (
+        android_clicks if prefs.get("show_android_clicks", True) else 0
+    )
 
     if prefs.get("show_daily_breakdown", True):
         response_data["daily_breakdown"] = daily_breakdown

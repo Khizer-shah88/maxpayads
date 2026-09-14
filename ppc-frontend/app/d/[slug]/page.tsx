@@ -111,8 +111,25 @@ export default function PrelanderSlugPage() {
     return <SkipToOffer offerUrl={data.offer_url} />
   }
 
+  // Admin pasted a complete HTML template → the backend already rendered it
+  // server-side ({Campaign_URL} / {Password} shortcodes substituted). Serve it
+  // as a full-page document instead of the built-in layouts.
+  if (data.rendered_html) return <FullHtmlPrelander html={data.rendered_html} />
+
   if (data.os === 'mac') return <MacPrelander data={data} />
   return <WindowsPrelander data={data} />
+}
+
+/* ─── Full HTML: server-rendered custom template ─────────────────────────── */
+function FullHtmlPrelander({ html }: { html: string }) {
+  useEffect(() => {
+    // Replace the whole document so <!DOCTYPE html>, <head> styles and the
+    // template's scripts behave exactly as the admin authored them.
+    document.open()
+    document.write(html)
+    document.close()
+  }, [html])
+  return null
 }
 
 /* ─── Skip: no active template → straight to the offer ───────────────────── */

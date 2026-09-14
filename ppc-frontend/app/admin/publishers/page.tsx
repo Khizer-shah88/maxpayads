@@ -330,7 +330,7 @@ export default function PublishersPage() {
           <button
             onClick={() => handleOpenSmartlink(p)}
             className="p-1.5 rounded text-gray-500 hover:text-blue-600 hover:bg-blue-50"
-            title={p.publisher_type === 'manual' ? 'Smartlink & Ad Code' : 'Smartlink / Generate Link'}
+            title={p.publisher_type === 'manual' ? 'Smartlink' : 'Smartlink / Generate Link'}
           >
             <Link2 size={15} />
           </button>
@@ -619,7 +619,7 @@ export default function PublishersPage() {
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-900 mb-1">
-                {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink & Ad Code' : 'Smartlink'} — {smartlinkModal.publisher.name}
+                {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink' : 'Smartlink'} — {smartlinkModal.publisher.name}
               </h3>
               <p className="text-sm text-gray-400 mb-4">
                 Publisher ID: <span className="font-mono font-bold text-gray-700">{smartlinkModal.data?.public_id}</span>
@@ -641,29 +641,6 @@ export default function PublishersPage() {
                       className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
                   </div>
                 </div>
-
-                {smartlinkModal.data?.publisher_type === 'manual' && (
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                      Ad Code (Embed Script)
-                    </label>
-                    <div className="flex gap-2">
-                      <textarea
-                        readOnly
-                        rows={2}
-                        value={`<script src="${smartlinkModal.data?.anchor_domain ? 'https://' + smartlinkModal.data.anchor_domain : ''}/ad.js?pub=${smartlinkModal.data?.public_id}"></script>`}
-                        className={`${inp} font-mono text-xs resize-none`}
-                      />
-                      <button
-                        onClick={() => copyText(`<script src="${smartlinkModal.data?.anchor_domain ? 'https://' + smartlinkModal.data.anchor_domain : ''}/ad.js?pub=${smartlinkModal.data?.public_id}"></script>`)}
-                        className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center"
-                        title="Copy"
-                      >
-                        <Copy size={16} />
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 {(smartlinkModal.data?.website_smartlinks || []).map((ws: any, idx: number) => (
                   <div key={ws.website_id}>

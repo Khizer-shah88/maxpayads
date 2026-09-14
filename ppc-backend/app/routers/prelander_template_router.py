@@ -403,7 +403,7 @@ async def preview_template(
     Renders the HTML with shortcodes substituted so admin can verify output.
     Returns rendered HTML string.
     """
-    from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext, _normalise_shortcodes
+    from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext
     from fastapi import HTTPException
     from fastapi.responses import HTMLResponse
 
@@ -418,25 +418,37 @@ async def preview_template(
     os_type = doc.get("os_type", "windows")
     if os_type == "both":
         os_type = data.get("os", "windows")
+    # Route through the glossary so raw input ("Windows", "iOS", …) resolves
+    # onto the fixed OS enum before it is used for campaign matching.
+    from app.core.glossary import normalize_os
+    os_type = normalize_os(os_type, default="windows")
 
-    # Use Global Campaign value for preview (always)
-    device_os = "mac" if os_type == "mac" else "windows"
-    campaign = await db.campaigns.find_one({
-        "status": "active",
-        "device_os": device_os,
-    })
+    # Spec (Prelander Templates → Preview): the preview uses the selected OS's
+    # Global Campaign value and Password/text value — i.e. the Global campaign
+    # (device_os == "global"), not an OS-specific one. Fall back to an
+    # OS-specific campaign, then any active campaign, so preview still works
+    # before a Global campaign exists.
+    device_os = os_type if os_type in ("windows", "mac", "android") else "windows"
+    campaign = await db.campaigns.find_one({"status": "active", "device_os": "global"})
     if not campaign:
-        campaign = await db.campaigns.find_one({"status": "active", "device_os": "global"})
+        campaign = await db.campaigns.find_one({"status": "active", "device_os": device_os})
+    if not campaign:
+        campaign = await db.campaigns.find_one({"status": "active"})
 
-    campaign_url = (campaign or {}).get("default_offer_url", "https://example.com")
-    password = (campaign or {}).get("password", "")
+    campaign_url = (
+        (campaign or {}).get("default_offer_url")
+        or (campaign or {}).get("offer_url")
+        or (campaign or {}).get("url")
+        or "https://example.com"
+    )
+    password = (campaign or {}).get("password") or ""
 
     context = RedirectContext(
         click_id="PREVIEW",
         campaign_url=campaign_url,
         os=os_type,
+        password=password,
     )
-    context.password = password  # type: ignore[attr-defined]
 
     try:
         engine = PrelanderTemplateEngine()

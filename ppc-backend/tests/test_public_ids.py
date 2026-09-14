@@ -32,8 +32,14 @@ class TestPublicIDGeneration:
         pub_id = generate_public_id("PUB")
         assert pub_id.startswith("PUB_")
         assert len(pub_id) == 12  # PUB_ + 8 chars
-        assert pub_id[4:].isupper()
+        # Entropy now spans upper + lower + digits for a stronger, harder-to-
+        # guess random part.
         assert pub_id[4:].isalnum()
+        # Across a run, the expanded alphabet mixes case (proving lower-case is
+        # in play) yet stays unique. Checked over the batch to stay deterministic.
+        samples = [generate_public_id("PUB")[4:] for _ in range(100)]
+        assert len(set(samples)) == 100  # All unique
+        assert any(not s.isupper() for s in samples)  # some contain lower/digit
     
     def test_generate_unique_ids(self):
         """Test that generated IDs are unique."""

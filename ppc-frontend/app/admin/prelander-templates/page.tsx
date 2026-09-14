@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, LayoutTemplate, Eye, EyeOff, Archive,
-  CheckCircle, Tag, MonitorSmartphone, Monitor, Apple, Globe, Star, X,
+  CheckCircle, Tag, MonitorSmartphone, Monitor, Apple, Globe, Star, X, Smartphone,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -19,7 +19,7 @@ interface PrlanderTemplate {
   id: string
   name: string
   description?: string | null
-  os_type: 'windows' | 'mac' | 'both'
+  os_type: 'windows' | 'mac' | 'android' | 'both'
   status: 'active' | 'paused' | 'archived'
   is_default: boolean
   title: string
@@ -41,7 +41,7 @@ interface PrlanderTemplate {
 const EMPTY_FORM = {
   name: '',
   description: '',
-  os_type: 'both' as 'windows' | 'mac' | 'both',
+  os_type: 'both' as 'windows' | 'mac' | 'android' | 'both',
   status: 'active' as 'active' | 'paused' | 'archived',
   title: 'Your file is ready to download',
   subtitle: 'Your file is prepared. Copy the link to download.',
@@ -68,6 +68,11 @@ function OsChip({ os }: { os: string }) {
       <Apple size={11} /> Mac
     </span>
   )
+  if (os === 'android') return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
+      <Smartphone size={11} /> Android
+    </span>
+  )
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
       <Globe size={11} /> Both
@@ -88,6 +93,7 @@ export default function PrlanderTemplatesPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM })
   const [saving, setSaving] = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
+  const [previewMeta, setPreviewMeta] = useState<{ campaign_url: string; password: string } | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PrlanderTemplate | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -207,6 +213,7 @@ export default function PrlanderTemplatesPage() {
       const res = await prlanderTemplateApi.preview(t.id, { os: t.os_type === 'both' ? 'windows' : t.os_type })
       if (res.data?.html) {
         setPreviewHtml(res.data.html)
+        setPreviewMeta({ campaign_url: res.data.campaign_url ?? '', password: res.data.password ?? '' })
         setPreviewOpen(true)
       } else {
         toast.error('No HTML content to preview')
@@ -277,6 +284,7 @@ export default function PrlanderTemplatesPage() {
             <option value="">All OS</option>
             <option value="windows">Windows</option>
             <option value="mac">Mac</option>
+            <option value="android">Android</option>
             <option value="both">Both</option>
           </select>
           <span className="text-sm text-gray-400 ml-auto">{templates.length} template{templates.length !== 1 ? 's' : ''}</span>
@@ -436,6 +444,7 @@ export default function PrlanderTemplatesPage() {
                       <option value="both">Both (auto-detect)</option>
                       <option value="windows">Windows only</option>
                       <option value="mac">Mac only</option>
+                      <option value="android">Android only</option>
                     </select>
                   </div>
                   <div>
@@ -531,7 +540,7 @@ export default function PrlanderTemplatesPage() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{TITLE}}</title>
+    <title>Download Ready</title>
     <style>
         /* Your custom CSS here */
         body { 
@@ -559,13 +568,16 @@ export default function PrlanderTemplatesPage() {
 </head>
 <body>
     <div class="container">
-        <h1>{{TITLE}}</h1>
-        <p>{{SUBTITLE}}</p>
+        <h1>Your file is ready to download</h1>
+        <p>Click the button below to get your file.</p>
         
-        <!-- Your custom content here -->
+        <!-- {Campaign_URL} is replaced with the applicable campaign URL -->
+        <!-- {Password} is replaced with the campaign Password/text content -->
+        <!-- Shortcodes are optional: use either, both, or neither -->
         <div class="download-section">
-            <input type="password" placeholder="Enter password" id="password" />
-            <button class="btn" onclick="handleClick()">{{BUTTON_TEXT}}</button>
+            <p>Download link: <strong>{Campaign_URL}</strong></p>
+            <p>Archive password: <strong>{Password}</strong></p>
+            <button class="btn" onclick="handleClick()">Download Now</button>
         </div>
     </div>
     
@@ -575,8 +587,8 @@ export default function PrlanderTemplatesPage() {
             // Your custom logic here
             console.log('Template clicked');
             
-            // IMPORTANT: Include platform tracking
-            window.location.href = '{{CLICK_URL}}';
+            // Continue to the campaign URL ({Campaign_URL} shortcode)
+            window.location.href = '{Campaign_URL}';
         }
         
         // IMPORTANT: OS detection and platform parameters
@@ -596,12 +608,10 @@ export default function PrlanderTemplatesPage() {
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
                     />
                     <div className="mt-2 text-xs text-gray-500 space-y-1">
-                      <p><strong>Available Variables:</strong></p>
-                      <p>• <code>&#123;&#123;TITLE&#125;&#125;</code> - Template title</p>
-                      <p>• <code>&#123;&#123;SUBTITLE&#125;&#125;</code> - Template subtitle</p>
-                      <p>• <code>&#123;&#123;BUTTON_TEXT&#125;&#125;</code> - Button text</p>
-                      <p>• <code>&#123;&#123;CLICK_URL&#125;&#125;</code> - Platform click tracking URL</p>
-                      <p><strong>Note:</strong> Click tracking and OS detection must be preserved</p>
+                      <p><strong>Supported Shortcodes:</strong></p>
+                      <p>• <code>&#123;Campaign_URL&#125;</code> — replaced with the applicable campaign URL</p>
+                      <p>• <code>&#123;Password&#125;</code> — replaced with the campaign Password/text content</p>
+                      <p>Shortcodes are optional — use either, both, or neither. Unsupported shortcodes (e.g. <code>&#123;Offer_Name&#125;</code>) trigger a warning when saving.</p>
                     </div>
                   </div>
                 </div>
@@ -723,10 +733,20 @@ export default function PrlanderTemplatesPage() {
             <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl border border-gray-100">
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
                 <p className="text-sm font-semibold text-gray-900">Template Preview — rendered with Global Campaign values</p>
-                <button onClick={() => setPreviewOpen(false)}
+                <button onClick={() => { setPreviewOpen(false); setPreviewMeta(null) }}
                   className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors">
                   <X size={18} />
                 </button>
+              </div>
+              <div className="px-5 py-2 border-b border-gray-100 bg-gray-50 text-xs text-gray-600 flex flex-wrap gap-x-5 gap-y-1 flex-shrink-0">
+                <span className="min-w-0">
+                  <span className="text-gray-400">Campaign URL: </span>
+                  <span className="font-mono break-all">{previewMeta?.campaign_url || '—'}</span>
+                </span>
+                <span>
+                  <span className="text-gray-400">Password: </span>
+                  <span className="font-mono">{previewMeta?.password || '—'}</span>
+                </span>
               </div>
               <div className="flex-1 overflow-hidden rounded-b-2xl">
                 <iframe

@@ -2,6 +2,20 @@
 
 ## Quick Start Guide
 
+### Shortcodes
+
+Templates support two friendly shortcodes (either, both, or neither):
+
+| Shortcode | Replaced with |
+|---|---|
+| `{Campaign_URL}` | The applicable campaign URL |
+| `{Password}` | The campaign Password/text content |
+
+Unsupported shortcodes (e.g. `{Offer_Name}`) trigger a validation warning on
+save but do not block it — they are left unsubstituted in the output. The
+internal Jinja2 forms (`{{ CAMPAIGN_URL }}`, `{{ PASSWORD }}`, …) are also
+accepted for backward compatibility.
+
 ### 1. Generate Signed Token (Server-Side)
 
 ```python

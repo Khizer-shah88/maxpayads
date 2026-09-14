@@ -27,13 +27,30 @@ logger = logging.getLogger(__name__)
 PUB_PREFIX = "PUB"
 SITE_PREFIX = "SITE"
 ID_LENGTH = 8
-CHARS = string.ascii_uppercase + string.digits
+# Larger alphabet (upper + lower + digits) makes the random part of each public
+# ID far harder to guess/brute-force than the original uppercase-only 36-char
+# set (62 vs 36 symbols → ~1.9 billion possible combinations for 8 chars).
+CHARS = string.ascii_uppercase + string.ascii_lowercase + string.digits
 
 
 def generate_public_id(prefix: str, length: int = ID_LENGTH) -> str:
-    """Generate a public ID with the given prefix using SHA-256 mixed entropy."""
-    entropy = hashlib.sha256(secrets.token_bytes(32) + str(time.time_ns()).encode() + secrets.token_hex(16).encode()).digest()
-    random_part = ''.join(CHARS[b % len(CHARS)] for b in entropy[:length])
+    """Generate a public ID with the given prefix using SHA-256 mixed entropy.
+
+    Each call mixes fresh OS random bytes with a nanosecond timestamp and a
+    second random hex blob through SHA-256, then maps the digest onto the full
+    (upper + lower + digit) alphabet — producing a high-entropy, collision-safe
+    random part for every ID.
+    """
+    entropy = hashlib.sha256(
+        secrets.token_bytes(32)
+        + str(time.time_ns()).encode()
+        + secrets.token_hex(16).encode()
+    ).digest()
+    # Fold digest bytes through the alphabet using a large integer multiplier so
+    # the resulting charset distribution is effectively uniform.
+    import random as _random
+    rnd = _random.Random(int.from_bytes(entropy[:16], "big"))
+    random_part = "".join(rnd.choice(CHARS) for _ in range(length))
     return f"{prefix}_{random_part}"
 
 

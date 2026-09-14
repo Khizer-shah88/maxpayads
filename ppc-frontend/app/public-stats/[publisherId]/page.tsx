@@ -187,11 +187,19 @@ export default function PublisherStatsPage() {
   const prefs = stats.preferences
 
   // ─── Platform filter helpers ──────────────────────────────────────────────
+  // Respect the admin's per-OS toggles: an OS the admin hid is not shown at all.
   const platformChips: PlatformChip[] = [
-    { key: 'windows', label: 'Windows', value: stats.windows_clicks, color: 'text-sky-300' },
-    { key: 'mac', label: 'Mac', value: stats.mac_clicks, color: 'text-violet-300' },
-    { key: 'android', label: 'Android', value: stats.android_clicks, color: 'text-emerald-300' },
+    ...(prefs.show_windows_clicks !== false
+      ? [{ key: 'windows' as const, label: 'Windows', value: stats.windows_clicks, color: 'text-sky-300' }]
+      : []),
+    ...(prefs.show_mac_clicks !== false
+      ? [{ key: 'mac' as const, label: 'Mac', value: stats.mac_clicks, color: 'text-violet-300' }]
+      : []),
+    ...(prefs.show_android_clicks !== false
+      ? [{ key: 'android' as const, label: 'Android', value: stats.android_clicks, color: 'text-emerald-300' }]
+      : []),
   ]
+
   const hasAnyPlatformData = platformChips.some(c => c.value > 0)
   const showFilters = prefs.show_os !== false && hasAnyPlatformData
   const filterActive = platformFilters.size > 0

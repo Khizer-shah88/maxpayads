@@ -76,7 +76,7 @@ async def _unique_share_id(db) -> str:
     raise RuntimeError("Could not generate unique share ID after 10 attempts")
 
 
-def _serialize(doc: dict, today_conversions: int = 0) -> dict:
+def _serialize(doc: dict, today_conversions: int = 0, manual_conversions: int = 0) -> dict:
     return {
         "id": str(doc["_id"]),
         "name": doc.get("name", ""),
@@ -94,7 +94,10 @@ def _serialize(doc: dict, today_conversions: int = 0) -> dict:
         "preferences": doc.get("preferences") or {},
         "stats_share_id": doc.get("stats_share_id"),
         "total_clicks": doc.get("total_clicks", 0),
-        "total_conversions": doc.get("total_conversions", 0),
+        # Accurate total = tracked conversions on the link + any admin-entered
+        # manual conversions for that link, so adding a conversion updates the
+        # shown number in real time.
+        "total_conversions": (doc.get("total_conversions", 0) or 0) + manual_conversions,
         "today_conversions": today_conversions,
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
         "updated_at": doc["updated_at"].isoformat() if doc.get("updated_at") else None,
@@ -134,9 +137,26 @@ async def list_links(
         async for row in db.direct_link_events.aggregate(pipeline):
             today_map[row["_id"]] = row["count"]
 
+    # Batch sum of admin-entered manual conversions per link (real-time total).
+    manual_map: dict = {}
+    if link_ids:
+        mp = [
+            {"$match": {"link_id": {"$in": link_ids}}},
+            {"$group": {"_id": "$link_id", "count": {"$sum": "$conversions"}}},
+        ]
+        async for row in db.direct_link_manual_conversions.aggregate(mp):
+            manual_map[row["_id"]] = row["count"] or 0
+
     return {
         "success": True,
-        "links": [_serialize(d, today_map.get(str(d["_id"]), 0)) for d in docs],
+        "links": [
+            _serialize(
+                d,
+                today_map.get(str(d["_id"]), 0),
+                manual_map.get(str(d["_id"]), 0),
+            )
+            for d in docs
+        ],
         "total": len(docs),
     }
 
@@ -281,7 +301,11 @@ async def get_link(
     today_count = await db.direct_link_events.count_documents({
         "link_id": link_id, "created_at": {"$gte": today_start}
     })
-    return {"success": True, "link": _serialize(doc, today_count)}
+    manual_count = 0
+    mcursor = db.direct_link_manual_conversions.find({"link_id": link_id})
+    async for m in mcursor:
+        manual_count += int(m.get("conversions", 0) or 0)
+    return {"success": True, "link": _serialize(doc, today_count, manual_count)}
 
 
 @router.post("", status_code=201)

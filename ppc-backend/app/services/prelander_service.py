@@ -90,6 +90,7 @@ class RedirectContext:
         os: Optional[str] = None,
         device_type: Optional[str] = None,
         timestamp: Optional[int] = None,
+        password: Optional[str] = None,
     ):
         self.click_id = click_id
         self.campaign_url = campaign_url
@@ -99,7 +100,11 @@ class RedirectContext:
         self.os = os or ""
         self.device_type = device_type or ""
         self.timestamp = timestamp or int(time.time())
-    
+        # Campaign Password/text content — substituted for the {Password}
+        # shortcode. It travels inside the signed token so the /p/render path
+        # can replace it exactly like the campaign URL.
+        self.password = password or ""
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -111,6 +116,7 @@ class RedirectContext:
             "os": self.os,
             "device_type": self.device_type,
             "timestamp": self.timestamp,
+            "password": self.password,
         }
     
     @classmethod
@@ -125,6 +131,7 @@ class RedirectContext:
             os=data.get("os"),
             device_type=data.get("device_type"),
             timestamp=data.get("timestamp"),
+            password=data.get("password"),
         )
     
     def sign(self) -> str:
@@ -138,6 +145,7 @@ class RedirectContext:
             self.country,
             self.os,
             str(self.timestamp),
+            self.password,
         ]
         data_string = "|".join(data_parts)
         
@@ -186,11 +194,12 @@ class RedirectContext:
             
             # Parse data
             parts = data_string.split("|")
-            if len(parts) < 7:
-                logger.warning(f"Invalid token data: expected 7 parts, got {len(parts)}")
+            if len(parts) < 8:
+                logger.warning(f"Invalid token data: expected 8 parts, got {len(parts)}")
                 return None
             
-            click_id, campaign_url, publisher_id, site_id, country, os, timestamp_str = parts
+            click_id, campaign_url, publisher_id, site_id, country, os, timestamp_str = parts[:7]
+            password = "|".join(parts[7:])  # the password may itself contain "|"
             timestamp = int(timestamp_str)
             
             # Check expiration
@@ -207,6 +216,7 @@ class RedirectContext:
                 country=country or None,
                 os=os or None,
                 timestamp=timestamp,
+                password=password or None,
             )
             
         except Exception as e:
@@ -273,7 +283,7 @@ class PrelanderTemplateEngine:
             # Prepare safe context data
             safe_context = {
                 "CAMPAIGN_URL": context.campaign_url,
-                "PASSWORD": getattr(context, "password", "") or "",
+                "PASSWORD": context.password or "",
                 "CLICK_ID": context.click_id,
                 "PUBLISHER_ID": context.publisher_id or "",
                 "SITE_ID": context.site_id or "",

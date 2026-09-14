@@ -58,6 +58,10 @@ interface StatsPreferences {
   show_conversions: boolean
   show_cr: boolean
   show_daily_breakdown: boolean
+  // Per-OS click breakdown toggles — whether the publisher sees each OS's clicks
+  show_windows_clicks: boolean
+  show_mac_clicks: boolean
+  show_android_clicks: boolean
 }
 
 const DEFAULT_PREFS: StatsPreferences = {
@@ -71,6 +75,9 @@ const DEFAULT_PREFS: StatsPreferences = {
   show_conversions: true,
   show_cr: true,
   show_daily_breakdown: true,
+  show_windows_clicks: true,
+  show_mac_clicks: true,
+  show_android_clicks: true,
 }
 
 interface LinkFormData {
@@ -952,6 +959,9 @@ export default function DirectLinkStatsPage() {
                       [
                         { key: 'show_impressions',     label: 'Show Impressions' },
                         { key: 'show_clicks',          label: 'Show Clicks' },
+                        { key: 'show_windows_clicks',  label: 'Show Windows Clicks' },
+                        { key: 'show_mac_clicks',      label: 'Show Mac Clicks' },
+                        { key: 'show_android_clicks',  label: 'Show Android Clicks' },
                         { key: 'show_valid_clicks',    label: 'Show Valid Clicks (Unique Wins)' },
                         { key: 'show_invalid_clicks',  label: 'Show Invalid Clicks' },
                         { key: 'show_conversions',     label: 'Show Conversions' },
