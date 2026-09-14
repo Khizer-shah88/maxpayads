@@ -200,7 +200,7 @@ class TestPrelanderTemplateWiring:
     async def test_missing_assigned_template_falls_back_to_os_default(self, prelander_domain_doc):
         """Assigned template inactive/gone → OS default is used (still renders)."""
         from app.core.constants import DOMAIN_TYPE_PRELANDER
-        del prelander_domain_doc["template_id"] if "template_id" in prelander_domain_doc else None
+        prelander_domain_doc.pop("template_id", None)
         default_tpl = {
             "_id": "tpl-default", "name": "Win Default", "os_type": "windows",
             "status": "active", "is_default": True,
