@@ -119,8 +119,13 @@ async def get_public_stats(
             android_clicks += cnt
 
     # ── Manual conversions (entered by admin) ─────────────────────────────────
-    # Two admin-entered sources: direct_link_manual_conversions and
-    # conversion_overrides. Both are keyed by publisher and date (YYYY-MM-DD).
+    # The Direct Link Stats page writes every admin-entered value to BOTH
+    # direct_link_manual_conversions and conversion_overrides (same value, same
+    # date/publisher/link). Summing both collections therefore double-counted
+    # every conversion (entering 1,000,000 showed 2,000,000).
+    # direct_link_manual_conversions is the canonical source; a
+    # conversion_overrides row is only counted when that exact (date, link) was
+    # NOT also recorded there — i.e. overrides entered from elsewhere.
     manual_by_date: dict = defaultdict(int)
     date_str_query = {
         "publisher_id": publisher_id,
@@ -129,14 +134,18 @@ async def get_public_stats(
             "$lte": end_date.strftime("%Y-%m-%d"),
         },
     }
+    seen_manual_keys: set = set()
     manual_rows = await db.direct_link_manual_conversions.find(date_str_query).to_list(length=1000)
     for doc in manual_rows:
+        seen_manual_keys.add((doc.get("date", ""), doc.get("link_id") or None))
         manual_by_date[doc.get("date", "")] += int(doc.get("conversions", 0) or 0)
 
     override_rows = await db.conversion_overrides.find(
         {**date_str_query, "is_manual_override": True}
     ).to_list(length=1000)
     for doc in override_rows:
+        if (doc.get("date", ""), doc.get("link_id") or None) in seen_manual_keys:
+            continue  # same conversion already counted from the canonical source
         manual_by_date[doc.get("date", "")] += int(doc.get("manual_conversions", 0) or 0)
 
     total_manual_conversions = sum(manual_by_date.values())
