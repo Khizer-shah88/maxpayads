@@ -78,6 +78,12 @@ _load_env_safe "$ENV_FILE"
 export ENTRY_SESSION_SECRET=""
 echo "Entry guard system disabled for public access"
 
+# Portal hostnames for the Next.js middleware gate. The first entry is used
+# as the Host header for the frontend health check below — probes to
+# http://localhost would otherwise be 404'd by the portal-hostname gate.
+export PORTAL_HOSTNAMES="${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}"
+FRONTEND_PROBE_HOST="${PORTAL_HOSTNAMES%%,*}"
+
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
 
@@ -127,7 +133,19 @@ echo ""
 echo "--- Health Check ---"
 
 wait_for_http "http://localhost/health" "Backend"
-wait_for_http "http://localhost" "Frontend"
+# Probe through nginx with a portal hostname — the Next.js portal gate only
+# serves portal pages for hosts in PORTAL_HOSTNAMES, and localhost isn't one.
+if curl -fsS --resolve "${FRONTEND_PROBE_HOST}:80:127.0.0.1" "https://${FRONTEND_PROBE_HOST}" >/dev/null 2>&1; then
+  echo "Frontend: OK"
+else
+  # Fallback: retry with plain http via the resolve trick
+  if curl -fsS --resolve "${FRONTEND_PROBE_HOST}:80:127.0.0.1" "http://${FRONTEND_PROBE_HOST}" >/dev/null 2>&1; then
+    echo "Frontend: OK"
+  else
+    echo "Frontend: NOT READY after probing http://${FRONTEND_PROBE_HOST} (and https)"
+    exit 1
+  fi
+fi
 
 echo ""
 echo "========================================="
