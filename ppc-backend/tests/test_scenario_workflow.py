@@ -29,6 +29,11 @@ from app.services.redirect_pipeline import (
 
 _XOR_KEY = "mxp2026"
 
+# Valid ObjectId hex strings — production code wraps ids with ObjectId(...),
+# so test fixtures must carry real 24-hex-char ids.
+OFFER_ID = "507f1f77bcf86cd799439012"
+TEMPLATE_ID = "507f1f77bcf86cd799439011"
+
 
 def encode_slug(os_param: str, ts: int, offer_id="", campaign_id="", cc="") -> str:
     """Build a slug exactly as traffic_router.route_click does."""
@@ -149,12 +154,14 @@ class TestPrelanderTemplateWiring:
             "status": "active",
             "template": "windows",
             "weight": 100,
+            "template_id": TEMPLATE_ID,
         }
 
     @pytest.fixture
     def active_template(self):
+        from bson import ObjectId
         return {
-            "_id": "tpl-1",
+            "_id": ObjectId(TEMPLATE_ID),
             "name": "Win Custom",
             "os_type": "windows",
             "status": "active",
@@ -172,8 +179,11 @@ class TestPrelanderTemplateWiring:
                            campaign_id="camp-1", cc="PK")
         decoded = {"os": slug_os, "offer_id": (offer or {}).get("_id", ""),
                    "campaign_id": "camp-1", "country_code": "PK"}
+        # Signature is (request, os, db, ...) — os before db.
         return await _get_prelander_data(
-            _make_request(host), db, slug_os,
+            _make_request(host),
+            slug_os,
+            db,
             offer_id=decoded.get("offer_id"),
             campaign_id=decoded.get("campaign_id"),
             country_code=decoded.get("country_code"),
@@ -184,10 +194,10 @@ class TestPrelanderTemplateWiring:
         db = FakePrelanderDB(
             redirection_domains=[prelander_domain_doc],
             prelander_templates=[active_template],
-            offers=[{"_id": "offer-1", "status": "active",
+            offers=[{"_id": OFFER_ID, "status": "active",
                      "offer_url": "https://offer.example/win", "campaign_id": "camp-1"}],
         )
-        data = await self._resolve(db, offer={"_id": "offer-1"})
+        data = await self._resolve(db, offer={"_id": OFFER_ID})
 
         assert data["success"] is True
         assert data["skip_prelander"] is False if "skip_prelander" in data else True
@@ -208,10 +218,10 @@ class TestPrelanderTemplateWiring:
         db = FakePrelanderDB(
             redirection_domains=[prelander_domain_doc],
             prelander_templates=[default_tpl],
-            offers=[{"_id": "offer-1", "status": "active",
+            offers=[{"_id": OFFER_ID, "status": "active",
                      "offer_url": "https://offer.example/win", "campaign_id": "camp-1"}],
         )
-        data = await self._resolve(db, offer={"_id": "offer-1"})
+        data = await self._resolve(db, offer={"_id": OFFER_ID})
 
         assert data["success"] is True
         assert "skip_prelander" not in data
@@ -222,10 +232,10 @@ class TestPrelanderTemplateWiring:
         db = FakePrelanderDB(
             redirection_domains=[prelander_domain_doc],
             prelander_templates=[],
-            offers=[{"_id": "offer-1", "status": "active",
+            offers=[{"_id": OFFER_ID, "status": "active",
                      "offer_url": "https://offer.example/win", "campaign_id": "camp-1"}],
         )
-        data = await self._resolve(db, offer={"_id": "offer-1"})
+        data = await self._resolve(db, offer={"_id": OFFER_ID})
 
         assert data["success"] is True
         assert data["skip_prelander"] is True
@@ -236,10 +246,10 @@ class TestPrelanderTemplateWiring:
         db = FakePrelanderDB(
             redirection_domains=[],
             prelander_templates=[active_template],
-            offers=[{"_id": "offer-1", "status": "active",
+            offers=[{"_id": OFFER_ID, "status": "active",
                      "offer_url": "https://offer.example/win", "campaign_id": "camp-1"}],
         )
-        data = await self._resolve(db, host="inter1.com", offer={"_id": "offer-1"})
+        data = await self._resolve(db, host="inter1.com", offer={"_id": OFFER_ID})
 
         assert data["success"] is True
         assert "skip_prelander" not in data
@@ -263,18 +273,19 @@ class TestPublicRenderOsHint:
 
         seen = {}
 
-        class _TemplateColl(_Coll):
+        class _RecordingColl:
+            """find_one records the query; returns None (no matching doc)."""
+
+            def __init__(self, store_key):
+                self._store_key = store_key
+
             async def find_one(self, query=None, **kwargs):
-                seen["default_query"] = query
-                return {
-                    "_id": "tpl-x", "name": "Ctx Default", "os_type": "windows",
-                    "status": "active", "is_default": True,
-                    "full_html_template": "<html>{{ CAMPAIGN_URL }}</html>",
-                }
+                seen.setdefault(self._store_key, query)
+                return None
 
         db = SimpleNamespace(
-            redirection_domains=SimpleNamespace(find_one=_TemplateColl([])),
-            prelander_templates=_TemplateColl([]),
+            redirection_domains=_RecordingColl("domain_query"),
+            prelander_templates=_RecordingColl("default_query"),
         )
 
         context = RedirectContext(
@@ -290,7 +301,8 @@ class TestPublicRenderOsHint:
         response = await render_prelander(request=request, token=token, db=db)
         assert response.status_code == 200
         # The OS hint in the default lookup is the context's OS, not the host.
-        assert seen["default_query"].get("os_type") == "windows"
+        default_query = seen.get("default_query") or {}
+        assert default_query.get("os_type") == "windows"
 
 
 # ── Fix A: campaign/offer attribution on the final click update ───────────────

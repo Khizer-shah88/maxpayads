@@ -108,6 +108,7 @@ _OS_ALIASES: Dict[str, str] = {
     OS_MAC: OS_MAC,
     "mac os": OS_MAC,
     "mac os x": OS_MAC,
+    "os x": OS_MAC,
     "macos": OS_MAC,
     "osx": OS_MAC,
     "darwin": OS_MAC,
@@ -128,6 +129,10 @@ def normalize_os(value: Any, default: Optional[str] = None) -> Optional[str]:
     This is the single OS normalizer for the whole system — targeting, campaign
     selection and prelander selection all resolve OS through it so they can
     never disagree about what a visitor is running.
+
+    Versioned user-agent spellings also resolve: "Mac OS X 10.15" and
+    "Windows NT 10.0" match via the longest known alias prefix, so a raw UA
+    OS string normalizes the same way as the bare family name.
     """
     key = (value or "").strip().lower() if isinstance(value, str) else ""
     if not key:
@@ -135,4 +140,9 @@ def normalize_os(value: Any, default: Optional[str] = None) -> Optional[str]:
     mapped = _OS_ALIASES.get(key)
     if mapped:
         return mapped
+    # Longest-alias-first prefix match: "mac os x 10.15" → "mac os x" → mac.
+    # Checking longest first keeps "mac os x …" from stopping at "mac os".
+    for alias in sorted(_OS_ALIASES, key=len, reverse=True):
+        if alias and key.startswith(alias + " "):
+            return _OS_ALIASES[alias]
     return key if key in VALID_OS_TYPES else default
