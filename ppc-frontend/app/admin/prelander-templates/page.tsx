@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { prlanderTemplateApi } from '@/lib/api'
@@ -88,6 +89,8 @@ export default function PrlanderTemplatesPage() {
   const [saving, setSaving] = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<PrlanderTemplate | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { initialize() }, [initialize])
 
@@ -224,13 +227,16 @@ export default function PrlanderTemplatesPage() {
   }
 
   const handleDelete = async (t: PrlanderTemplate) => {
-    if (!confirm(`Delete template "${t.name}"? Landing pages using it will lose the reference.`)) return
+    setDeleting(true)
     try {
       await prlanderTemplateApi.delete(t.id)
       toast.success('Template deleted')
+      setDeleteTarget(null)
       load()
     } catch {
       toast.error('Delete failed')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -389,7 +395,7 @@ export default function PrlanderTemplatesPage() {
                       <Archive size={13} />
                     </button>
                   )}
-                  <button onClick={() => handleDelete(t)} title="Delete"
+                  <button onClick={() => setDeleteTarget(t)} title="Delete"
                     className="p-2 rounded-xl text-red-400 hover:bg-red-50 border border-red-200 transition-colors">
                     <Trash2 size={13} />
                   </button>
@@ -734,6 +740,17 @@ export default function PrlanderTemplatesPage() {
             </div>
           </div>
         )}
+
+        {/* ── Delete Template Confirmation ────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Template"
+          message={<>Delete template <strong className="text-gray-900">{deleteTarget?.name}</strong>? Landing pages using it will lose the reference. This cannot be undone.</>}
+          confirmLabel="Delete Template"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
 
       </div>
     </div>

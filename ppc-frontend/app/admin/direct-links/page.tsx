@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { directLinkApi, adminApi } from '@/lib/api'
@@ -116,6 +117,11 @@ export default function DirectLinksPage() {
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [regenerating, setRegenerating] = useState<string | null>(null)
   const [error, setError] = useState<string>('')
+
+  // Styled delete / regenerate confirmations (replace native confirm())
+  const [deleteTarget, setDeleteTarget] = useState<DirectLink | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [regenTarget, setRegenTarget] = useState<DirectLink | null>(null)
 
   // Safe auth initialization
   useEffect(() => { 
@@ -330,20 +336,22 @@ export default function DirectLinksPage() {
   }
 
   const handleDelete = async (l: DirectLink) => {
-    if (!confirm(`Delete link "${l.name}"?`)) return
+    setDeleting(true)
     try {
       await directLinkApi.delete(l.id)
       toast.success('Link deleted')
+      setDeleteTarget(null)
       loadLinks()
     } catch { toast.error('Delete failed') }
+    finally { setDeleting(false) }
   }
 
   const handleRegenSlug = async (l: DirectLink) => {
-    if (!confirm('Regenerate the slug? The old URL will stop working immediately.')) return
     setRegenerating(l.id)
     try {
       await directLinkApi.regenerateSlug(l.id)
       toast.success('Slug regenerated')
+      setRegenTarget(null)
       loadLinks()
     } catch { toast.error('Failed to regenerate slug') }
     finally { setRegenerating(null) }
@@ -508,12 +516,12 @@ export default function DirectLinksPage() {
                             className="p-1.5 rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100">
                             <Edit size={14} />
                           </button>
-                          <button onClick={() => handleRegenSlug(l)} disabled={regenerating === l.id}
+                          <button onClick={() => setRegenTarget(l)} disabled={regenerating === l.id}
                             title="Regenerate slug"
                             className="p-1.5 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50">
                             {regenerating === l.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
                           </button>
-                          <button onClick={() => handleDelete(l)} title="Delete"
+                          <button onClick={() => setDeleteTarget(l)} title="Delete"
                             className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50">
                             <Trash2 size={14} />
                           </button>
@@ -687,6 +695,26 @@ export default function DirectLinksPage() {
             </div>
           </div>
         )}
+
+        {/* ── Styled delete / regenerate confirmations ────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Link"
+          message={<>Delete link <strong className="text-gray-900">{deleteTarget?.name}</strong>? The link URL will stop working immediately. This cannot be undone.</>}
+          confirmLabel="Delete Link"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
+        <ConfirmDialog
+          open={regenTarget !== null}
+          title="Regenerate Slug"
+          tone="warning"
+          message={<>Regenerate the slug for <strong className="text-gray-900">{regenTarget?.name}</strong>? The old URL will stop working immediately.</>}
+          confirmLabel="Regenerate"
+          onConfirm={() => { if (regenTarget) handleRegenSlug(regenTarget) }}
+          onCancel={() => setRegenTarget(null)}
+        />
 
       </div>
     </div>

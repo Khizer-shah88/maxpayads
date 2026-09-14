@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Edit, Trash2, Globe, Monitor, Apple, Smartphone, X } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
@@ -57,6 +58,8 @@ export default function LandingPagesPage() {
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50' })
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<LandingPage | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { initialize() }, [])
 
@@ -121,10 +124,15 @@ export default function LandingPagesPage() {
     finally { setSaving(false) }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this landing page?')) return
-    try { await landingPageApi.delete(id); toast.success('Deleted'); load() }
-    catch { toast.error('Delete failed') }
+  const handleDelete = async (page: LandingPage) => {
+    setDeleting(true)
+    try {
+      await landingPageApi.delete(page.id)
+      toast.success('Deleted')
+      setDeleteTarget(null)
+      load()
+    } catch { toast.error('Delete failed') }
+    finally { setDeleting(false) }
   }
 
   const activePages = pages.filter(p => p.status === 'active')
@@ -176,7 +184,7 @@ export default function LandingPagesPage() {
           setModal('edit')
         }}
           className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"><Edit size={15} /></button>
-        <button onClick={() => handleDelete(p.id)}
+        <button onClick={() => setDeleteTarget(p)}
           className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={15} /></button>
       </div>
     )},
@@ -284,6 +292,17 @@ export default function LandingPagesPage() {
             </div>
           </div>
         )}
+
+        {/* ── Delete Landing Page Confirmation ─────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Landing Page"
+          message={<>Delete landing page <strong className="text-gray-900">{deleteTarget?.name}</strong>? Traffic assigned to it will be redistributed. This cannot be undone.</>}
+          confirmLabel="Delete"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     </div>
   )

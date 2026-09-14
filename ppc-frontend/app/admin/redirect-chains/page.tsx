@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { adminApi, redirectChainApi } from '@/lib/api'
@@ -115,6 +116,8 @@ export default function RedirectChainsPage() {
   const [editTarget, setEditTarget] = useState<RedirectChain | null>(null)
   const [form, setForm] = useState({ ...EMPTY_CHAIN })
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<RedirectChain | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { initialize() }, [initialize])
 
@@ -220,14 +223,16 @@ export default function RedirectChainsPage() {
   }
 
   const handleDelete = async (chain: RedirectChain) => {
-    if (!confirm(`Delete redirect chain "${chain.name}"?`)) return
-    
+    setDeleting(true)
     try {
       await redirectChainApi.delete(chain.id)
       toast.success('Redirect chain deleted')
+      setDeleteTarget(null)
       loadData()
     } catch {
       toast.error('Failed to delete redirect chain')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -374,7 +379,7 @@ export default function RedirectChainsPage() {
                         <Edit size={16} />
                       </button>
                       <button
-                        onClick={() => handleDelete(chain)}
+                        onClick={() => setDeleteTarget(chain)}
                         className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
                         title="Delete chain"
                       >
@@ -612,6 +617,17 @@ export default function RedirectChainsPage() {
             </div>
           </div>
         )}
+
+        {/* ── Delete Chain Confirmation ────────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Redirect Chain"
+          message={<>Delete redirect chain <strong className="text-gray-900">{deleteTarget?.name}</strong>? Traffic using this chain will fall back to Domain Glossary routing. This cannot be undone.</>}
+          confirmLabel="Delete Chain"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
 
       </div>
     </div>

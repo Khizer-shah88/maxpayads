@@ -216,21 +216,44 @@ async def _get_prelander_data(
     os_lower = os.lower()
 
     # Prelander template override — if the host IS a Prelander domain, use its
-    # template setting to pin the page to a specific OS.
-    host = request.headers.get("host", "").split(":")[0].lower()
+    # template setting to pin the page to a specific OS. The browser's real
+    # domain arrives as X-Prelander-Host (sent by the /d/[slug] page); the Host
+    # header is only reliable when nginx routes /api/prelander straight to
+    # FastAPI, so it stays as the fallback — same preference as resolve_slug.
+    host = (
+        request.headers.get("x-prelander-host", "").strip()
+        or request.headers.get("host", "").split(":")[0].lower()
+    )
+    template_doc = None
+    is_prelander_host = False
     if host:
         from app.services.domain_service import normalize_domain
+        from app.services.prelander_service import get_template_for_domain
+        normalized_host = normalize_domain(host)
         prelander_domain_doc = await db.redirection_domains.find_one({
             "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
-            "domain": normalize_domain(host),
+            "domain": normalized_host,
             "status": "active",
         })
         if prelander_domain_doc:
+            is_prelander_host = True
             tpl = prelander_domain_doc.get("template", "default")
             if tpl == "mac":
                 os_lower = "mac"
             elif tpl == "windows":
                 os_lower = "windows"
+
+            # Scenario rule: the selected prelander uses its assigned active
+            # template, falling back to the OS Default Template when the
+            # assigned one is unavailable. get_template_for_domain encodes both
+            # steps; None means no active template exists at all → the visitor
+            # skips the prelander (flagged in the response below).
+            try:
+                template_doc = await get_template_for_domain(db, normalized_host)
+            except Exception as e:
+                logger.warning(
+                    "[PRELANDER] Template lookup failed for %s: %s", normalized_host, e
+                )
 
     # Per-OS file metadata
     if os_lower == "mac":
@@ -332,7 +355,23 @@ async def _get_prelander_data(
     if not offer_url:
         offer_url = "https://example.com"
 
-    return {
+    # Scenario rule: "if there is no active default, the visitor skips the
+    # prelander." Flag this to the /d/[slug] page so it forwards the visitor
+    # straight to the offer instead of rendering a template that doesn't exist.
+    if is_prelander_host and template_doc is None:
+        logger.info(
+            "[PRELANDER] No active template for host=%s — visitor skips prelander",
+            host,
+        )
+        return {
+            "success": True,
+            "skip_prelander": True,
+            "offer_url": offer_url,
+            "campaign_name": campaign_name,
+            "os": os_lower,
+        }
+
+    response = {
         "success": True,
         "file_name": file_name,
         "file_ext": file_ext,
@@ -344,3 +383,22 @@ async def _get_prelander_data(
         "campaign_name": campaign_name,
         "os": os_lower,
     }
+
+    # Surface the resolved template's customisable fields so the /d/[slug] page
+    # renders the assigned template instead of hard-coded copy. A template with
+    # a full_html_template must still be rendered server-side (shortcode
+    # substitution), so the router passes the raw fields and the page only uses
+    # the simple customisation props.
+    if template_doc:
+        response["template"] = {
+            "id": str(template_doc.get("_id")),
+            "name": template_doc.get("name"),
+            "os_type": template_doc.get("os_type"),
+            "title": template_doc.get("title"),
+            "subtitle": template_doc.get("subtitle"),
+            "button_text": template_doc.get("button_text"),
+            "show_password_field": bool(template_doc.get("show_password_field", True)),
+            "show_video": bool(template_doc.get("show_video", False)),
+            "video_url": template_doc.get("video_url"),
+        }
+    return response

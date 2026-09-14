@@ -29,6 +29,7 @@ from app.schemas.direct_link_schema import DirectLinkCreate, DirectLinkUpdate
 router = APIRouter(prefix="/direct-links", tags=["Direct Links"])
 
 _SLUG_CHARS = string.ascii_letters + string.digits  # base62
+_SHARE_ID_LENGTH = 24  # unguessable secret for the public stats URL
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -42,6 +43,11 @@ def _oid(link_id: str) -> ObjectId:
 
 def _gen_slug(length: int = 8) -> str:
     """Generate a cryptographically random base62 slug."""
+    return "".join(secrets.choice(_SLUG_CHARS) for _ in range(length))
+
+
+def _gen_share_id(length: int = _SHARE_ID_LENGTH) -> str:
+    """Generate a cryptographically random share ID for the public stats URL."""
     return "".join(secrets.choice(_SLUG_CHARS) for _ in range(length))
 
 
@@ -61,6 +67,15 @@ def _masked_url(doc: dict) -> str:
     return f"https://{domain}/#/{slug}"
 
 
+async def _unique_share_id(db) -> str:
+    """Generate a share ID that is not currently in use by any link."""
+    for _ in range(10):
+        share_id = _gen_share_id()
+        if not await db.direct_links.find_one({"stats_share_id": share_id}):
+            return share_id
+    raise RuntimeError("Could not generate unique share ID after 10 attempts")
+
+
 def _serialize(doc: dict, today_conversions: int = 0) -> dict:
     return {
         "id": str(doc["_id"]),
@@ -77,6 +92,7 @@ def _serialize(doc: dict, today_conversions: int = 0) -> dict:
         "notes": doc.get("notes"),
         "daily_conversion_cap": doc.get("daily_conversion_cap", 0),
         "preferences": doc.get("preferences") or {},
+        "stats_share_id": doc.get("stats_share_id"),
         "total_clicks": doc.get("total_clicks", 0),
         "total_conversions": doc.get("total_conversions", 0),
         "today_conversions": today_conversions,
@@ -291,9 +307,11 @@ async def create_link(
     # We do NOT auto-delete here anymore
 
     now = datetime.utcnow()
+    stats_share_id = await _unique_share_id(db)
     doc = {
         **data.model_dump(),
         "slug": slug,
+        "stats_share_id": stats_share_id,
         "publisher_name": pub_name,
         "total_clicks": 0,
         "total_conversions": 0,
@@ -688,7 +706,107 @@ async def delete_conversion_override(
     }
 
 
-# ─── White-Label Stats Generation ─────────────────────────────────────────────
+# ─── White-Label Stats Link (share ID based) ─────────────────────────────────
+
+async def _build_stats_url(request: Request, db, share_id: str) -> str:
+    """Build the public stats URL for a share ID using the configured domain."""
+    # Default: current admin panel origin — always works regardless of hosting.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "https")
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    if forwarded_host:
+        base_url = f"{forwarded_proto}://{forwarded_host}"
+    else:
+        base_url = str(request.base_url).rstrip("/")
+
+    # Optional custom white-label stats domain (Admin → Settings → stats_domain).
+    stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+    if stats_domain_doc and stats_domain_doc.get("value", "").strip():
+        custom_domain = stats_domain_doc["value"].strip().rstrip("/")
+        if not custom_domain.startswith("http"):
+            custom_domain = f"https://{custom_domain}"
+        base_url = custom_domain
+
+    return f"{base_url}/public-stats/{share_id}"
+
+
+@router.post("/{link_id}/share-stats-link")
+async def share_stats_link(
+    link_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Build the shareable white-label stats URL for a link.
+    The underlying share ID stays the same — this only returns the URL.
+    """
+    doc = await db.direct_links.find_one({"_id": _oid(link_id)})
+    if not doc:
+        raise NotFoundError("Direct Link")
+
+    # Ensure a share ID exists (older links may pre-date the field)
+    share_id = doc.get("stats_share_id")
+    if not share_id:
+        share_id = await _unique_share_id(db)
+        await db.direct_links.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"stats_share_id": share_id, "updated_at": datetime.utcnow()}},
+        )
+
+    stats_url = await _build_stats_url(request, db, share_id)
+    return {
+        "success": True,
+        "stats_url": stats_url,
+        "share_id": share_id,
+        "link_id": str(doc["_id"]),
+    }
+
+
+@router.post("/{link_id}/regenerate-stats-link")
+async def regenerate_stats_link(
+    link_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Regenerate the public statistics URL for a link.
+
+    - Generates a brand-new share ID → the old URL expires immediately.
+    - Report configuration (preferences) is untouched.
+    - All conversion / click data is untouched.
+
+    Anyone opening the old link afterwards sees only
+    "This statistics link has expired." with no further information.
+    """
+    doc = await db.direct_links.find_one({"_id": _oid(link_id)})
+    if not doc:
+        raise NotFoundError("Direct Link")
+
+    old_share_id = doc.get("stats_share_id")
+    new_share_id = await _unique_share_id(db)
+
+    # Make sure the new ID can never collide with the old one
+    while new_share_id == old_share_id:
+        new_share_id = await _unique_share_id(db)
+
+    await db.direct_links.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {
+            "stats_share_id": new_share_id,
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    stats_url = await _build_stats_url(request, db, new_share_id)
+    return {
+        "success": True,
+        "stats_url": stats_url,
+        "share_id": new_share_id,
+        "link_id": str(doc["_id"]),
+        "message": "Statistics link regenerated — the previous link has expired",
+    }
+
 
 @router.post("/generate-stats-token")
 async def generate_stats_token(
@@ -698,10 +816,9 @@ async def generate_stats_token(
     db=Depends(get_db),
 ):
     """
-    Generate a white-label stats access token for a publisher.
-    Returns a shareable URL that opens the publisher stats page.
-    The URL uses the current app domain — no hardcoded stats domain needed.
-    
+    Legacy-compatible entry point: return the shareable stats URL for the
+    publisher's most recent active/paused direct link (share ID based).
+
     Body: { "publisher_id": "..." }
     """
     publisher_id = data.get("publisher_id")
@@ -716,37 +833,26 @@ async def generate_stats_token(
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid publisher ID")
 
-    # URL-safe base64 token — safe to pass as query param without encoding issues
-    import base64
-    timestamp = int(datetime.utcnow().timestamp())
-    token_data = f"{publisher_id}:{publisher.get('email', '')}:{timestamp}"
-    token = base64.urlsafe_b64encode(token_data.encode()).decode().rstrip("=")
+    link = await db.direct_links.find_one(
+        {"publisher_id": publisher_id, "status": {"$in": ["active", "paused"]}},
+        sort=[("created_at", -1)],
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="No active direct link for this publisher")
 
-    # Build URL using the request origin (same domain as admin panel)
-    # This ensures the link always works regardless of where the app is hosted
-    forwarded_proto = request.headers.get("x-forwarded-proto", "https")
-    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
-    if forwarded_host:
-        base_url = f"{forwarded_proto}://{forwarded_host}"
-    else:
-        base_url = str(request.base_url).rstrip("/")
+    share_id = link.get("stats_share_id")
+    if not share_id:
+        share_id = await _unique_share_id(db)
+        await db.direct_links.update_one(
+            {"_id": link["_id"]},
+            {"$set": {"stats_share_id": share_id, "updated_at": datetime.utcnow()}},
+        )
 
-    # Check if a custom white-label stats domain is configured.
-    # If set, the share link uses that domain so the admin's main domain is hidden.
-    # Configure via Admin → Settings → stats_domain (e.g. "stats.yourdomain.com")
-    stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
-    if stats_domain_doc and stats_domain_doc.get("value", "").strip():
-        custom_domain = stats_domain_doc["value"].strip().rstrip("/")
-        # Ensure protocol prefix
-        if not custom_domain.startswith("http"):
-            custom_domain = f"https://{custom_domain}"
-        base_url = custom_domain
-
-    stats_url = f"{base_url}/public-stats/{publisher_id}?token={token}"
+    stats_url = await _build_stats_url(request, db, share_id)
 
     return {
         "success": True,
-        "token": token,
+        "share_id": share_id,
         "stats_url": stats_url,
         "publisher_name": publisher.get("name", "Unknown"),
         "expires": None,

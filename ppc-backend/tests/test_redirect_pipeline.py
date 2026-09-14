@@ -287,3 +287,35 @@ async def test_destination_and_trace_are_persisted(stub_stages):
     stages = [e["stage"] for e in update["$set"]["resolution_trace"]]
     assert stages[0] == STAGE_IDENTIFY
     assert stages[-1] == STAGE_DELIVER
+
+
+async def test_campaign_and_offer_are_persisted_with_destination(stub_stages):
+    """The final update must carry campaign/offer attribution.
+
+    click_tasks re-reads the click and resolves offer-level CPC from
+    click_doc["campaign_id"]; analytics attributes clicks by campaign. If
+    _finalize only wrote destination_url, both silently lost their inputs.
+    """
+    db = FakeDB()
+    ctx = await rp.resolve_redirect(make_ctx(), db, redis=None)
+
+    assert len(db.clicks.updates) == 1
+    _, update = db.clicks.updates[0]
+    assert update["$set"]["campaign_id"] == "camp-1"  # set by fake_route
+    # fake_route doesn't set offer_id — absent values must not be written.
+    assert "offer_id" not in update["$set"]
+
+
+async def test_campaign_persistence_never_breaks_when_unset(stub_stages, monkeypatch):
+    """A click that resolved without a campaign still persists destination+trace."""
+    async def no_campaign(ctx, db, redis):
+        ctx.destination_url = "https://offer.example/landing"
+
+    monkeypatch.setattr(rp, "stage_resolve_route", no_campaign)
+    db = FakeDB()
+    ctx = await rp.resolve_redirect(make_ctx(), db, redis=None)
+
+    _, update = db.clicks.updates[0]
+    assert "campaign_id" not in update["$set"]
+    assert "offer_id" not in update["$set"]
+    assert update["$set"]["destination_url"] == "https://offer.example/landing"

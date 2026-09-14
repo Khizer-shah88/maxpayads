@@ -178,6 +178,10 @@ services:
     environment:
       NODE_ENV: production
       NEXT_BACKEND_URL: http://fastapi:8000
+      # Hostnames allowed to serve the portal (landing page, admin, publisher).
+      # Every other hostname (redirection domains etc.) gets 404 for portal
+      # pages while /d/[slug], /api/* and static assets keep working.
+      PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
       # Entry guard — values are injected from deployment/.env.production
       # via the ALLOWED_ENTRY_DOMAINS / ENTRY_* variables set in that file.
       ALLOWED_ENTRY_DOMAINS: ${ALLOWED_ENTRY_DOMAINS:-}

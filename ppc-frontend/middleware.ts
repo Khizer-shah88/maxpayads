@@ -41,6 +41,34 @@ const ENTRY_GUARD_EXEMPT_PREFIXES: ReadonlyArray<string> = ['/d/'];
  */
 const ENTRY_GUARD_PROTECTED_PATHS: ReadonlyArray<string> = ['/'];
 
+// ─── Portal hostnames ─────────────────────────────────────────────────────────
+// The marketing/admin/publisher portal (root landing page, dashboard, etc.) may
+// only be served on these hostnames. Redirection domains (Anchor / Inter /
+// Prelander) and any other hostname pointing at this server reach the catch-all
+// nginx server block; without this check they would all render the
+// VertexMonetize landing page. Anything not listed here gets a 404 for
+// portal-only pages while infrastructure routes (/d/[slug], /click, /ad.js,
+// APIs) keep working on every domain.
+const PORTAL_HOSTNAMES: ReadonlyArray<string> = (
+  process.env.PORTAL_HOSTNAMES ??
+  'maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com,localhost'
+)
+  .split(',')
+  .map(h => h.trim().toLowerCase())
+  .filter(Boolean);
+
+function requestHostname(request: NextRequest): string {
+  // X-Forwarded-Host survives the nginx proxy; nextUrl.host falls back for
+  // direct dev access. Strip any port before comparing.
+  const forwarded = request.headers.get('x-forwarded-host');
+  const raw = forwarded?.split(',')[0]?.trim() || request.nextUrl.host || '';
+  return raw.split(':')[0].toLowerCase();
+}
+
+function isPortalHost(hostname: string): boolean {
+  return PORTAL_HOSTNAMES.includes(hostname);
+}
+
 function isEntryGuardProtected(pathname: string): boolean {
   // Never guard explicitly exempt paths
   if (ENTRY_GUARD_EXEMPT_PATHS.includes(pathname)) return false;
@@ -82,6 +110,36 @@ export async function middleware(request: NextRequest) {
 
   // Create response first (will be used throughout)
   let response: NextResponse;
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
+  // ════════════════════════════════════════════════════════════════════════════
+  // Any hostname pointing at this server (newly added redirection domains hit
+  // the nginx catch-all) must not render the VertexMonetize landing page or
+  // the dashboards. Infrastructure routes stay reachable on every domain:
+  //   /d/[slug]  — prelander pages
+  //   /click, /go, /ad.js, /health, /docs — backend endpoints (served by nginx)
+  //   /api/*     — API routes (proxied by nginx to FastAPI or rewritten here)
+  //   /_next/*   — static assets
+  const host = requestHostname(request);
+  const isInfraPath =
+    pathname.startsWith('/d/') ||
+    pathname.startsWith('/api/') ||
+    pathname.startsWith('/_next/') ||
+    // White-label public stats share links work on any configured domain
+    // (including the optional dedicated stats share domain)
+    pathname.startsWith('/public-stats/') ||
+    // Public static assets served from prelander domains (video tutorials etc.)
+    /\.(mp4|webm|png|jpg|jpeg|gif|ico|svg|txt|xml|webmanifest)$/i.test(pathname) ||
+    pathname === '/favicon.ico';
+
+  if (!isPortalHost(host) && !isInfraPath) {
+    console.log(
+      `[PORTAL_HOST_BLOCKED] host=${host} path=${pathname} — ` +
+        `serving 404 (portal pages only allowed on: ${PORTAL_HOSTNAMES.join(', ')})`,
+    );
+    return new NextResponse(null, { status: 404 });
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // 1.  ENTRY GUARD — only active when ENTRY_SESSION_SECRET is configured

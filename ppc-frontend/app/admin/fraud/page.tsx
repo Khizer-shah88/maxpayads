@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { ShieldAlert, ShieldX, AlertCircle, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import StatCard from '@/components/shared/StatCard'
 import { analyticsApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -12,6 +14,10 @@ export default function FraudPage() {
   const [stats, setStats] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
+
+  // Styled delete confirmations (replace native confirm() / alert())
+  const [deleteReasonTarget, setDeleteReasonTarget] = useState<string | null>(null)
+  const [deleteIpTarget, setDeleteIpTarget] = useState<string | null>(null)
 
   useEffect(() => { initialize() }, [])
 
@@ -26,28 +32,28 @@ export default function FraudPage() {
   useEffect(() => { loadStats() }, [loadStats])
 
   const handleDeleteReason = async (reason: string) => {
-    if (!confirm(`Delete all fraud clicks with reason "${reason.replace(/_/g, ' ')}"?`)) return
     setDeleting(`reason:${reason}`)
     try {
       await analyticsApi.deleteFraudByReason(reason)
+      setDeleteReasonTarget(null)
       loadStats()
     } catch (err) {
       console.error(err)
-      alert('Failed to delete')
+      toast.error('Failed to delete')
     } finally {
       setDeleting(null)
     }
   }
 
   const handleDeleteIp = async (ip: string) => {
-    if (!confirm(`Delete all fraud clicks from IP "${ip}"?`)) return
     setDeleting(`ip:${ip}`)
     try {
       await analyticsApi.deleteFraudByIp(ip)
+      setDeleteIpTarget(null)
       loadStats()
     } catch (err) {
       console.error(err)
-      alert('Failed to delete')
+      toast.error('Failed to delete')
     } finally {
       setDeleting(null)
     }
@@ -86,7 +92,7 @@ export default function FraudPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-gray-900 font-mono font-medium">{count.toLocaleString()} ({pct}%)</span>
                         <button
-                          onClick={() => handleDeleteReason(reason)}
+                          onClick={() => setDeleteReasonTarget(reason)}
                           disabled={isDeleting}
                           className="p-1.5 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                           title={`Delete all "${reason.replace(/_/g, ' ')}" fraud clicks`}
@@ -122,7 +128,7 @@ export default function FraudPage() {
                     <div className="flex items-center gap-3">
                       <span className="text-red-600 font-mono text-sm font-semibold">{item.count} hits</span>
                       <button
-                        onClick={() => handleDeleteIp(item.ip)}
+                        onClick={() => setDeleteIpTarget(item.ip)}
                         disabled={isDeleting}
                         className="p-1.5 rounded-xl text-red-400 hover:text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
                         title={`Delete all fraud clicks from ${item.ip}`}
@@ -161,6 +167,26 @@ export default function FraudPage() {
             ))}
           </div>
         </div>
+
+        {/* ── Styled delete confirmations ──────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteReasonTarget !== null}
+          title="Delete Fraud Clicks"
+          message={<>Delete all fraud clicks with reason <strong className="text-gray-900 capitalize">{deleteReasonTarget?.replace(/_/g, ' ')}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete All"
+          loading={deleting === `reason:${deleteReasonTarget}`}
+          onConfirm={() => { if (deleteReasonTarget) handleDeleteReason(deleteReasonTarget) }}
+          onCancel={() => setDeleteReasonTarget(null)}
+        />
+        <ConfirmDialog
+          open={deleteIpTarget !== null}
+          title="Delete Fraud Clicks"
+          message={<>Delete all fraud clicks from IP <strong className="text-gray-900 font-mono">{deleteIpTarget}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete All"
+          loading={deleting === `ip:${deleteIpTarget}`}
+          onConfirm={() => { if (deleteIpTarget) handleDeleteIp(deleteIpTarget) }}
+          onCancel={() => setDeleteIpTarget(null)}
+        />
       </div>
     </div>
   )

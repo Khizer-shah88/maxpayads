@@ -519,6 +519,13 @@ async def _finalize(ctx: RedirectResolutionContext, db, outcome: str) -> None:
         return
 
     update: Dict[str, Any] = {"destination_url": ctx.destination_url}
+    # Persist campaign/offer attribution alongside the destination. Without
+    # these, the async click task (click_tasks) can never find the matched
+    # offer, so offer-level CPC and campaign analytics silently break.
+    if ctx.campaign_id:
+        update["campaign_id"] = str(ctx.campaign_id)
+    if ctx.offer_id:
+        update["offer_id"] = str(ctx.offer_id)
     if getattr(settings, "REDIRECT_TRACE_ENABLED", True):
         update["resolution_trace"] = ctx.trace_as_list()
 

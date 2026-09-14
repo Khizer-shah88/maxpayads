@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Copy, Check, Trash2, Globe, Code2, Settings, Monitor, MousePointerClick, Video, Layout, X, ChevronRight, Link2, Palette, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import PublisherSidebar from '@/components/shared/PublisherSidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { publisherApi } from '@/lib/api'
@@ -43,6 +44,8 @@ export default function AdUnitsPage() {
   const [addModal, setAddModal] = useState(false)
   const [addForm, setAddForm] = useState({ domain: '', name: '' })
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Website | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
   // Ad code flow state
@@ -80,13 +83,15 @@ export default function AdUnitsPage() {
     finally { setSaving(false) }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this website?')) return
+  const handleDelete = async (w: Website) => {
+    setDeleting(true)
     try {
-      await publisherApi.deleteWebsite(id)
+      await publisherApi.deleteWebsite(w.id)
       toast.success('Website removed')
+      setDeleteTarget(null)
       load()
     } catch { toast.error('Failed to remove') }
+    finally { setDeleting(false) }
   }
 
   const handleCopy = (text: string, id: string) => {
@@ -214,7 +219,7 @@ export default function AdUnitsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={website.status} />
-                    <button onClick={(e) => { e.stopPropagation(); handleDelete(website.id) }}
+                    <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(website) }}
                       className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors">
                       <Trash2 size={14} />
                     </button>
@@ -645,6 +650,17 @@ export default function AdUnitsPage() {
             </div>
           </div>
         )}
+
+        {/* ── Remove Website Confirmation ──────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Remove Website"
+          message={<>Remove <strong className="text-gray-900">{deleteTarget?.name || deleteTarget?.domain}</strong> and all its ad settings? Its links will stop working. This cannot be undone.</>}
+          confirmLabel="Remove Website"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     </div>
   )

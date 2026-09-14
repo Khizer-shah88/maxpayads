@@ -163,6 +163,8 @@ services:
     environment:
       NODE_ENV: production
       NEXT_BACKEND_URL: http://fastapi:8000
+      # Hostnames allowed to serve the portal — see middleware.ts
+      PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-localhost}
       # Entry guard — set real values in deployment/.env.production or override here.
       # Leave ENTRY_SESSION_SECRET blank to disable the guard in local dev.
       ALLOWED_ENTRY_DOMAINS: ${ALLOWED_ENTRY_DOMAINS:-}

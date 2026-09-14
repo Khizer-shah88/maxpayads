@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Edit, Trash2, Eye, EyeOff, Search, ChevronDown, X, Users, Globe, Monitor, Smartphone, Apple, Lock } from 'lucide-react'
+import { Plus, Edit, Trash2, Search, ChevronDown, X, Users, Globe, Monitor, Smartphone, Apple, Lock } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
@@ -285,7 +286,8 @@ export default function OffersPage() {
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState<OfferForm>(emptyForm())
   const [saving, setSaving] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Offer | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Loaded data for selectors
   const [publishers, setPublishers] = useState<Publisher[]>([])
@@ -357,10 +359,15 @@ export default function OffersPage() {
     finally { setSaving(false) }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this offer?')) return
-    try { await offerApi.delete(id); toast.success('Offer deleted'); load() }
-    catch { toast.error('Delete failed') }
+  const handleDelete = async (offer: Offer) => {
+    setDeleting(true)
+    try {
+      await offerApi.delete(offer.id)
+      toast.success('Offer deleted')
+      setDeleteTarget(null)
+      load()
+    } catch { toast.error('Delete failed') }
+    finally { setDeleting(false) }
   }
 
   const openEdit = (o: Offer) => {
@@ -378,13 +385,11 @@ export default function OffersPage() {
       country_codes: o.country_codes || [],
       direct_redirect_mode: o.direct_redirect_mode || false,
     })
-    setShowPassword(false)
     setModal('edit')
   }
 
   const openCreate = () => {
     setForm(emptyForm())
-    setShowPassword(false)
     setModal('create')
   }
 
@@ -426,7 +431,7 @@ export default function OffersPage() {
     { key: 'actions', label: '', render: (o: Offer) => (
       <div className="flex gap-1">
         <button onClick={() => openEdit(o)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100"><Edit size={15} /></button>
-        <button onClick={() => handleDelete(o.id)} className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={15} /></button>
+        <button onClick={() => setDeleteTarget(o)} className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={15} /></button>
       </div>
     )},
   ]
@@ -498,21 +503,15 @@ export default function OffersPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Password <span className="text-gray-400 font-normal">(optional)</span></label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        name="offer_password"
-                        autoComplete="new-password"
-                        value={form.password}
-                        onChange={e => setForm(p => ({...p, password: e.target.value}))}
-                        placeholder="Offer password"
-                        className={`${inputClass} pr-10`}
-                      />
-                      <button type="button" onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
+                    <input
+                      type="text"
+                      name="offer_password"
+                      autoComplete="off"
+                      value={form.password}
+                      onChange={e => setForm(p => ({...p, password: e.target.value}))}
+                      placeholder="Offer password"
+                      className={inputClass}
+                    />
                   </div>
                 </div>
 
@@ -630,6 +629,17 @@ export default function OffersPage() {
             </div>
           </div>
         )}
+
+        {/* ── Delete Offer Confirmation ────────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Offer"
+          message={<>Delete offer <strong className="text-gray-900">{deleteTarget?.name}</strong>? Traffic targeting this offer will fall back to the campaign URL. This cannot be undone.</>}
+          confirmLabel="Delete Offer"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     </div>
   )

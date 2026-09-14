@@ -7,9 +7,10 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi, directLinkApi } from '@/lib/api'
+import { adminApi, directLinkApi, statsProfileApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -159,6 +160,14 @@ export default function DirectLinkStatsPage() {
   // Share stats modal
   const [shareModal, setShareModal] = useState<{ name: string; url: string } | null>(null)
   const [generatingShare, setGeneratingShare] = useState<string | null>(null)
+  // Regenerate public stats URL (expires the old link, keeps config & data)
+  const [regenerating, setRegenerating] = useState<string | null>(null)
+
+  // Styled delete confirmations (replace native confirm())
+  const [deleteLinkTarget, setDeleteLinkTarget] = useState<DirectLink | null>(null)
+  const [deletingLink, setDeletingLink] = useState(false)
+  const [deleteAllTarget, setDeleteAllTarget] = useState<{ name: string; count: number; ids: string[] } | null>(null)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   // Stats domain config (white-label domain for share links)
   const [statsDomain, setStatsDomain] = useState('')
@@ -331,33 +340,63 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Delete link
+  // Delete link (invoked from the styled ConfirmDialog)
   const handleDeleteLink = async (link: DirectLink) => {
-    if (!confirm(`Delete link "${link.name}"?`)) return
+    setDeletingLink(true)
     try {
       await directLinkApi.delete(link.id)
       toast.success('Link deleted')
+      setDeleteLinkTarget(null)
       loadData()
     } catch {
       toast.error('Delete failed')
+    } finally {
+      setDeletingLink(false)
     }
   }
 
-  // Manual override submit
+  // Delete all links for a publisher (invoked from the styled ConfirmDialog)
+  const handleDeleteAllLinks = async () => {
+    if (!deleteAllTarget) return
+    setDeletingAll(true)
+    try {
+      await Promise.all(deleteAllTarget.ids.map(id => directLinkApi.delete(id)))
+      toast.success('Links deleted')
+      setDeleteAllTarget(null)
+      loadData()
+    } catch {
+      toast.error('Delete failed')
+    } finally {
+      setDeletingAll(false)
+    }
+  }
+
+  // Manual override submit — writes to BOTH conversion override (for internal
+  // reports) and manual conversions (for the publisher's public stats page)
   const handleOverrideSubmit = async () => {
     if (!overrideForm.reason.trim()) { toast.error('Reason is required'); return }
     if (overrideForm.manual_conversions < 0) { toast.error('Conversions must be ≥ 0'); return }
     setSavingOverride(true)
     try {
-      await directLinkApi.createManualOverride({
-        date: overrideForm.date,
-        publisher_id: overrideForm.publisher_id,
-        link_id: overrideForm.link_id || undefined,
-        manual_conversions: overrideForm.manual_conversions,
-        reason: overrideForm.reason,
-      })
-      toast.success('Manual override applied')
+      await Promise.allSettled([
+        directLinkApi.createManualOverride({
+          date: overrideForm.date,
+          publisher_id: overrideForm.publisher_id,
+          link_id: overrideForm.link_id || undefined,
+          manual_conversions: overrideForm.manual_conversions,
+          reason: overrideForm.reason,
+        }),
+        statsProfileApi.createManualConversion({
+          date: overrideForm.date,
+          publisher_id: overrideForm.publisher_id,
+          link_id: overrideForm.link_id || null,
+          conversions: overrideForm.manual_conversions,
+          reason: overrideForm.reason,
+        }),
+      ])
+      toast.success('Conversions added — they now appear on the publisher stats page')
       setShowOverrideModal(false)
+      loadData()
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Failed to apply override')
     } finally {
@@ -365,7 +404,7 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Generate stats URL for publisher — shows modal with the link
+  // Generate stats URL for publisher — resolves the active link, shows modal
   const generateStatsUrl = async (publisherId: string, publisherName: string) => {
     setGeneratingShare(publisherId)
     try {
@@ -376,14 +415,41 @@ export default function DirectLinkStatsPage() {
       } else {
         throw new Error('No URL returned')
       }
-    } catch {
-      // Fallback: build token locally and use path only
-      const ts = Math.floor(Date.now() / 1000)
-      const token = btoa(`${publisherId}::${ts}`).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
-      const fallback = `${window.location.origin}/public-stats/${publisherId}?token=${token}`
-      setShareModal({ name: publisherName, url: fallback })
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error
+      toast.error(typeof detail === 'string' ? detail : 'Failed to generate stats link')
     } finally {
       setGeneratingShare(null)
+    }
+  }
+
+  // Resolve the active link ID for a publisher (newest active/paused link)
+  const activeLinkIdFor = (pubId: string): string | null => {
+    const active = links
+      .filter(l => l.publisher_id === pubId && (l.status === 'active' || l.status === 'paused'))
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    return active[0]?.id ?? null
+  }
+
+  // Regenerate the public stats URL for a publisher's active link
+  const regenerateStatsUrl = async (publisherId: string, publisherName: string) => {
+    const linkId = activeLinkIdFor(publisherId)
+    if (!linkId) { toast.error('No active link for this publisher'); return }
+    setRegenerating(publisherId)
+    try {
+      const res = await directLinkApi.regenerateStatsLink(linkId)
+      const url = res.data?.stats_url
+      if (url) {
+        setShareModal({ name: publisherName, url })
+        toast.success('New link generated — the previous link has expired')
+      } else {
+        throw new Error('No URL returned')
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error
+      toast.error(typeof detail === 'string' ? detail : 'Failed to regenerate link')
+    } finally {
+      setRegenerating(null)
     }
   }
 
@@ -432,7 +498,7 @@ export default function DirectLinkStatsPage() {
                 White-Label Stats Domain
               </label>
               <p className="text-xs text-gray-400 mb-2">
-                When set, publisher share links use this domain instead of <code className="bg-gray-100 px-1 rounded">vertexmonetize.com</code>.
+                When set, publisher share links use this domain instead of the admin panel domain.
                 Point this domain&apos;s DNS to the same server, then enter it here.
               </p>
               <input
@@ -565,6 +631,14 @@ export default function DirectLinkStatsPage() {
                     }
                   </button>
                   <button
+                    onClick={e => { e.stopPropagation(); regenerateStatsUrl(pub.id, pub.name) }}
+                    disabled={regenerating === pub.id}
+                    title="Generate a new stats URL — the old link expires immediately; settings and data are kept"
+                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/5 border border-gray-200 transition-colors disabled:opacity-60"
+                  >
+                    {regenerating === pub.id ? <Spinner size={13} /> : <RefreshCw size={13} />}
+                  </button>
+                  <button
                     onClick={e => {
                       e.stopPropagation()
                       setLinkForm({ ...EMPTY_LINK_FORM, publisher_id: pub.id })
@@ -579,10 +653,12 @@ export default function DirectLinkStatsPage() {
                     onClick={e => {
                       e.stopPropagation()
                       const pubLinks = links.filter(l => l.publisher_id === pub.id)
-                      if (!confirm(`Delete all ${pubLinks.length} link${pubLinks.length !== 1 ? 's' : ''} for ${pub.name}? This cannot be undone.`)) return
-                      Promise.all(pubLinks.map(l => directLinkApi.delete(l.id)))
-                        .then(() => { toast.success('Links deleted'); loadData() })
-                        .catch(() => toast.error('Delete failed'))
+                      if (pubLinks.length === 0) return
+                      setDeleteAllTarget({
+                        name: pub.name,
+                        count: pubLinks.length,
+                        ids: pubLinks.map(l => l.id),
+                      })
                     }}
                     title="Delete all links for this publisher"
                     className="flex items-center justify-center p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-100 transition-colors"
@@ -691,22 +767,57 @@ export default function DirectLinkStatsPage() {
                 </table>
               </div>
             )}
+          </div>
+        )}
 
-            {/* Stats share section */}
+        {/* ── Styled delete confirmations ──────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteLinkTarget !== null}
+          title="Delete Link"
+          message={<>Delete link <strong className="text-gray-900">{deleteLinkTarget?.name}</strong>? The link URL will stop working immediately. This cannot be undone.</>}
+          confirmLabel="Delete Link"
+          loading={deletingLink}
+          onConfirm={() => { if (deleteLinkTarget) handleDeleteLink(deleteLinkTarget) }}
+          onCancel={() => setDeleteLinkTarget(null)}
+        />
+        <ConfirmDialog
+          open={deleteAllTarget !== null}
+          title="Delete All Links"
+          message={<>Delete all <strong className="text-gray-900">{deleteAllTarget?.count}</strong> link{deleteAllTarget?.count !== 1 ? 's' : ''} for <strong className="text-gray-900">{deleteAllTarget?.name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete All"
+          loading={deletingAll}
+          onConfirm={handleDeleteAllLinks}
+          onCancel={() => setDeleteAllTarget(null)}
+        />
+
+        {/* Stats share section */}
+        {selectedPublisher && (
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-6">
             <div className="p-5 border-t border-gray-100 bg-blue-50/50">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-blue-900">White-Label Stats Link</p>
                   <p className="text-xs text-blue-600 mt-0.5">
-                    Share a stats-only page with {selectedPublisher.name} — no internal data exposed
+                    Share a stats-only page with {selectedPublisher.name} — no internal data exposed.
+                    Regenerating expires the previous URL immediately while keeping all settings and data.
                   </p>
                 </div>
-                <button
-                  onClick={() => generateStatsUrl(selectedPublisher.id, selectedPublisher.name)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
-                >
-                  <Copy size={13} /> Generate & Copy
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => generateStatsUrl(selectedPublisher.id, selectedPublisher.name)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                  >
+                    <Copy size={13} /> Generate & Copy
+                  </button>
+                  <button
+                    onClick={() => regenerateStatsUrl(selectedPublisher.id, selectedPublisher.name)}
+                    disabled={regenerating === selectedPublisher.id}
+                    title="Expire the current link and generate a new one"
+                    className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-60"
+                  >
+                    {regenerating === selectedPublisher.id ? <Spinner size={13} /> : <RefreshCw size={13} />} Regenerate
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -765,7 +876,7 @@ export default function DirectLinkStatsPage() {
                             <Edit3 size={14} />
                           </button>
                           <button
-                            onClick={() => handleDeleteLink(link)}
+                            onClick={() => setDeleteLinkTarget(link)}
                             className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
                             title="Delete"
                           >
@@ -951,11 +1062,10 @@ export default function DirectLinkStatsPage() {
 
               {/* Info */}
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
-                <p className="text-sm font-semibold text-blue-900 mb-1">White-label stats page</p>
+                <p className="text-sm font-semibold text-blue-900 mb-1">White-label stats link</p>
                 <p className="text-xs text-blue-700">
-                  This link shows only performance stats — no admin panel, no internal branding, no campaign or domain names exposed.
-                  To use a custom domain (e.g. <code className="bg-blue-100 px-1 rounded">stats.yourdomain.com</code>), set it in
-                  Admin → Settings → <strong>stats_domain</strong>.
+                  This link shows only performance stats — no admin panel, no branding, no campaign or domain names exposed.
+                  Regenerating the link expires the previous URL immediately while keeping all report settings and data.
                 </p>
               </div>
 
@@ -992,10 +1102,21 @@ export default function DirectLinkStatsPage() {
                 >
                   <ExternalLink size={15} /> Preview
                 </a>
+                <button
+                  onClick={async () => {
+                    const pub = publishers.find(p => p.name === shareModal.name)
+                    if (!pub) { toast.error('Publisher not found'); return }
+                    await regenerateStatsUrl(pub.id, pub.name)
+                  }}
+                  title="Expire this link and generate a new one — settings and data are kept"
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  <RefreshCw size={15} /> Regenerate
+                </button>
               </div>
 
               <p className="text-xs text-gray-400 text-center mt-4">
-                To use a custom white-label domain, configure <strong>stats_domain</strong> in system settings.
+                Anyone opening an expired link sees only “This statistics link has expired.”
               </p>
             </div>
           </div>

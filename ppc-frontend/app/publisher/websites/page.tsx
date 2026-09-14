@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Globe, Trash2, Edit2, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
 import PublisherSidebar from '@/components/shared/PublisherSidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { publisherApi } from '@/lib/api'
@@ -17,6 +18,8 @@ export default function PublisherWebsitesPage() {
   const [addModal, setAddModal] = useState(false)
   const [addForm, setAddForm] = useState({ domain: '', name: '' })
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Website | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { initialize() }, [])
 
@@ -52,13 +55,15 @@ export default function PublisherWebsitesPage() {
     finally { setSaving(false) }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this website and all its data?')) return
+  const handleDelete = async (w: Website) => {
+    setDeleting(true)
     try {
-      await publisherApi.deleteWebsite(id)
+      await publisherApi.deleteWebsite(w.id)
       toast.success('Website removed')
+      setDeleteTarget(null)
       load()
     } catch { toast.error('Failed to remove') }
+    finally { setDeleting(false) }
   }
 
   const inputClass = "w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm"
@@ -124,7 +129,7 @@ export default function PublisherWebsitesPage() {
                         <p className="text-sm font-mono font-semibold text-red-600">${(website.total_earnings ?? 0).toFixed(4)}</p>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(website.id)}
+                    <button onClick={() => setDeleteTarget(website)}
                       className="p-2 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors">
                       <Trash2 size={16} />
                     </button>
@@ -184,6 +189,17 @@ export default function PublisherWebsitesPage() {
             </div>
           </div>
         )}
+
+        {/* ── Remove Website Confirmation ──────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Remove Website"
+          message={<>Remove <strong className="text-gray-900">{deleteTarget?.name || deleteTarget?.domain}</strong> and all its data? This cannot be undone.</>}
+          confirmLabel="Remove Website"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     </div>
   )

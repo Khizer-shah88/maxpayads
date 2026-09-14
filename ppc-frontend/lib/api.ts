@@ -218,7 +218,13 @@ export const directLinkApi = {
   }) => api.get('/direct-links/conversions/overrides', { params }),
   deleteConversionOverride: (id: string) =>
     api.delete(`/direct-links/conversions/overrides/${id}`),
-  // White-label stats token generation
+  // White-label stats link (share ID based)
+  shareStatsLink: (id: string) =>
+    api.post(`/direct-links/${id}/share-stats-link`),
+  // Regenerate the public stats URL — old link expires immediately
+  regenerateStatsLink: (id: string) =>
+    api.post(`/direct-links/${id}/regenerate-stats-link`),
+  // Legacy: returns the shareable stats URL for a publisher's active link
   generateStatsToken: (data: { publisher_id: string; domain?: string }) =>
     api.post('/direct-links/generate-stats-token', data),
   // One-time cleanup: archive duplicate/old links per publisher
@@ -227,9 +233,35 @@ export const directLinkApi = {
 }
 
 // ==================== PUBLIC STATS (NO AUTH) ====================
+// URL: /public-stats/{share_id} — the share ID is the access secret.
 export const publicStatsApi = {
-  getPublisherStats: (publisherId: string, token: string) =>
-    api.get(`/public-stats/${publisherId}`, { params: { token } }),
+  getPublisherStats: (shareId: string) =>
+    api.get(`/public-stats/${shareId}`),
+}
+
+// ==================== STATS PROFILES (DIRECT LINK STATS) ====================
+// Report configuration + admin-entered manual conversions for the public page.
+export const statsProfileApi = {
+  getProfile: (publisherId: string) =>
+    api.get(`/direct-links/stats-profiles/${publisherId}`),
+  savePreferences: (publisherId: string, preferences: object) =>
+    api.post('/direct-links/stats-profiles', { publisher_id: publisherId, preferences }),
+  createManualConversion: (data: {
+    date: string
+    publisher_id: string
+    link_id?: string | null
+    conversions: number
+    reason: string
+  }) => api.post('/direct-links/manual-conversions', data),
+  listManualConversions: (params?: {
+    publisher_id?: string
+    date_from?: string
+    date_to?: string
+  }) => api.get('/direct-links/manual-conversions', { params }),
+  updateManualConversion: (id: string, data: { conversions: number; reason: string }) =>
+    api.put(`/direct-links/manual-conversions/${id}`, data),
+  deleteManualConversion: (id: string) =>
+    api.delete(`/direct-links/manual-conversions/${id}`),
 }
 
 export const offerApi = {

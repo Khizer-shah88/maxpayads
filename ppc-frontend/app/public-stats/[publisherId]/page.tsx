@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import {
   Eye, Target, Percent, BarChart2, TrendingUp, Trophy,
-  CalendarDays, Smartphone, Download, AlertCircle, ChevronDown,
+  CalendarDays, Monitor, Smartphone, AlertCircle, ChevronDown,
 } from 'lucide-react'
 import { publicStatsApi } from '@/lib/api'
 
@@ -16,15 +16,19 @@ interface DayRow {
   unique_wins: number
   conversions: number
   cr: number
-  countries: number
-  devices: number
   windows_clicks: number
   mac_clicks: number
+  android_clicks: number
+}
+
+interface PlatformChip {
+  key: 'windows' | 'mac' | 'android'
+  label: string
+  value: number
+  color: string
 }
 
 interface StatsData {
-  publisher_name: string
-  publisher_id: string
   date_range: string
   total_impressions: number
   total_conversions: number
@@ -34,14 +38,14 @@ interface StatsData {
   peak_day_date: string
   unique_wins: number
   days_tracked: number
-  top_device: string
-  top_device_pct: number
+  windows_clicks: number
+  mac_clicks: number
+  android_clicks: number
   trend_impressions_pct: number
   trend_conversions_pct: number
   trend_avg_pct: number
   trend_wins_pct: number
   daily_breakdown: DayRow[]
-  top_countries: Array<{ country: string; code: string; pct: number }>
   preferences: Record<string, boolean>
 }
 
@@ -62,7 +66,7 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
 
 // ─── Trend badge ──────────────────────────────────────────────────────────────
 function Trend({ pct }: { pct: number }) {
-  if (pct === 0) return null
+  if (!pct) return null
   const up = pct > 0
   return (
     <span className={`text-xs font-semibold flex items-center gap-0.5 ${up ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -72,32 +76,23 @@ function Trend({ pct }: { pct: number }) {
   )
 }
 
-// ─── Country flag ─────────────────────────────────────────────────────────────
-function Flag({ code }: { code: string }) {
-  // Simple emoji flags
-  const flag = code.toUpperCase().split('').map(c =>
-    String.fromCodePoint(c.charCodeAt(0) + 127397)
-  ).join('')
-  return <span className="text-base">{flag}</span>
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function PublisherStatsPage() {
   const params = useParams()
-  const searchParams = useSearchParams()
-  const publisherId = params.publisherId as string
-  const token = searchParams.get('token')
+  const shareId = params.publisherId as string
 
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(false)
   const [chartRange, setChartRange] = useState<'7' | '14' | '30'>('7')
+  // Platform click filters — empty set = show all platforms
+  const [platformFilters, setPlatformFilters] = useState<Set<'windows' | 'mac' | 'android'>>(new Set())
 
   const loadStats = useCallback(async () => {
-    if (!publisherId || !token) { setError('Invalid access link'); setLoading(false); return }
+    if (!shareId) { setError(true); setLoading(false); return }
     setLoading(true)
     try {
-      const response = await publicStatsApi.getPublisherStats(publisherId, token)
+      const response = await publicStatsApi.getPublisherStats(shareId)
       const d = response.data.data
 
       const daily: DayRow[] = (d.daily_breakdown || []).map((r: any) => ({
@@ -106,10 +101,9 @@ export default function PublisherStatsPage() {
         unique_wins: r.unique_wins || r.windows_clicks || 0,
         conversions: r.conversions || 0,
         cr: r.cr || 0,
-        countries: r.countries || 0,
-        devices: r.devices || 0,
         windows_clicks: r.windows_clicks || 0,
         mac_clicks: r.mac_clicks || 0,
+        android_clicks: r.android_clicks || 0,
       }))
 
       const totalImp = d.total_impressions || d.total_clicks || 0
@@ -118,18 +112,16 @@ export default function PublisherStatsPage() {
       const days = daily.length || 1
 
       // Find peak day
-      const peakRow = daily.reduce((a, b) => a.clicks >= b.clicks ? a : b, daily[0] || { clicks: 0, date: '' })
+      const peakRow = daily.reduce(
+        (a: DayRow, b: DayRow) => (b.clicks >= (a?.clicks || 0) ? b : a),
+        daily[0] || { clicks: 0, date: '' } as DayRow,
+      )
 
-      // Unique wins = sum of unique_wins or windows_clicks across all days
-      const uniqueWins = daily.reduce((s, r) => s + r.unique_wins, 0)
-
-      // top_countries — use if backend returns them, else []
-      const topCountries: StatsData['top_countries'] = (d.top_countries || []).slice(0, 6)
+      // Unique wins = sum of unique wins across all days
+      const uniqueWins = daily.reduce((s: number, r: DayRow) => s + r.unique_wins, 0)
 
       setStats({
-        publisher_name: d.publisher_name || 'Publisher',
-        publisher_id: d.publisher_id || publisherId,
-        date_range: d.date_range || 'Last 30 Days',
+        date_range: d.date_range || `Last ${days} Days`,
         total_impressions: totalImp,
         total_conversions: totalConv,
         conversion_rate: cr,
@@ -138,75 +130,89 @@ export default function PublisherStatsPage() {
         peak_day_date: peakRow?.date || '',
         unique_wins: d.unique_wins || uniqueWins,
         days_tracked: days,
-        top_device: d.top_device || (d.insights?.platform_preference === 'windows' ? 'Desktop' : 'Mobile'),
-        top_device_pct: d.top_device_pct || 0,
+        windows_clicks: d.unique_windows_clicks || 0,
+        mac_clicks: d.unique_mac_clicks || 0,
+        android_clicks: d.unique_android_clicks || 0,
         trend_impressions_pct: d.trend_impressions_pct || 0,
         trend_conversions_pct: d.trend_conversions_pct || 0,
-        trend_avg_pct: d.trend_avg_pct || (d.insights?.trend_direction === 'up' ? 12.4 : d.insights?.trend_direction === 'down' ? -5.2 : 0),
-        trend_wins_pct: d.trend_wins_pct || 8.6,
+        trend_avg_pct: d.trend_avg_pct || 0,
+        trend_wins_pct: d.trend_wins_pct || 0,
         daily_breakdown: daily,
-        top_countries: topCountries,
         preferences: d.preferences || {},
       })
     } catch (err: any) {
-      if (err?.response?.status === 403) setError('Access denied. Check your link or request a new one.')
-      else if (err?.response?.status === 404) setError('Publisher not found.')
-      else setError('Unable to load statistics. Please try again later.')
+      // Any failure (invalid token, revoked, wrong publisher, 404, network)
+      // renders the same minimal expired message — never reveal why the link
+      // failed or who it belonged to.
+      console.error('Public stats error:', err?.response?.status)
+      setError(true)
     } finally {
       setLoading(false)
     }
-  }, [publisherId, token])
+  }, [shareId])
 
   useEffect(() => { loadStats() }, [loadStats])
 
-  const downloadCSV = () => {
-    if (!stats) return
-    const header = ['Date', 'Impressions', 'Unique Wins', 'Conversions', 'Conversion Rate (%)', 'Countries', 'Devices']
-    const rows = stats.daily_breakdown.map(r => [
-      r.date, r.clicks, r.unique_wins, r.conversions, r.cr.toFixed(2), r.countries, r.devices,
-    ])
-    const csv = [header, ...rows].map(r => r.join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `stats-${stats.publisher_name.replace(/\s+/g, '-')}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  // ─── Platform filter toggle ───────────────────────────────────────────────
+  const togglePlatform = (key: 'windows' | 'mac' | 'android') => {
+    setPlatformFilters(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   // ─── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
-    <div className="min-h-screen bg-[#0d0f1a] flex items-center justify-center">
+    <div className="min-h-screen bg-[#0b0d15] flex items-center justify-center">
       <div className="text-center">
-        <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-gray-400 text-sm">Loading performance dashboard…</p>
+        <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-gray-500 text-sm">Stats</p>
       </div>
     </div>
   )
 
-  // ─── Error ─────────────────────────────────────────────────────────────────
+  // ─── Expired / error screen — deliberately minimal, reveals nothing ─────────
   if (error || !stats) return (
-    <div className="min-h-screen bg-[#0d0f1a] flex items-center justify-center">
+    <div className="min-h-screen bg-[#0b0d15] flex items-center justify-center">
       <div className="text-center max-w-sm px-6">
-        <AlertCircle className="w-14 h-14 text-red-500 mx-auto mb-4" />
-        <h1 className="text-xl font-bold text-white mb-2">Access Error</h1>
-        <p className="text-gray-400 text-sm mb-6">{error}</p>
-        <div className="bg-[#1a1d2e] rounded-xl p-4 border border-red-900/40 text-left">
-          <p className="text-xs text-gray-400 font-semibold mb-2 uppercase">Troubleshooting</p>
-          <ul className="text-xs text-gray-500 space-y-1">
-            <li>• Verify the complete URL was copied correctly</li>
-            <li>• Check if the link has expired</li>
-            <li>• Contact support for a new access link</li>
-          </ul>
-        </div>
+        <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+        <h1 className="text-lg font-medium text-gray-300 mb-2">Stats</h1>
+        <p className="text-sm text-gray-500">This statistics link has expired.</p>
       </div>
     </div>
   )
 
   const prefs = stats.preferences
+
+  // ─── Platform filter helpers ──────────────────────────────────────────────
+  const platformChips: PlatformChip[] = [
+    { key: 'windows', label: 'Windows', value: stats.windows_clicks, color: 'text-sky-300' },
+    { key: 'mac', label: 'Mac', value: stats.mac_clicks, color: 'text-violet-300' },
+    { key: 'android', label: 'Android', value: stats.android_clicks, color: 'text-emerald-300' },
+  ]
+  const hasAnyPlatformData = platformChips.some(c => c.value > 0)
+  const showFilters = prefs.show_os !== false && hasAnyPlatformData
+  const filterActive = platformFilters.size > 0
+
+  // Filter daily rows by the selected platforms. With no selection every
+  // platform is included, so the headline numbers are untouched.
+  // (Plain computation — not a hook — so early returns above stay safe.)
+  const filteredRows = filterActive
+    ? stats.daily_breakdown.filter(row =>
+        (platformFilters.has('windows') && row.windows_clicks > 0) ||
+        (platformFilters.has('mac') && row.mac_clicks > 0) ||
+        (platformFilters.has('android') && row.android_clicks > 0),
+      )
+    : stats.daily_breakdown
+
+  const filteredClicks = filteredRows.reduce((s, r) => s + r.clicks, 0)
+  const filteredConversions = filteredRows.reduce((s, r) => s + r.conversions, 0)
+  const filteredCr = filteredClicks > 0 ? (filteredConversions / filteredClicks) * 100 : 0
+
   const chartDays = parseInt(chartRange)
-  const chartData = stats.daily_breakdown.slice(-chartDays)
+  const chartData = filteredRows.slice(-chartDays)
 
   const fmtDate = (d: string) => {
     try {
@@ -239,7 +245,7 @@ export default function PublisherStatsPage() {
   const impPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yImp(r.clicks)}`).join(' ')
   const convPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yConv(r.conversions)}`).join(' ')
 
-  // Y-axis labels (impressions side)
+  // Y-axis labels
   const impTicks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(maxImp * t))
   const convTicks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(maxConv * t))
 
@@ -247,76 +253,108 @@ export default function PublisherStatsPage() {
   const peakIdx = chartData.findIndex(r => r.date === stats.peak_day_date)
 
   return (
-    <div className="min-h-screen bg-[#0d0f1a] text-white font-sans">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="bg-[#13162b] border-b border-white/5 px-6 py-5">
+    <div className="min-h-screen bg-[#0b0d15] text-white font-sans">
+      {/* ── Header — title only, fully white-labeled ─────────────────────── */}
+      <div className="bg-[#10131f] border-b border-white/5 px-6 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-widest mb-0.5">Performance Dashboard</p>
-            <h1 className="text-lg font-bold text-white">{stats.publisher_name}</h1>
-          </div>
+          <h1 className="text-lg font-semibold text-white">Stats</h1>
           <div className="text-xs text-gray-500">{stats.date_range}</div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
+        {/* ── Platform click filters ───────────────────────────────────── */}
+        {showFilters && (
+          <div className="bg-[#10131f] rounded-2xl p-4 border border-white/5 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide mr-1">Platform</span>
+            {platformChips.map(chip => {
+              const active = platformFilters.has(chip.key)
+              return (
+                <button
+                  key={chip.key}
+                  onClick={() => togglePlatform(chip.key)}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                    active
+                      ? 'bg-indigo-500/20 border-indigo-400/50 text-indigo-200'
+                      : 'bg-white/[0.03] border-white/10 text-gray-400 hover:border-white/25 hover:text-gray-300'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-indigo-400' : 'bg-gray-600'}`} />
+                  {chip.label}
+                  <span className={`font-mono ${chip.color}`}>{chip.value.toLocaleString()}</span>
+                </button>
+              )
+            })}
+            {filterActive && (
+              <button
+                onClick={() => setPlatformFilters(new Set())}
+                className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+
         {/* ── Row 1: top 4 metric cards ─────────────────────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
           {/* Total Impressions */}
           {prefs.show_impressions !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-cyan-400 mb-2">
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+              <div className="flex items-center gap-2 text-indigo-300 mb-2">
                 <Eye size={15} />
                 <span className="text-xs font-semibold uppercase tracking-wide">Total Impressions</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.total_impressions.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">Lifetime</p>
-              <Sparkline data={chartData.map(r => r.clicks)} color="#22d3ee" />
+              <p className="text-3xl font-bold text-white">
+                {(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <Sparkline data={chartData.map(r => r.clicks)} color="#818cf8" />
             </div>
           )}
 
           {/* Total Conversions */}
           {prefs.show_conversions !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-purple-400 mb-2">
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+              <div className="flex items-center gap-2 text-purple-300 mb-2">
                 <Target size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Total Conversions</span>
+                <span className="text-xs font-semibold uppercase tracking-wide">Conversions</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.total_conversions.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">Lifetime</p>
-              <Sparkline data={chartData.map(r => r.conversions)} color="#a855f7" />
+              <p className="text-3xl font-bold text-white">
+                {(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <Sparkline data={chartData.map(r => r.conversions)} color="#a78bfa" />
             </div>
           )}
 
           {/* Conversion Rate */}
           {prefs.show_cr !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
               <div className="flex items-center gap-2 text-emerald-400 mb-2">
                 <Percent size={15} />
                 <span className="text-xs font-semibold uppercase tracking-wide">Conversion Rate</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.conversion_rate.toFixed(2)}%</p>
-              <p className="text-xs text-gray-500 mt-0.5">vs previous 7 days</p>
-              <div className="mt-2">
-                <Trend pct={stats.trend_conversions_pct} />
-              </div>
+              <p className="text-3xl font-bold text-white">
+                {(filterActive ? filteredCr : stats.conversion_rate).toFixed(2)}%
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <div className="mt-2"><Trend pct={stats.trend_conversions_pct} /></div>
             </div>
           )}
 
           {/* Avg Daily Impressions */}
           {prefs.show_impressions !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-blue-400 mb-2">
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+              <div className="flex items-center gap-2 text-sky-400 mb-2">
                 <BarChart2 size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Average Daily Impressions</span>
+                <span className="text-xs font-semibold uppercase tracking-wide">Avg Daily</span>
               </div>
               <p className="text-3xl font-bold text-white">{stats.avg_daily_impressions.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">vs previous 7 days</p>
-              <div className="mt-2">
-                <Trend pct={stats.trend_avg_pct} />
-              </div>
+              <p className="text-xs text-gray-500 mt-0.5">per day</p>
+              <div className="mt-2"><Trend pct={stats.trend_avg_pct} /></div>
             </div>
           )}
         </div>
@@ -325,7 +363,7 @@ export default function PublisherStatsPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
           {/* Peak Day */}
-          <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
+          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
             <div className="flex items-center gap-2 text-emerald-400 mb-2">
               <TrendingUp size={15} />
               <span className="text-xs font-semibold uppercase tracking-wide">Peak Day</span>
@@ -336,223 +374,144 @@ export default function PublisherStatsPage() {
 
           {/* Unique Wins */}
           {prefs.show_valid_clicks !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
               <div className="flex items-center gap-2 text-amber-400 mb-2">
                 <Trophy size={15} />
                 <span className="text-xs font-semibold uppercase tracking-wide">Unique Wins</span>
               </div>
               <p className="text-3xl font-bold text-white">{stats.unique_wins.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">vs previous 7 days</p>
+              <p className="text-xs text-gray-500 mt-0.5">validated clicks</p>
               <div className="mt-2"><Trend pct={stats.trend_wins_pct} /></div>
             </div>
           )}
 
           {/* Days Tracked */}
-          <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-            <div className="flex items-center gap-2 text-cyan-400 mb-2">
+          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+            <div className="flex items-center gap-2 text-indigo-300 mb-2">
               <CalendarDays size={15} />
               <span className="text-xs font-semibold uppercase tracking-wide">Days Tracked</span>
             </div>
             <p className="text-3xl font-bold text-white">{stats.days_tracked}</p>
-            <p className="text-xs text-emerald-400 mt-0.5">100% Data coverage</p>
+            <p className="text-xs text-gray-500 mt-0.5">in this period</p>
           </div>
 
-          {/* Top Device */}
+          {/* Platforms */}
           {prefs.show_device !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-purple-400 mb-2">
-                <Smartphone size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Top Device</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+              <div className="flex items-center gap-2 text-purple-300 mb-2">
+                <Monitor size={15} />
+                <span className="text-xs font-semibold uppercase tracking-wide">Platforms</span>
               </div>
-              <p className="text-2xl font-bold text-white">{stats.top_device}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{stats.top_device_pct > 0 ? `${stats.top_device_pct}% of total conversions` : '62% of total conversions'}</p>
-              <div className="mt-3 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-500"
-                  style={{ width: `${Math.max(stats.top_device_pct || 62, 10)}%` }}
-                />
+              <div className="mt-1 space-y-2">
+                {platformChips.map(c => (
+                  <div key={c.key} className="flex items-center justify-between text-xs">
+                    <span className="text-gray-400 flex items-center gap-1.5">
+                      {c.key === 'windows' ? <Monitor size={11} /> : <Smartphone size={11} />}
+                      {c.label}
+                    </span>
+                    <span className={`font-mono font-semibold ${c.color}`}>{c.value.toLocaleString()}</span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </div>
 
-        {/* ── Row 3: Chart + Countries ───────────────────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-          {/* Chart */}
-          <div className="lg:col-span-2 bg-[#13162b] rounded-2xl p-5 border border-white/5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm font-semibold text-white">Impressions &amp; Conversions Over Time</p>
-              </div>
-              {/* Range selector */}
-              <div className="relative">
-                <select
-                  value={chartRange}
-                  onChange={e => setChartRange(e.target.value as any)}
-                  className="appearance-none bg-[#1e2235] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none"
-                >
-                  <option value="7">Last 7 days</option>
-                  <option value="14">Last 14 days</option>
-                  <option value="30">Last 30 days</option>
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
+        {/* ── Chart ───────────────────────────────────────────────────────── */}
+        <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm font-semibold text-white">Impressions &amp; Conversions Over Time</p>
+            <div className="relative">
+              <select
+                value={chartRange}
+                onChange={e => setChartRange(e.target.value as any)}
+                className="appearance-none bg-[#181c2c] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none"
+              >
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+              </select>
+              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
-
-            {chartData.length === 0 ? (
-              <div className="flex items-center justify-center h-40 text-gray-600 text-sm">No data available</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full" style={{ minWidth: '320px' }}>
-                  {/* Grid lines */}
-                  {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
-                    <g key={i}>
-                      <line
-                        x1={padL} y1={padT + plotH - t * plotH}
-                        x2={padL + plotW} y2={padT + plotH - t * plotH}
-                        stroke="#ffffff08" strokeWidth="1"
-                      />
-                      {/* Left axis (impressions) */}
-                      <text x={padL - 6} y={padT + plotH - t * plotH + 4} textAnchor="end" fontSize="9" fill="#6b7280">
-                        {impTicks[i] >= 1000 ? `${(impTicks[i] / 1000).toFixed(0)}K` : impTicks[i]}
-                      </text>
-                      {/* Right axis (conversions) */}
-                      <text x={padL + plotW + 6} y={padT + plotH - t * plotH + 4} textAnchor="start" fontSize="9" fill="#6b7280">
-                        {convTicks[i]}
-                      </text>
-                    </g>
-                  ))}
-
-                  {/* Peak highlight */}
-                  {peakIdx >= 0 && (
-                    <line
-                      x1={xOf(peakIdx)} y1={padT}
-                      x2={xOf(peakIdx)} y2={padT + plotH}
-                      stroke="#22d3ee20" strokeWidth="2"
-                    />
-                  )}
-
-                  {/* Impressions line (cyan) */}
-                  <path d={impPath} fill="none" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  {chartData.map((r, i) => (
-                    <circle key={`imp-${i}`} cx={xOf(i)} cy={yImp(r.clicks)} r="3" fill="#22d3ee" opacity="0.8" />
-                  ))}
-
-                  {/* Conversions line (purple) */}
-                  <path d={convPath} fill="none" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  {chartData.map((r, i) => (
-                    <circle key={`conv-${i}`} cx={xOf(i)} cy={yConv(r.conversions)} r="3" fill="#a855f7" opacity="0.8" />
-                  ))}
-
-                  {/* X-axis labels */}
-                  {chartData.map((r, i) => {
-                    if (chartData.length > 10 && i % 2 !== 0) return null
-                    return (
-                      <text key={`x-${i}`} x={xOf(i)} y={chartH - 6} textAnchor="middle" fontSize="9" fill="#6b7280">
-                        {fmtShort(r.date)}
-                      </text>
-                    )
-                  })}
-                </svg>
-
-                {/* Legend */}
-                <div className="flex items-center gap-5 mt-2 px-1">
-                  <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <span className="w-3 h-0.5 bg-cyan-400 inline-block rounded" /> Impressions
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <span className="w-3 h-0.5 bg-purple-400 inline-block rounded" /> Conversions
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Top Countries */}
-          {prefs.show_country !== false && (
-            <div className="bg-[#13162b] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-sm font-semibold text-white">Top Countries</p>
-                <div className="relative">
-                  <select
-                    className="appearance-none bg-[#1e2235] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 focus:outline-none"
-                    defaultValue="7"
-                  >
-                    <option value="7">Last 7 days</option>
-                    <option value="30">Last 30 days</option>
-                  </select>
-                  <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
+          {chartData.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-gray-600 text-sm">
+              {filterActive ? 'No data for the selected platforms' : 'No data available'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full" style={{ minWidth: '320px' }}>
+                {/* Grid lines */}
+                {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
+                  <g key={i}>
+                    <line
+                      x1={padL} y1={padT + plotH - t * plotH}
+                      x2={padL + plotW} y2={padT + plotH - t * plotH}
+                      stroke="#ffffff08" strokeWidth="1"
+                    />
+                    <text x={padL - 6} y={padT + plotH - t * plotH + 4} textAnchor="end" fontSize="9" fill="#6b7280">
+                      {impTicks[i] >= 1000 ? `${(impTicks[i] / 1000).toFixed(0)}K` : impTicks[i]}
+                    </text>
+                    <text x={padL + plotW + 6} y={padT + plotH - t * plotH + 4} textAnchor="start" fontSize="9" fill="#6b7280">
+                      {convTicks[i]}
+                    </text>
+                  </g>
+                ))}
 
-              {stats.top_countries.length > 0 ? (
-                <div className="space-y-3">
-                  {stats.top_countries.map((c, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div className="w-6 text-center">
-                        <Flag code={c.code || 'US'} />
-                      </div>
-                      <span className="text-sm text-gray-200 flex-1 truncate">{c.country}</span>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500"
-                            style={{ width: `${c.pct}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-400 w-8 text-right">{c.pct}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {[
-                    { country: 'United States', code: 'US', pct: 28 },
-                    { country: 'India', code: 'IN', pct: 17 },
-                    { country: 'France', code: 'FR', pct: 12 },
-                    { country: 'Brazil', code: 'BR', pct: 9 },
-                    { country: 'Spain', code: 'ES', pct: 7 },
-                    { country: 'Others', code: '', pct: 27 },
-                  ].map((c, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <div className="w-6 text-center">
-                        {c.code ? <Flag code={c.code} /> : <span className="text-base text-gray-600">•</span>}
-                      </div>
-                      <span className="text-sm text-gray-200 flex-1 truncate">{c.country}</span>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${c.code ? 'bg-gradient-to-r from-cyan-500 to-emerald-500' : 'bg-gray-600'}`}
-                            style={{ width: `${c.pct}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-400 w-8 text-right">{c.pct}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {/* Peak highlight */}
+                {peakIdx >= 0 && (
+                  <line
+                    x1={xOf(peakIdx)} y1={padT}
+                    x2={xOf(peakIdx)} y2={padT + plotH}
+                    stroke="#818cf820" strokeWidth="2"
+                  />
+                )}
+
+                {/* Impressions line */}
+                <path d={impPath} fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {chartData.map((r, i) => (
+                  <circle key={`imp-${i}`} cx={xOf(i)} cy={yImp(r.clicks)} r="3" fill="#818cf8" opacity="0.8" />
+                ))}
+
+                {/* Conversions line */}
+                <path d={convPath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {chartData.map((r, i) => (
+                  <circle key={`conv-${i}`} cx={xOf(i)} cy={yConv(r.conversions)} r="3" fill="#a78bfa" opacity="0.8" />
+                ))}
+
+                {/* X-axis labels */}
+                {chartData.map((r, i) => {
+                  if (chartData.length > 10 && i % 2 !== 0) return null
+                  return (
+                    <text key={`x-${i}`} x={xOf(i)} y={chartH - 6} textAnchor="middle" fontSize="9" fill="#6b7280">
+                      {fmtShort(r.date)}
+                    </text>
+                  )
+                })}
+              </svg>
+
+              {/* Legend */}
+              <div className="flex items-center gap-5 mt-2 px-1">
+                <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span className="w-3 h-0.5 bg-indigo-400 inline-block rounded" /> Impressions
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <span className="w-3 h-0.5 bg-purple-400 inline-block rounded" /> Conversions
+                </span>
+              </div>
             </div>
           )}
         </div>
 
         {/* ── Daily Breakdown Table ─────────────────────────────────────── */}
-        {prefs.show_daily_breakdown !== false && stats.daily_breakdown.length > 0 && (
-          <div className="bg-[#13162b] rounded-2xl border border-white/5 overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-              <div>
-                <p className="text-sm font-semibold text-white">Daily Breakdown</p>
-                <p className="text-xs text-gray-500 mt-0.5">Impressions and conversions per day</p>
-              </div>
-              <button
-                onClick={downloadCSV}
-                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors border border-white/10 rounded-lg px-3 py-1.5"
-              >
-                <Download size={13} />
-                Download CSV
-              </button>
+        {prefs.show_daily_breakdown !== false && filteredRows.length > 0 && (
+          <div className="bg-[#10131f] rounded-2xl border border-white/5 overflow-hidden">
+            <div className="px-5 py-4 border-b border-white/5">
+              <p className="text-sm font-semibold text-white">Daily Breakdown</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {filterActive ? 'Filtered by selected platforms' : 'Impressions and conversions per day'}
+              </p>
             </div>
 
             <div className="overflow-x-auto">
@@ -561,27 +520,28 @@ export default function PublisherStatsPage() {
                   <tr className="border-b border-white/5">
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
                     {prefs.show_impressions !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-cyan-500 uppercase tracking-wide">Impressions</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-indigo-300 uppercase tracking-wide">Impressions</th>
                     )}
                     {prefs.show_valid_clicks !== false && (
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Unique Wins</th>
                     )}
                     {prefs.show_conversions !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-purple-400 uppercase tracking-wide">Conversions</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-purple-300 uppercase tracking-wide">Conversions</th>
                     )}
                     {prefs.show_cr !== false && (
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Conv. Rate</th>
                     )}
-                    {prefs.show_country !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Countries</th>
-                    )}
-                    {prefs.show_device !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Devices</th>
+                    {showFilters && (
+                      <>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-sky-400/80 uppercase tracking-wide">Windows</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-violet-400/80 uppercase tracking-wide">Mac</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-emerald-400/80 uppercase tracking-wide">Android</th>
+                      </>
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.daily_breakdown.slice(0, 30).map(row => {
+                  {filteredRows.slice(0, 30).map(row => {
                     const isPeak = row.date === stats.peak_day_date
                     return (
                       <tr key={row.date} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
@@ -590,22 +550,23 @@ export default function PublisherStatsPage() {
                           {fmtDate(row.date)}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className="px-4 py-3 font-mono font-semibold text-cyan-400">{row.clicks.toLocaleString()}</td>
+                          <td className="px-4 py-3 font-mono font-semibold text-indigo-300">{row.clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_valid_clicks !== false && (
                           <td className="px-4 py-3 font-mono text-gray-300">{row.unique_wins.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className="px-4 py-3 font-mono font-semibold text-purple-400">{row.conversions.toLocaleString()}</td>
+                          <td className="px-4 py-3 font-mono font-semibold text-purple-300">{row.conversions.toLocaleString()}</td>
                         )}
                         {prefs.show_cr !== false && (
                           <td className="px-4 py-3 text-gray-300 font-mono">{row.cr.toFixed(2)}%</td>
                         )}
-                        {prefs.show_country !== false && (
-                          <td className="px-4 py-3 text-gray-400 font-mono">{row.countries || '—'}</td>
-                        )}
-                        {prefs.show_device !== false && (
-                          <td className="px-4 py-3 text-gray-400 font-mono">{row.devices || '—'}</td>
+                        {showFilters && (
+                          <>
+                            <td className="px-4 py-3 text-gray-400 font-mono">{row.windows_clicks.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-gray-400 font-mono">{row.mac_clicks.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-gray-400 font-mono">{row.android_clicks.toLocaleString()}</td>
+                          </>
                         )}
                       </tr>
                     )
@@ -616,13 +577,9 @@ export default function PublisherStatsPage() {
           </div>
         )}
 
-        {/* Footer */}
+        {/* Footer — neutral, no identifying info */}
         <div className="text-center py-6 border-t border-white/5">
-          <div className="flex items-center justify-center gap-6 text-xs text-gray-600">
-            <span>Updated: {new Date().toLocaleDateString()}</span>
-            <span>•</span>
-            <span>Data refreshed every 24 hours</span>
-            <span>•</span>
+          <div className="flex items-center justify-center gap-4 text-xs text-gray-600">
             <span>All times in UTC</span>
           </div>
         </div>

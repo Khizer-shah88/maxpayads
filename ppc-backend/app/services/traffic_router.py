@@ -71,6 +71,20 @@ def _clean_campaign_url(url: str) -> str:
     return url
 
 
+def slug_os_param(os_name: Optional[str]) -> str:
+    """
+    The OS value embedded in the encrypted prelander slug.
+
+    Resolved through the shared glossary normalizer so variant spellings
+    ("OS X", "iPhone", "Darwin", …) map consistently with targeting and the
+    prelander lookup. The slug OS stays in {windows, mac} because those are
+    the only two layouts the /d/[slug] page renders — everything else, and
+    any unrecognised value, falls to the windows layout.
+    """
+    from app.core.glossary import normalize_os
+    return "mac" if normalize_os(os_name, default="windows") == "mac" else "windows"
+
+
 def select_weighted_landing_page(landing_pages: list) -> Optional[dict]:
     """
     Pick one landing page using weighted random rotation, keyed on each page's
@@ -310,7 +324,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     
     logger.info("[ROUTE] BYPASS OFF: Building prelander destination")
     
-    os_param = "mac" if (os_name or "").lower() in ("mac os", "mac os x", "macos", "ios") else "windows"
+    os_param = slug_os_param(os_name)
 
     campaign_filter = campaign_id_filter(campaign_id)
     landing_pages = await db.landing_pages.find({

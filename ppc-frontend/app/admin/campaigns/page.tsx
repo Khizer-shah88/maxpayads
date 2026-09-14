@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Save, Trash2, Eye, EyeOff, CheckCircle, Monitor, Smartphone, Apple, Loader2, List, X, Globe, Lock, MapPin, Search, ChevronDown } from 'lucide-react'
+import { Save, Trash2, CheckCircle, Monitor, Smartphone, Apple, Loader2, List, X, Globe, Lock, MapPin, Search, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { Spinner } from '@/components/ui/loading'
 import { campaignApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -173,10 +174,9 @@ export default function CampaignsPage() {
   const [savingDevice, setSavingDevice] = useState<string | null>(null)
   const [deletingDevice, setDeletingDevice] = useState<string | null>(null)
   const [savedDevices, setSavedDevices] = useState<Set<string>>(new Set())
-  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
-  const [showCountryPasswords, setShowCountryPasswords] = useState<Record<string, boolean>>({})
   const [showCountryUrls, setShowCountryUrls] = useState<Record<string, boolean>>({})
   const [showCampaignsModal, setShowCampaignsModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   useEffect(() => { initialize() }, [])
 
@@ -296,7 +296,6 @@ export default function CampaignsPage() {
   }
 
   const handleDelete = async (device: string) => {
-    if (!confirm(`Delete the ${DEVICES.find(d => d.key === device)?.label || device} campaign?`)) return
     setDeletingDevice(device)
     try {
       await campaignApi.deleteDeviceCampaign(device)
@@ -372,7 +371,7 @@ export default function CampaignsPage() {
                       </div>
                     </div>
                     {isSaved && (
-                      <button onClick={() => handleDelete(key)} disabled={isDeleting}
+                      <button onClick={() => setDeleteTarget(key)} disabled={isDeleting}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50">
                         {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                         Delete
@@ -403,22 +402,13 @@ export default function CampaignsPage() {
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password <span className="text-gray-400 font-normal">(optional)</span></label>
-                        <div className="relative">
-                          <input
-                            type={showPasswords[key] ? 'text' : 'password'}
-                            value={form.password}
-                            onChange={e => updateForm(key, 'password', e.target.value)}
-                            placeholder="Campaign password"
-                            className={`${inputClass} pr-10`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPasswords(p => ({ ...p, [key]: !p[key] }))}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                          >
-                            {showPasswords[key] ? <EyeOff size={16} /> : <Eye size={16} />}
-                          </button>
-                        </div>
+                        <input
+                          type="text"
+                          value={form.password}
+                          onChange={e => updateForm(key, 'password', e.target.value)}
+                          placeholder="Campaign password"
+                          className={inputClass}
+                        />
                       </div>
                     </div>
 
@@ -503,22 +493,13 @@ export default function CampaignsPage() {
                                     </div>
                                     <div>
                                       <label className="block text-[11px] font-medium text-gray-500 mb-1">Password</label>
-                                      <div className="relative">
-                                        <input
-                                          type={showCountryPasswords[cpKey] ? 'text' : 'password'}
-                                          value={rule.password}
-                                          onChange={e => updateCountryRule(key, rule.code, 'password', e.target.value)}
-                                          placeholder="Optional"
-                                          className="w-full px-3 py-2 pr-9 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => setShowCountryPasswords(p => ({ ...p, [cpKey]: !p[cpKey] }))}
-                                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                                        >
-                                          {showCountryPasswords[cpKey] ? <EyeOff size={14} /> : <Eye size={14} />}
-                                        </button>
-                                      </div>
+                                      <input
+                                        type="text"
+                                        value={rule.password}
+                                        onChange={e => updateCountryRule(key, rule.code, 'password', e.target.value)}
+                                        placeholder="Optional"
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                      />
                                     </div>
                                   </div>
                                 </div>
@@ -553,6 +534,22 @@ export default function CampaignsPage() {
             })}
           </div>
         )}
+
+        {/* ── Delete Campaign Confirmation ─────────────────────────────────── */}
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Campaign"
+          message={
+            <>
+              Delete the <strong className="text-gray-900">{DEVICES.find(d => d.key === deleteTarget)?.label || deleteTarget}</strong> campaign?
+              Traffic for this device will fall back to the Global campaign. This cannot be undone.
+            </>
+          }
+          confirmLabel="Delete Campaign"
+          loading={deletingDevice !== null}
+          onConfirm={() => { const t = deleteTarget; setDeleteTarget(null); if (t) handleDelete(t) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
 
         {/* ==================== SAVED CAMPAIGNS MODAL ==================== */}
         {showCampaignsModal && (

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { CheckCircle, XCircle, CreditCard, Trash2, Paperclip, ExternalLink, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
@@ -33,6 +34,12 @@ export default function AdminWithdrawalsPage() {
   const [editProofFile, setEditProofFile] = useState<File | null>(null)
   const editFileRef = useRef<HTMLInputElement>(null)
 
+  // Styled confirmations (replace native confirm())
+  const [approveTarget, setApproveTarget] = useState<Withdrawal | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Withdrawal | null>(null)
+  const [approving, setApproving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   useEffect(() => { initialize() }, [])
 
   const load = useCallback(async () => {
@@ -48,12 +55,14 @@ export default function AdminWithdrawalsPage() {
   useEffect(() => { load() }, [load])
 
   const handleApprove = async (w: Withdrawal) => {
-    if (!confirm(`Approve $${w.amount.toFixed(2)} for ${w.publisher_name}?`)) return
+    setApproving(true)
     try {
       await withdrawalApi.processWithdrawal(w.id, { action: 'approve' })
       toast.success('Withdrawal approved')
+      setApproveTarget(null)
       load()
     } catch { toast.error('Failed to approve') }
+    finally { setApproving(false) }
   }
 
   const handleReject = async () => {
@@ -89,12 +98,14 @@ export default function AdminWithdrawalsPage() {
   }
 
   const handleDelete = async (w: Withdrawal) => {
-    if (!confirm(`Delete this withdrawal request from ${w.publisher_name}? This cannot be undone.`)) return
+    setDeleting(true)
     try {
       await withdrawalApi.deleteWithdrawal(w.id)
       toast.success('Withdrawal deleted')
+      setDeleteTarget(null)
       load()
     } catch { toast.error('Failed to delete') }
+    finally { setDeleting(false) }
   }
 
   const openEditModal = (w: Withdrawal) => {
@@ -140,7 +151,7 @@ export default function AdminWithdrawalsPage() {
       render: (w: Withdrawal) => (
         <div className="flex items-center gap-1">
           {w.status === 'pending' && (<>
-            <button onClick={() => handleApprove(w)} title="Approve"
+            <button onClick={() => setApproveTarget(w)} title="Approve"
               className="p-1.5 rounded text-green-600 hover:bg-green-50 transition-colors">
               <CheckCircle size={15} />
             </button>
@@ -159,7 +170,7 @@ export default function AdminWithdrawalsPage() {
             className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors">
             <Pencil size={15} />
           </button>
-          <button onClick={() => handleDelete(w)} title="Delete"
+          <button onClick={() => setDeleteTarget(w)} title="Delete"
             className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
             <Trash2 size={15} />
           </button>
@@ -321,6 +332,27 @@ export default function AdminWithdrawalsPage() {
             </div>
           </div>
         )}
+
+        {/* ── Styled approve / delete confirmations ───────────────────────── */}
+        <ConfirmDialog
+          open={approveTarget !== null}
+          title="Approve Withdrawal"
+          tone="info"
+          message={<>Approve <strong className="text-gray-900 font-mono">${approveTarget?.amount.toFixed(2)}</strong> for <strong className="text-gray-900">{approveTarget?.publisher_name}</strong>?</>}
+          confirmLabel="Approve"
+          loading={approving}
+          onConfirm={() => { if (approveTarget) handleApprove(approveTarget) }}
+          onCancel={() => setApproveTarget(null)}
+        />
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          title="Delete Withdrawal Request"
+          message={<>Delete this withdrawal request from <strong className="text-gray-900">{deleteTarget?.publisher_name}</strong>? This cannot be undone.</>}
+          confirmLabel="Delete"
+          loading={deleting}
+          onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget) }}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     </div>
   )
