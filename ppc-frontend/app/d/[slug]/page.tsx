@@ -101,10 +101,13 @@ export default function PrelanderSlugPage() {
     document.title = 'Download Ready'
   }, [])
 
-  // Shown when the visitor is being switched from an Anchor/Inter domain to the
-  // Prelander domain. A clean, branded loader keeps the intermediate hop from
-  // looking like a dead end or a broken redirect.
-  if (transitioning) {
+  // Shown during initial data fetch OR when transitioning between domains
+  // Unified loader design - clean, professional, consistent
+  if (loading || transitioning) {
+    const message = transitioning 
+      ? { title: "Redirecting", subtitle: "Preparing your secure connection..." }
+      : { title: "Loading", subtitle: "Please wait..." }
+    
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
         <div className="flex flex-col items-center gap-8">
@@ -122,8 +125,8 @@ export default function PrelanderSlugPage() {
           
           {/* Loading text */}
           <div className="text-center space-y-2">
-            <h2 className="text-slate-800 text-xl font-semibold tracking-tight">Loading</h2>
-            <p className="text-slate-500 text-sm">Preparing your secure connection...</p>
+            <h2 className="text-slate-800 text-xl font-semibold tracking-tight">{message.title}</h2>
+            <p className="text-slate-500 text-sm">{message.subtitle}</p>
           </div>
           
           {/* Subtle loading dots animation */}
@@ -133,14 +136,6 @@ export default function PrelanderSlugPage() {
             <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
           </div>
         </div>
-      </div>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
-        <div className="w-8 h-8 border-[3px] border-gray-200 border-t-gray-600 rounded-full animate-spin" />
       </div>
     )
   }

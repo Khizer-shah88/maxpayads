@@ -435,7 +435,10 @@ async def _get_prelander_data(
                 password = campaign.get("password")
 
     if not offer_url:
-        offer_url = "https://example.com"
+        # No campaign found - return a fallback URL with clear message
+        # This should rarely happen in production (requires NO active campaigns)
+        logger.warning("[PRELANDER] No active campaign found, using fallback")
+        offer_url = "https://example.com/campaign-not-configured"
 
     # Spec (Bypass OFF): the visitor ALWAYS lands on the landing page — even
     # when no active template exists. The page falls back to the built-in
