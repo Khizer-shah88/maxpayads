@@ -38,11 +38,10 @@ interface PrlanderTemplate {
   used_by?: { id: string; name: string; lander_url: string; status: string }[]
 }
 
-// Spec: the template form collects ONLY Template Name, Internal Notes and
-// Status. On EDIT the full HTML code-template editor is also shown (restored
-// per user request) so admins can paste/adjust custom HTML for an existing
-// template. Every other template field keeps its backend default; on edit
-// those fields are never sent, so unrelated fields stay intact.
+// Spec: the template form collects Template Name, Internal Notes and Status,
+// plus the full HTML code-template editor (available on both create and edit).
+// Every other template field keeps its backend default; on edit those fields
+// are never sent, so unrelated fields stay intact.
 const EMPTY_FORM = {
   name: '',
   status: 'active' as 'active' | 'paused' | 'archived',
@@ -119,17 +118,14 @@ export default function PrlanderTemplatesPage() {
     if (!form.name.trim()) { toast.error('Name is required'); return }
     setSaving(true)
     try {
-      // Name/Status/Notes are always sent. full_html_template rides along on
-      // edit only (the editor is an edit-mode feature — create uses the
-      // built-in default layout). The backend's exclude_unset keeps every
-      // other field untouched.
+      // Name/Status/Notes are always sent, plus full_html_template (the editor
+      // shows on both create and edit). The backend's exclude_unset keeps
+      // every other field untouched on update.
       const payload: Record<string, unknown> = {
         name: form.name.trim(),
         status: form.status,
         notes: form.notes.trim() || null,
-      }
-      if (modal === 'edit' && selected) {
-        payload.full_html_template = form.full_html_template.trim() || null
+        full_html_template: form.full_html_template.trim() || null,
       }
       let res: any
       if (modal === 'edit' && selected) {
@@ -370,8 +366,8 @@ export default function PrlanderTemplatesPage() {
                     rows={2} placeholder="Optional admin notes" className={inp} />
                 </div>
 
-                {/* Full Source Code Editor — edit mode only */}
-                {modal === 'edit' && (
+                {/* Full Source Code Editor — create + edit */}
+                {(
                   <div className="border border-gray-200 rounded-xl p-4 space-y-4">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-semibold text-gray-700">Full Source Code Template</p>
