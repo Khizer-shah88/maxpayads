@@ -110,25 +110,36 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
     """
     Resolve the admin-configured Redirection Chain for a click.
 
-    GLOBAL RULE: every configured chain applies to ALL publishers — publisher
-    identity never determines chain ownership, and no chain is ever created
-    per publisher. Resolution is host-based: when the request came in on a
-    chain's Anchor domain, that chain wins. Otherwise the first active chain
-    is used so the admin-built flow always drives traffic.
+    DOMAIN-SPECIFIC RULE: Chains are strictly tied to their anchor domain.
+    A chain ONLY applies when traffic enters through its specified anchor domain.
+    This allows admins to configure custom routing for specific domains without
+    affecting default routing for other domains.
 
-    Returns the chain document or None when none are configured.
+    Resolution:
+    - If request_host matches a chain's anchor_domain → return that chain
+    - If no match → return None (use default domain routing instead)
+
+    Returns the chain document or None when no chain matches the request host.
     """
     try:
-        query: dict = {"status": "active"}
-        if request_host:
-            chain = await db.redirect_chains.find_one({
-                "anchor_domain": request_host,
-                **query,
-            })
-            if chain:
-                return chain
-        # Any active chain applies to every publisher — take the first.
-        return await db.redirect_chains.find_one(query)
+        if not request_host:
+            # No host specified - cannot match a chain
+            return None
+        
+        # Find chain that matches this specific anchor domain
+        chain = await db.redirect_chains.find_one({
+            "anchor_domain": request_host,
+            "status": "active",
+        })
+        
+        if chain:
+            logger.info(f"[CHAIN] Matched chain '{chain.get('name')}' for anchor domain: {request_host}")
+            return chain
+        
+        # No chain for this domain - will use default domain routing
+        logger.debug(f"[CHAIN] No chain configured for domain: {request_host}")
+        return None
+        
     except Exception as e:
         logger.warning("[CHAIN] Resolution failed: %s", e)
         return None
@@ -359,8 +370,10 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     # Going direct to the Campaign URL happens ONLY when no Inter domain is
     # configured at all.
 
-    # Admin-built Redirection Chain takes priority: it defines the Inter hop
-    # (and any extra hops) and applies to ALL publishers — global rule.
+    # Admin-built Redirection Chain (domain-specific override):
+    # When traffic enters through a domain that has a configured chain, use that
+    # chain's routing. Otherwise use default domain resolution. Chains are strictly
+    # tied to their anchor domain and override default routing only for that domain.
     chain = await resolve_active_chain(
         db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
     )
