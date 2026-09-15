@@ -391,15 +391,19 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             _record(ctx, STAGE_PRELANDER, "skipped_no_lander_url", url=resolved_offer_url)
             return resolved_offer_url, referrer_suppression
 
-        # Use the last (prelander) domain as the final destination
-        # The full flow: Publisher → Anchor → Inter → Last Domain (prelander page)
-        # The inter domain logs the click before redirecting to the last domain
-        if last_base:
-            entry_domain = last_base.rstrip("/")
-            logger.info("[ROUTE] Prelander domain (last): %s", entry_domain)
-        elif intermediate_base:
+        # Entry point for the prelander hop. Per the documented redirection
+        # architecture (Bypass OFF):
+        #   Publisher Smartlink → Anchor → Inter → Prelander → Campaign URL
+        # The Inter domain comes BEFORE the Prelander domain: it validates and
+        # logs the hop, then the /d/[slug] page on the Inter domain forwards the
+        # visitor to the Prelander domain. Only when no Inter domain is
+        # configured does the visitor land on the Prelander domain directly.
+        if intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] No last domain configured, using intermediate: %s", entry_domain)
+            logger.info("[ROUTE] Inter domain (entry): %s", entry_domain)
+        elif last_base:
+            entry_domain = last_base.rstrip("/")
+            logger.info("[ROUTE] No inter domain configured, entering on prelander: %s", entry_domain)
         else:
             entry_domain = lander_url.rstrip("/")
             logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
@@ -420,8 +424,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             ctx, STAGE_PRELANDER, "prelander",
             entry_domain=entry_domain,
             entry_type=(
-                "prelander" if last_base
-                else "inter" if intermediate_base
+                "inter" if intermediate_base
+                else "prelander" if last_base
                 else "legacy_lander"
             ),
             os_param=os_param,
