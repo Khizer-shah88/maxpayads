@@ -437,20 +437,24 @@ async def _get_prelander_data(
     if not offer_url:
         offer_url = "https://example.com"
 
-    # Scenario rule: "if there is no active default, the visitor skips the
-    # prelander." Flag this to the /d/[slug] page so it forwards the visitor
-    # straight to the offer instead of rendering a template that doesn't exist.
+    # Spec (Bypass OFF): the visitor ALWAYS lands on the landing page — even
+    # when no active template exists. The page falls back to the built-in
+    # layout instead of forwarding the visitor to the campaign URL. Skipping
+    # the prelander entirely is reserved for Bypass ON, which is handled
+    # upstream (traffic_router / resolve_slug) and never reaches this point.
     if is_prelander_host and template_doc is None:
         logger.info(
-            "[PRELANDER] No active template for host=%s — visitor skips prelander",
+            "[PRELANDER] No active template for host=%s — rendering built-in "
+            "landing page fallback (bypass is OFF: landing page always shows)",
             host,
         )
         return {
             "success": True,
-            "skip_prelander": True,
             "offer_url": offer_url,
+            "password": password,
             "campaign_name": campaign_name,
             "os": os_lower,
+            "template": None,
         }
 
     response = {

@@ -6,7 +6,8 @@ Covers the fixes made while auditing the end-to-end scenario:
   Fix A: `_finalize` must persist campaign_id/offer_id onto the click document
          (click_tasks resolves offer-level CPC from click_doc["campaign_id"]).
   Fix B: `/d/{slug}` serving must apply the template rules — assigned active
-         template, else OS default, else skip_prelander=True.
+         template, else OS default, else the built-in landing page renders
+         (Bypass OFF never forwards the visitor straight to the campaign URL).
   Fix C: /p/render's default-template lookup must hint an OS name, not a host.
   Fix D: the prelander slug's OS must come from normalize_os, not a hard-coded
          mac-spelling list.
@@ -227,8 +228,10 @@ class TestPrelanderTemplateWiring:
         assert "skip_prelander" not in data
         assert data["template"]["name"] == "Win Default"
 
-    async def test_no_active_template_sets_skip_flag(self, prelander_domain_doc):
-        """Assigned template gone AND no active default → visitor skips prelander."""
+    async def test_no_active_template_still_renders_landing_page(self, prelander_domain_doc):
+        """Spec (Bypass OFF): no active template → built-in landing page still
+        renders. The visitor is never forwarded to the campaign URL directly —
+        that path is reserved for Bypass ON."""
         db = FakePrelanderDB(
             redirection_domains=[prelander_domain_doc],
             prelander_templates=[],
@@ -238,8 +241,10 @@ class TestPrelanderTemplateWiring:
         data = await self._resolve(db, offer={"_id": OFFER_ID})
 
         assert data["success"] is True
-        assert data["skip_prelander"] is True
+        # The skip flag is gone: Bypass OFF always lands on the landing page.
+        assert "skip_prelander" not in data
         assert data["offer_url"] == "https://offer.example/win"
+        assert data["template"] is None
 
     async def test_non_prelander_host_never_sets_skip_flag(self, active_template):
         """Inter/anchor hosts don't get the skip flag — they hop to the prelander."""

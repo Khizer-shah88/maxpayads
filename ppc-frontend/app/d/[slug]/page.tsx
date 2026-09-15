@@ -15,9 +15,10 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  *    changes we detect it and hard-navigate (handles cross-origin 302s that
  *    fetch's opaque redirect mode would otherwise hide).
  *
- * Bypass mode (direct_redirect_mode):
- *  - OFF: SmartLink → intermediate → last (this page)
- *  - ON:  SmartLink → last directly (this page, skipping intermediate)
+ * Redirection flow (spec):
+ *  - Bypass OFF: Anchor → Inter (1.5s dwell) → THIS landing page
+ *  - Bypass ON:  Anchor → Inter (1.5s dwell) → Campaign URL (via
+ *    bypass_redirect_url from /domain-type — this page never shows)
  */
 
 export default function PrelanderSlugPage() {
@@ -141,13 +142,10 @@ export default function PrelanderSlugPage() {
     )
   }
 
-  // Scenario rule: "if there is no active default, the visitor skips the
-  // prelander." The backend flags this when the domain's assigned template is
-  // gone and no active OS default exists — forward the visitor straight to the
-  // offer instead of rendering a prelander with no template.
-  if (data.skip_prelander && data.offer_url) {
-    return <SkipToOffer offerUrl={data.offer_url} />
-  }
+  // Note: Bypass OFF always shows the landing page — even when the backend has
+  // no active template (the built-in layout renders as fallback). The visitor
+  // is only forwarded straight to the campaign URL when Bypass is ON, which
+  // happens earlier via `bypass_redirect_url` from /domain-type.
 
   // Admin pasted a complete HTML template → the backend already rendered it
   // server-side ({Campaign_URL} / {Password} shortcodes substituted). Serve it
@@ -168,21 +166,6 @@ function FullHtmlPrelander({ html }: { html: string }) {
     document.close()
   }, [html])
   return null
-}
-
-/* ─── Skip: no active template → straight to the offer ───────────────────── */
-function SkipToOffer({ offerUrl }: { offerUrl: string }) {
-  useEffect(() => {
-    window.location.replace(offerUrl)
-  }, [offerUrl])
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
-      <div className="text-center">
-        <div className="w-8 h-8 border-[3px] border-gray-200 border-t-gray-600 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-gray-500 text-sm">Preparing your download…</p>
-      </div>
-    </div>
-  )
 }
 
 /* ─── Windows Prelander ──────────────────────────────────────────────────── */
