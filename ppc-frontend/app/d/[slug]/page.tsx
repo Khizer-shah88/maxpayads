@@ -26,6 +26,10 @@ export default function PrelanderSlugPage() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
+  // True while the browser is transitioning from an Anchor/Inter domain to the
+  // Prelander domain. We hold a loader on screen for a short fixed delay so the
+  // visitor sees a clean "redirecting…" state rather than a jarring hop.
+  const [transitioning, setTransitioning] = useState(false)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -45,8 +49,11 @@ export default function PrelanderSlugPage() {
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
           if (dt.domain_type !== 'prelander' && prelanderDomain) {
-            // Not on the Prelander domain — navigate directly (no fetch redirect magic)
-            // Use the raw slug (base64url chars are URL-safe, no encoding needed)
+            // Not on the Prelander domain — hop to it. Show a clear loader for
+            // a fixed 1.5s so the domain switch reads as intentional, then
+            // navigate. Raw slug chars are base64url-safe, no encoding needed.
+            setTransitioning(true)
+            await new Promise(r => setTimeout(r, 1500))
             window.location.replace(`${prelanderDomain}/d/${slug}`)
             return
           }
@@ -81,6 +88,26 @@ export default function PrelanderSlugPage() {
   useEffect(() => {
     document.title = 'Download Ready'
   }, [])
+
+  // Shown when the visitor is being switched from an Anchor/Inter domain to the
+  // Prelander domain. A clean, branded loader keeps the intermediate hop from
+  // looking like a dead end or a broken redirect.
+  if (transitioning) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#0f172a]">
+        <div className="flex flex-col items-center gap-5">
+          <div className="relative w-16 h-16">
+            <div className="absolute inset-0 rounded-full border-4 border-white/10" />
+            <div className="absolute inset-0 rounded-full border-4 border-t-green-400 animate-spin" />
+          </div>
+          <div className="text-center">
+            <p className="text-white text-lg font-semibold">Redirecting…</p>
+            <p className="text-white/50 text-sm mt-1">Taking you to a secure download page</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
