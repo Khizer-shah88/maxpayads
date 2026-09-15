@@ -52,6 +52,9 @@ export default function PublishersPage() {
   // Smartlink modal (Admin → Publishers → Smartlink/Generate Link)
   const [smartlinkModal, setSmartlinkModal] = useState<{ publisher: Publisher; data: any } | null>(null)
   const [smartlinkLoading, setSmartlinkLoading] = useState(false)
+  // Smartlink structure selection (drives param names: pub/site, tag/sid, …)
+  const [structures, setStructures] = useState<{ id: string; name: string }[]>([])
+  const [selectedStructure, setSelectedStructure] = useState('')
 
   // Permanent deletion confirmation input (spec: requires admin confirmation)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
@@ -144,10 +147,10 @@ export default function PublishersPage() {
   }
 
   // ── Smartlink generation ────────────────────────────────────────────────────
-  const handleOpenSmartlink = async (publisher: Publisher) => {
+  const handleOpenSmartlink = async (publisher: Publisher, structureId?: string) => {
     setSmartlinkLoading(true)
     try {
-      const res = await adminApi.getPublisherSmartlink(publisher.id)
+      const res = await adminApi.getPublisherSmartlink(publisher.id, structureId || undefined)
       setSmartlinkModal({ publisher, data: res.data })
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to generate Smartlink')
@@ -155,6 +158,13 @@ export default function PublishersPage() {
       setSmartlinkLoading(false)
     }
   }
+
+  // Load smartlink structures once for the structure selector
+  useEffect(() => {
+    adminApi.getSmartlinkStructures({ status: 'active' })
+      .then(res => setStructures(res.data?.structures ?? []))
+      .catch(() => setStructures([]))
+  }, [])
 
   const copyText = async (text: string) => {
     try {
@@ -630,6 +640,41 @@ export default function PublishersPage() {
                   <span className="text-blue-700 font-semibold">Registered (?pub={smartlinkModal.data?.public_id}&site=SITE_ID)</span>
                 )}
               </p>
+
+              {/* Smartlink structure selector — param names come from the structure */}
+              {structures.length > 0 && (
+                <div className="mb-4 p-3 bg-blue-50/60 border border-blue-100 rounded-xl">
+                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">Smartlink Structure</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedStructure}
+                      onChange={e => setSelectedStructure(e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">Default structure</option>
+                      {structures.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => handleOpenSmartlink(smartlinkModal.publisher, selectedStructure || undefined)}
+                      disabled={smartlinkLoading}
+                      className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-dark text-white text-xs font-semibold disabled:bg-gray-300"
+                    >
+                      {smartlinkLoading ? '…' : 'Apply'}
+                    </button>
+                  </div>
+                  {smartlinkModal.data?.structure && (
+                    <p className="text-[11px] text-gray-500 mt-1.5">
+                      Using <strong>{smartlinkModal.data.structure.name}</strong> — params{' '}
+                      <span className="font-mono">{smartlinkModal.data.structure.publisher_param}</span>
+                      {smartlinkModal.data.structure.website_param && (
+                        <> / <span className="font-mono">{smartlinkModal.data.structure.website_param}</span></>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">

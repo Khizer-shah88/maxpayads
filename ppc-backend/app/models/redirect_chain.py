@@ -57,6 +57,14 @@ class RedirectChain(BaseModel):
         description="Prelander Pool: prelander domains this chain distributes across",
         validation_alias=AliasChoices("prelander_pool", LEGACY_PRELANDER_POOL_KEY),
     )
+    extra_domains: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered additional hops between Inter and the Prelander pool, giving "
+            "chains a configurable length: Anchor → Inter → C → D → … → N. "
+            "Chains apply to ALL publishers — never tied to one publisher."
+        ),
+    )
     session_validation: bool = Field(True, description="Whether to enforce session cookie validation")
     cookie_lifetime: int = Field(60, description="Cookie lifetime in minutes")
     status: RedirectChainStatus = Field(RedirectChainStatus.ACTIVE)
@@ -88,6 +96,11 @@ class CreateRedirectChainRequest(BaseModel):
         ..., min_length=1, max_length=50,
         validation_alias=AliasChoices("prelander_pool", LEGACY_PRELANDER_POOL_KEY),
     )
+    # Configurable chain length: Anchor → Inter → C → D → … → N
+    extra_domains: List[str] = Field(
+        default_factory=list, max_length=20,
+        description="Ordered intermediate hops between Inter and the Prelander pool",
+    )
     session_validation: bool = Field(True)
     cookie_lifetime: int = Field(60, ge=5, le=1440)  # 5 minutes to 24 hours
     status: RedirectChainStatus = Field(RedirectChainStatus.ACTIVE)
@@ -105,6 +118,10 @@ class UpdateRedirectChainRequest(BaseModel):
     prelander_pool: Optional[List[str]] = Field(
         None, min_length=1, max_length=50,
         validation_alias=AliasChoices("prelander_pool", LEGACY_PRELANDER_POOL_KEY),
+    )
+    extra_domains: Optional[List[str]] = Field(
+        None, max_length=20,
+        description="Ordered intermediate hops between Inter and the Prelander pool",
     )
     session_validation: Optional[bool] = None
     cookie_lifetime: Optional[int] = Field(None, ge=5, le=1440)

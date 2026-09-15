@@ -30,6 +30,7 @@ from app.routers import (
 from app.routers import offer_router, landing_page_router, prelander_router, redirection_domain_router
 from app.routers import prelander_template_router, prelander_public_router
 from app.routers import direct_link_router, direct_link_stats_router, redirect_chain_router, public_stats_router, stats_profile_router
+from app.routers import smartlink_structure_router
 
 from fastapi.exceptions import HTTPException
 
@@ -110,6 +111,7 @@ app.include_router(prelander_public_router.router)  # Public prelander rendering
 app.include_router(direct_link_router.router)
 app.include_router(direct_link_stats_router.router)  # Direct link enhanced stats
 app.include_router(redirect_chain_router.router)
+app.include_router(smartlink_structure_router.router)
 app.include_router(public_stats_router.router)
 app.include_router(stats_profile_router.router)
 

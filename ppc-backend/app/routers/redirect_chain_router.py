@@ -40,9 +40,29 @@ def _serialize_chain(chain: dict) -> dict:
         out["id"] = str(out.pop("_id"))
     out["inter_domain"] = chain_inter_domain(chain)
     out["prelander_pool"] = chain_prelander_pool(chain)
+    # Configurable chain length — ordered hops after Inter.
+    out["extra_domains"] = list(chain.get("extra_domains") or [])
     out[LEGACY_INTER_DOMAIN_KEY] = out["inter_domain"]
     out[LEGACY_PRELANDER_POOL_KEY] = out["prelander_pool"]
     return out
+
+
+async def _validate_extra_domains(db, domains: List[str]) -> None:
+    """
+    Validate the configurable-length hops (Anchor → Inter → C → D → … → N).
+    Each extra hop must be an active redirection domain of ANY type — admins
+    chain existing domains in whatever order the flow requires.
+    """
+    for domain in domains:
+        doc = await db.redirection_domains.find_one({
+            "domain": domain,
+            "status": "active",
+        })
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Extra chain domain '{domain}' not found or not active",
+            )
 
 
 @router.get("", response_model=dict)
@@ -131,6 +151,9 @@ async def create_redirect_chain(
                 detail=f"Prelander domain '{domain}' not found or not active"
             )
     
+    # Validate configurable-length hops (Anchor → Inter → C → D → … → N)
+    await _validate_extra_domains(db, request.extra_domains)
+    
     # Create new chain
     now = datetime.utcnow()
     chain_data = {
@@ -138,6 +161,7 @@ async def create_redirect_chain(
         "anchor_domain": request.anchor_domain,
         "inter_domain": request.inter_domain,
         "prelander_pool": request.prelander_pool,
+        "extra_domains": request.extra_domains,
         "session_validation": request.session_validation,
         "cookie_lifetime": request.cookie_lifetime,
         "status": request.status.value,
@@ -256,6 +280,10 @@ async def update_redirect_chain(
                     detail=f"Prelander domain '{domain}' not found or not active"
                 )
         update_data["prelander_pool"] = request.prelander_pool
+    
+    if request.extra_domains is not None:
+        await _validate_extra_domains(db, request.extra_domains)
+        update_data["extra_domains"] = request.extra_domains
     
     if request.session_validation is not None:
         update_data["session_validation"] = request.session_validation

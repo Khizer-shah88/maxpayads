@@ -97,7 +97,19 @@ export const adminApi = {
     api.post('/admin/change-password', { current_password, new_password }),
   createPublisher: (data: object) => api.post('/admin/publishers', data),
   createManualPublisher: (data: object) => api.post('/admin/publishers/manual', data),
-  getPublisherSmartlink: (id: string) => api.get(`/admin/publishers/${id}/smartlink`),
+  getPublisherSmartlink: (id: string, structureId?: string) =>
+    api.get(`/admin/publishers/${id}/smartlink`, { params: structureId ? { structure_id: structureId } : undefined }),
+  // Smartlink Structures — admin-managed parameter schemes
+  getSmartlinkStructures: (params?: { status?: string }) =>
+    api.get('/admin/smartlink-structures', { params }),
+  createSmartlinkStructure: (data: object) =>
+    api.post('/admin/smartlink-structures', data),
+  updateSmartlinkStructure: (id: string, data: object) =>
+    api.put(`/admin/smartlink-structures/${id}`, data),
+  deleteSmartlinkStructure: (id: string) =>
+    api.delete(`/admin/smartlink-structures/${id}`),
+  generateSmartlink: (data: { structure_id?: string; domain?: string; publisher_id: string; site_id?: string }) =>
+    api.post('/admin/smartlink-structures/generate', data),
   addPublisherWebsite: (publisherId: string, data: object) =>
     api.post(`/admin/publishers/${publisherId}/websites`, data),
 }

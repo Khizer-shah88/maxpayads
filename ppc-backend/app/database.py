@@ -95,6 +95,11 @@ async def create_indexes():
     await db.prelander_templates.create_index("os_type")
     await db.prelander_templates.create_index([("created_at", DESCENDING)])
 
+    # Smartlink structures (admin-managed parameter schemes)
+    await db.smartlink_structures.create_index("name", unique=True)
+    await db.smartlink_structures.create_index("status")
+    await db.smartlink_structures.create_index("is_default")
+
     # Direct links
     await db.direct_links.create_index("slug", unique=True)
     await db.direct_links.create_index("publisher_id")

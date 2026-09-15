@@ -205,6 +205,7 @@ async def admin_create_manual_publisher(
 @router.get("/publishers/{publisher_id}/smartlink")
 async def admin_get_publisher_smartlink(
     publisher_id: str,
+    structure_id: Optional[str] = Query(None, description="Smartlink structure to apply"),
     db=Depends(get_db),
     current_user: dict = Depends(get_current_admin),
 ):
@@ -213,15 +214,18 @@ async def admin_get_publisher_smartlink(
 
     Admin → Publishers → Select Publisher → Smartlink/Generate Link.
 
-    Registered publishers: `https://anchor-domain.com/?pub=PUB_ID&site=SITE_ID`
-    (per website) — pass ?site=SITE_PUBLIC_ID for a website-specific link.
-    Manual publishers:     `https://anchor-domain.com/?pub=PUB_ID`
-    (a `site` param is never included).
+    The link format is driven by the selected Smartlink Structure (or the
+    default structure when none is passed):
+      Standard   → https://anchor.com/?pub=PUB_ID&site=SITE_ID
+      Tag + SID  → https://anchor.com/?tag=PUB_ID&sid=SITE_ID
+      Tag Only   → https://anchor.com/?tag=PUB_ID
+
+    Registered publishers get one link per website + a publisher-level default;
+    manual publishers never carry a website param.
     """
     from urllib.parse import quote
     from app.core.constants import PUBLISHER_TYPE_MANUAL, DOMAIN_TYPE_ANCHOR
     from app.services.domain_service import resolve_domain_url, domain_to_url, normalize_domain
-    from app.services.smartlink_service import generate_smartlink
     from app.utils.public_id_utils import get_publisher_public_id, get_website_public_id
 
     publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)}) if ObjectId.is_valid(publisher_id) else None
@@ -242,13 +246,35 @@ async def admin_get_publisher_smartlink(
     if not public_id:
         raise HTTPException(status_code=400, detail="Publisher has no public ID")
 
+    # ── Structure resolution ──────────────────────────────────────────────
+    structure_doc = None
+    if structure_id and ObjectId.is_valid(structure_id):
+        structure_doc = await db.smartlink_structures.find_one({"_id": ObjectId(structure_id)})
+    if not structure_doc:
+        structure_doc = await db.smartlink_structures.find_one({"is_default": True})
+    if not structure_doc:
+        structure_doc = await db.smartlink_structures.find_one({"status": "active"})
+    # Sensible fallbacks when no structures exist yet (legacy behavior).
+    pub_param = (structure_doc or {}).get("publisher_param", "pub")
+    site_param = (structure_doc or {}).get("website_param", "site")
+    include_site = bool((structure_doc or {}).get("include_website", True))
+
+    def _build_link(site_public: Optional[str]) -> str:
+        params = [f"{pub_param}={quote(public_id)}"]
+        if include_site and site_public and site_param:
+            params.append(f"{site_param}={quote(site_public)}")
+        for extra in (structure_doc or {}).get("extra_params") or []:
+            if isinstance(extra, dict) and extra.get("key"):
+                params.append(f"{extra['key']}={extra.get('value', '')}")
+        return f"{base}/click?{'&'.join(params)}"
+
     anchor_base = base.rstrip("/")
     is_manual = publisher.get("publisher_type") == PUBLISHER_TYPE_MANUAL
     site_links = []
 
     if is_manual:
         # Manual publishers never carry a site param.
-        default_link = f"{anchor_base}/click?pub={quote(public_id)}"
+        default_link = f"{anchor_base}/click?{pub_param}={quote(public_id)}"
     else:
         # Registered publishers: one link per website + a publisher-level default.
         cursor = db.websites.find({"publisher_id": publisher_id})
@@ -259,9 +285,9 @@ async def admin_get_publisher_smartlink(
                     "website_id": str(site["_id"]),
                     "domain": site.get("domain", ""),
                     "name": site.get("name", "") or site.get("domain", ""),
-                    "smartlink": f"{anchor_base}/click?pub={quote(public_id)}&site={quote(site_pub)}",
+                    "smartlink": _build_link(site_pub),
                 })
-        default_link = f"{anchor_base}/click?pub={quote(public_id)}"
+        default_link = _build_link(None)
 
     return {
         "success": True,
@@ -269,6 +295,15 @@ async def admin_get_publisher_smartlink(
         "public_id": public_id,
         "publisher_type": publisher.get("publisher_type", "registered"),
         "anchor_domain": normalize_domain(anchor_base),
+        "structure": (
+            {
+                "id": str(structure_doc["_id"]),
+                "name": structure_doc.get("name"),
+                "publisher_param": pub_param,
+                "website_param": site_param,
+            }
+            if structure_doc else None
+        ),
         "smartlink": default_link,
         "website_smartlinks": site_links,
     }

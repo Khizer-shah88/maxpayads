@@ -22,6 +22,7 @@ interface RedirectChain {
   anchor_domain: string
   inter_domain: string
   prelander_pool: string[]
+  extra_domains: string[]
   session_validation: boolean
   cookie_lifetime: number // in minutes
   status: 'active' | 'paused' | 'archived'
@@ -44,6 +45,7 @@ const EMPTY_CHAIN = {
   name: '',
   anchor_domain: '',
   inter_domain: '',
+  extra_domains: [] as string[],
   prelander_pool: [] as string[],
   session_validation: true,
   cookie_lifetime: 60, // 1 hour
@@ -55,7 +57,7 @@ const EMPTY_CHAIN = {
 function ChainFlow({ chain }: { chain: RedirectChain | typeof EMPTY_CHAIN }) {
   return (
     <div className="bg-gradient-to-r from-slate-50 to-blue-50 rounded-xl p-4 border border-gray-200">
-      <div className="flex flex-col md:flex-row md:items-center gap-4">
+      <div className="flex flex-col md:flex-row md:items-center gap-4 flex-wrap">
         {/* Anchor Domain */}
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -81,6 +83,23 @@ function ChainFlow({ chain }: { chain: RedirectChain | typeof EMPTY_CHAIN }) {
             <p className="text-xs text-gray-500">Cookie validation + referrer strip</p>
           </div>
         </div>
+
+        {/* Extra hops (configurable length: Anchor → Inter → C → D → … → N) */}
+        {(chain.extra_domains || []).map((domain, i) => (
+          <div key={`${domain}-${i}`} className="flex items-center gap-3">
+            <ArrowRight size={16} className="text-gray-300 flex-shrink-0 hidden md:block" />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 bg-violet-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Link2 size={16} className="text-violet-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-violet-700 uppercase tracking-wide">Extra Hop {i + 1}</p>
+                <p className="font-mono text-sm text-gray-900 truncate">{domain}</p>
+                <p className="text-xs text-gray-500">Intermediate hop</p>
+              </div>
+            </div>
+          </div>
+        ))}
 
         <ArrowRight size={16} className="text-gray-300 flex-shrink-0 hidden md:block" />
 
@@ -154,6 +173,7 @@ export default function RedirectChainsPage() {
       name: chain.name,
       anchor_domain: chain.anchor_domain,
       inter_domain: chain.inter_domain,
+      extra_domains: [...(chain.extra_domains || [])],
       prelander_pool: [...chain.prelander_pool],
       session_validation: chain.session_validation,
       cookie_lifetime: chain.cookie_lifetime,
@@ -176,6 +196,26 @@ export default function RedirectChainsPage() {
       ...prev,
       prelander_pool: prev.prelander_pool.filter(d => d !== domain)
     }))
+  }
+
+  const addExtraDomain = (domain: string) => {
+    if (domain && !form.extra_domains.includes(domain)) {
+      setForm(prev => ({ ...prev, extra_domains: [...prev.extra_domains, domain] }))
+    }
+  }
+
+  const removeExtraDomain = (domain: string) => {
+    setForm(prev => ({ ...prev, extra_domains: prev.extra_domains.filter(d => d !== domain) }))
+  }
+
+  const moveExtraDomain = (index: number, dir: -1 | 1) => {
+    setForm(prev => {
+      const arr = [...prev.extra_domains]
+      const j = index + dir
+      if (j < 0 || j >= arr.length) return prev
+      ;[arr[index], arr[j]] = [arr[j], arr[index]]
+      return { ...prev, extra_domains: arr }
+    })
   }
 
   const handleSave = async () => {
@@ -251,9 +291,9 @@ export default function RedirectChainsPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pt-12 lg:pt-0">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Domain Chain Builder</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Redirection Chain Builder</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              3-tier redirection flow with session validation and dynamic Prelander rotation
+              Admin-configured chains of configurable length — every chain works for every publisher
             </p>
           </div>
           <button
@@ -269,10 +309,11 @@ export default function RedirectChainsPage() {
           <div className="flex items-start gap-4">
             <Shield size={24} className="flex-shrink-0 mt-0.5" />
             <div>
-              <h3 className="font-bold text-lg mb-2">Advanced Traffic Security</h3>
+              <h3 className="font-bold text-lg mb-2">Redirection Chain Builder</h3>
               <p className="text-blue-100 text-sm leading-relaxed mb-3">
-                Enforce a 3-tier routing architecture that prevents direct access to offer pages. 
-                Session cookies validate legitimate traffic flow and Prelander domains rotate dynamically to avoid detection.
+                Chains are created here in the Admin Panel — never auto-generated and never per-publisher.
+                Each chain pairs an Anchor domain with an Inter domain, any number of extra hops, and a Prelander pool.
+                After saving, the chain applies to ALL publishers: no chain is tied to or created for an individual publisher.
               </p>
               <div className="flex flex-wrap gap-4 text-xs">
                 <div className="flex items-center gap-1.5">
@@ -488,6 +529,72 @@ export default function RedirectChainsPage() {
                       Validates session cookies before forwarding
                     </p>
                   </div>
+                </div>
+
+                {/* Extra Hops — configurable chain length */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Extra Hops <span className="text-gray-400 font-normal">(optional — configurable chain length)</span>
+                  </label>
+
+                  {/* Add Domain Selector */}
+                  <div className="flex gap-2 mb-3">
+                    <select
+                      className={`${inputClass} flex-1`}
+                      onChange={e => {
+                        if (e.target.value) {
+                          addExtraDomain(e.target.value)
+                          e.target.value = ''
+                        }
+                      }}
+                    >
+                      <option value="">Add intermediate hop...</option>
+                      {domains
+                        .filter(d => d.status === 'active' && !form.extra_domains.includes(d.domain))
+                        .map(domain => (
+                          <option key={domain.id} value={domain.domain}>
+                            [{domain.domain_type}] {domain.domain}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Hop Display */}
+                  <div className="space-y-2">
+                    {form.extra_domains.length === 0 ? (
+                      <p className="text-sm text-gray-400 py-3 px-4 bg-gray-50 rounded-xl text-center">
+                        No extra hops — chain is Anchor → Inter → Prelander Pool
+                      </p>
+                    ) : (
+                      form.extra_domains.map((domain, index) => (
+                        <div key={domain} className="flex items-center justify-between p-3 bg-violet-50/50 rounded-xl">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-medium text-violet-600 bg-white px-2 py-1 rounded">
+                              #{index + 1}
+                            </span>
+                            <span className="font-mono text-sm text-gray-900">{domain}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => moveExtraDomain(index, -1)} disabled={index === 0}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white disabled:opacity-30"
+                              title="Move up">↑</button>
+                            <button onClick={() => moveExtraDomain(index, 1)} disabled={index === form.extra_domains.length - 1}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-white disabled:opacity-30"
+                              title="Move down">↓</button>
+                            <button
+                              onClick={() => removeExtraDomain(domain)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Ordered hops traversed after the Inter domain: Anchor → Inter → C → D → … → N → Prelander Pool
+                  </p>
                 </div>
 
                 {/* Prelander Pool */}
