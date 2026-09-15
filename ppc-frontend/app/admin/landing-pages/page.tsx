@@ -67,7 +67,7 @@ export default function LandingPagesPage() {
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
+  const [form, setForm] = useState({ name: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<LandingPage | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -109,10 +109,8 @@ export default function LandingPagesPage() {
 
   const handleSave = async () => {
     const name = form.name.trim()
-    const lander_url = form.lander_url.trim()
     if (!name) { toast.error('Name is required'); return }
     if (!form.campaign_id) { toast.error('Select a campaign — landing pages must be tied to a campaign for traffic routing'); return }
-    if (!isValidHttpUrl(lander_url)) { toast.error('Enter a valid URL starting with http:// or https://'); return }
     const weight = parseInt(form.weight, 10)
     if (!Number.isFinite(weight) || weight < 1 || weight > 100) {
       toast.error('Weight must be between 1 and 100')
@@ -123,7 +121,6 @@ export default function LandingPagesPage() {
     try {
       const data = {
         name,
-        lander_url,
         status: form.status,
         weight,
         campaign_id: form.campaign_id,
@@ -226,7 +223,6 @@ export default function LandingPagesPage() {
           setEditId(p.id)
           setForm({
             name: p.name,
-            lander_url: p.lander_url,
             campaign_id: p.campaign_id || '',
             status: p.status,
             weight: p.weight.toString(),
@@ -246,7 +242,7 @@ export default function LandingPagesPage() {
 
   const openCreate = () => {
     setEditId(null)
-    setForm({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
+    setForm({ name: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
     setModal('create')
   }
 
@@ -305,14 +301,6 @@ export default function LandingPagesPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                   <input name="lp_name" autoComplete="off" value={form.name} onChange={e => setForm(p => ({...p, name: e.target.value}))} placeholder="Windows Prelander A" className={inputClass} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Prelander URL</label>
-                  <input type="url" inputMode="url" name="lp_url" autoComplete="off" value={form.lander_url} onChange={e => setForm(p => ({...p, lander_url: e.target.value}))} placeholder="https://clickfilesetup.info"
-                    className={`${inputClass} ${form.lander_url.trim() && !isValidHttpUrl(form.lander_url) ? 'border-red-300' : ''}`} />
-                  {form.lander_url.trim() && !isValidHttpUrl(form.lander_url) && (
-                    <p className="text-xs text-red-500 mt-1">Must be a valid URL starting with http:// or https://</p>
-                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Campaign <span className="text-red-500">*</span></label>
@@ -384,7 +372,7 @@ export default function LandingPagesPage() {
                 </div>
               </div>
               <div className="flex gap-3 px-6 py-4 border-t border-gray-100">
-                <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.campaign_id || !isValidHttpUrl(form.lander_url)}
+                <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.campaign_id}
                   className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
                   {saving ? <Spinner size={16} /> : modal === 'create' ? 'Create' : 'Save Changes'}
                 </button>

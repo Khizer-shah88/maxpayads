@@ -85,6 +85,26 @@ def slug_os_param(os_name: Optional[str]) -> str:
     return "mac" if normalize_os(os_name, default="windows") == "mac" else "windows"
 
 
+def build_prelander_slug(
+    os_param: str,
+    campaign_id,
+    offer_id: str = "",
+    country_code: Optional[str] = None,
+) -> str:
+    """
+    Encrypted slug carrying {os, timestamp, offer_id, campaign_id, country}.
+
+    The Intermediate domain's /d/[slug] page decodes it (prelander_router) to
+    decide the next hop: bypass OFF → Prelander landing page, bypass ON →
+    Campaign URL. Same XOR recipe the prelander side decrypts with.
+    """
+    ts = str(int(time.time()))
+    raw = f"{os_param}:{ts}:{offer_id or ''}:{campaign_id or ''}:{country_code or ''}"
+    key = "mxp2026"
+    xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
+    return base64.urlsafe_b64encode(xored).decode().rstrip("=")
+
+
 def select_weighted_landing_page(landing_pages: list) -> Optional[dict]:
     """
     Pick one landing page using weighted random rotation, keyed on each page's
@@ -300,16 +320,36 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         except Exception:
             pass
 
-    # Bypass ON: Return the campaign/offer URL directly (skip prelander)
-    # The traffic still goes through anchor → inter domain for logging, 
-    # but the final destination is the campaign URL, not the prelander
+    # ── Bypass handling ─────────────────────────────────────────────────────
+    # Spec (both modes pass through the Intermediate domain):
+    #   Bypass OFF: Anchor → Inter (logs, 1.5s dwell) → Prelander landing page
+    #   Bypass ON:  Anchor → Inter (logs, 1.5s dwell) → Campaign URL
+    # In BOTH cases /click sends the visitor to the Inter domain /d/{slug}.
+    # The slug carries campaign/offer ids; the prelander resolver on the Inter
+    # domain logs the hop and decides the next hop (prelander vs campaign URL).
+    # Going direct to the Campaign URL happens ONLY when no Inter domain is
+    # configured at all.
     if is_bypass_on:
-        # Clean the URL to ensure it's properly formatted
-        # Remove any domain prefix that might have been accidentally added
         clean_url = _clean_campaign_url(resolved_offer_url)
-        logger.info(f"[ROUTE] BYPASS MODE: Direct to campaign URL: {clean_url}")
         if ctx is not None:
             ctx.skip_prelander = True
+        try:
+            from app.services.domain_service import resolve_domain_url
+            inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+        except Exception:
+            inter_base = None
+        if inter_base:
+            os_param_b = slug_os_param(os_name)
+            offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
+            slug_b = build_prelander_slug(os_param_b, str(campaign_id), offer_id_b, country_code)
+            dest = f"{inter_base.rstrip('/')}/d/{slug_b}"
+            logger.info("[ROUTE] BYPASS ON: via Inter %s → campaign %s", dest, clean_url)
+            if ctx is not None:
+                ctx.inter_url = inter_base
+            _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=inter_base)
+            _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=inter_base)
+            return dest, referrer_suppression
+        logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
         _record(ctx, STAGE_CHAIN, "not_needed_bypass")
         _record(ctx, STAGE_PRELANDER, "skipped_bypass", source=bypass_source, url=clean_url)
         return clean_url, referrer_suppression
@@ -409,15 +449,10 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
 
         # Generate encrypted slug containing campaign data
-        # This slug is decoded on the prelander page to show the appropriate template
-        # and eventually redirect to the campaign URL
-        ts = str(int(time.time()))
+        # This slug is decoded on the inter/prelander page to show the
+        # appropriate template and eventually redirect to the campaign URL
         offer_id = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
-        cc = country_code or ""
-        raw = f"{os_param}:{ts}:{offer_id}:{campaign_id}:{cc}"
-        key = "mxp2026"
-        xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
-        slug = base64.urlsafe_b64encode(xored).decode().rstrip("=")
+        slug = build_prelander_slug(os_param, campaign_id, offer_id, country_code)
         prelander_dest = f"{entry_domain}/d/{slug}"
         logger.info("[ROUTE] Final prelander URL: %s", prelander_dest)
         _record(

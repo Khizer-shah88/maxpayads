@@ -39,13 +39,15 @@ interface PrlanderTemplate {
 }
 
 // Spec: the template form collects ONLY Template Name, Internal Notes and
-// Status. Every other template field keeps its backend default (os_type "both",
-// built-in page copy); on edit those fields are never sent, so existing HTML
-// templates stay intact (the backend updates only what the client sends).
+// Status. On EDIT the full HTML code-template editor is also shown (restored
+// per user request) so admins can paste/adjust custom HTML for an existing
+// template. Every other template field keeps its backend default; on edit
+// those fields are never sent, so unrelated fields stay intact.
 const EMPTY_FORM = {
   name: '',
   status: 'active' as 'active' | 'paused' | 'archived',
   notes: '',
+  full_html_template: '',
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ export default function PrlanderTemplatesPage() {
       name: t.name,
       status: t.status,
       notes: t.notes || '',
+      full_html_template: t.full_html_template || '',
     })
     setModal('edit')
   }
@@ -116,13 +119,17 @@ export default function PrlanderTemplatesPage() {
     if (!form.name.trim()) { toast.error('Name is required'); return }
     setSaving(true)
     try {
-      // Only the three spec'd fields are sent. The backend fills defaults for
-      // everything else on create, and exclude_unset keeps every other field
-      // (including an existing full_html_template) untouched on update.
-      const payload = {
+      // Name/Status/Notes are always sent. full_html_template rides along on
+      // edit only (the editor is an edit-mode feature — create uses the
+      // built-in default layout). The backend's exclude_unset keeps every
+      // other field untouched.
+      const payload: Record<string, unknown> = {
         name: form.name.trim(),
         status: form.status,
         notes: form.notes.trim() || null,
+      }
+      if (modal === 'edit' && selected) {
+        payload.full_html_template = form.full_html_template.trim() || null
       }
       let res: any
       if (modal === 'edit' && selected) {
@@ -362,6 +369,94 @@ export default function PrlanderTemplatesPage() {
                   <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
                     rows={2} placeholder="Optional admin notes" className={inp} />
                 </div>
+
+                {/* Full Source Code Editor — edit mode only */}
+                {modal === 'edit' && (
+                  <div className="border border-gray-200 rounded-xl p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-gray-700">Full Source Code Template</p>
+                      <span className="text-xs text-gray-400">Complete HTML/CSS/JS</span>
+                    </div>
+
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                      <p className="font-semibold mb-1">⚠️ Advanced Template Editor</p>
+                      <p>Paste your complete HTML template below. This replaces all default styling and layout.
+                      Ensure you include click-tracking parameters and platform link handling.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Complete HTML Template
+                      </label>
+                      <textarea
+                        value={form.full_html_template}
+                        onChange={e => setForm(p => ({ ...p, full_html_template: e.target.value }))}
+                        rows={20}
+                        placeholder={`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Ready</title>
+    <style>
+        /* Your custom CSS here */
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0; 
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 40px;
+            border-radius: 10px;
+        }
+        .btn { 
+            background: #007bff; 
+            color: white; 
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Your file is ready to download</h1>
+        <p>Click the button below to get your file.</p>
+        
+        <!-- {Campaign_URL} is replaced with the applicable campaign URL -->
+        <!-- {Password} is replaced with the campaign Password/text content -->
+        <!-- Shortcodes are optional: use either, both, or neither -->
+        <div class="download-section">
+            <p>Download link: <strong>{Campaign_URL}</strong></p>
+            <p>Archive password: <strong>{Password}</strong></p>
+            <button class="btn" onclick="handleClick()">Download Now</button>
+        </div>
+    </div>
+    
+    <script>
+        // Continue to the campaign URL ({Campaign_URL} shortcode)
+        function handleClick() {
+            window.location.href = '{Campaign_URL}';
+        }
+    </script>
+</body>
+</html>`}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                      <div className="mt-2 text-xs text-gray-500 space-y-1">
+                        <p><strong>Supported Shortcodes:</strong></p>
+                        <p>• <code>&#123;Campaign_URL&#125;</code> — replaced with the applicable campaign URL</p>
+                        <p>• <code>&#123;Password&#125;</code> — replaced with the campaign Password/text content</p>
+                        <p>Shortcodes are optional — use either, both, or neither. Unsupported shortcodes (e.g. <code>&#123;Offer_Name&#125;</code>) trigger a warning when saving.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 mt-6">

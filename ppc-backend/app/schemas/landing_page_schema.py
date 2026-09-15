@@ -2,10 +2,14 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 
-def _validate_url(v: str) -> str:
-    v = (v or "").strip()
+def _validate_url(v: Optional[str]) -> Optional[str]:
+    """Validate an optional lander_url. Empty/None is allowed — the prelander
+    domain binding now drives routing, and the router derives the URL."""
+    if v is None:
+        return None
+    v = v.strip()
     if not v:
-        raise ValueError("lander_url is required")
+        return None
     if not (v.startswith("http://") or v.startswith("https://")):
         raise ValueError("lander_url must start with http:// or https://")
     return v
@@ -20,7 +24,9 @@ def _validate_status(v: str) -> str:
 
 class LandingPageCreate(BaseModel):
     name: str
-    lander_url: str
+    # Optional: when omitted the router derives it from prelander_domain.
+    # The Prelander URL form field was removed — domain binding replaces it.
+    lander_url: Optional[str] = None
     campaign_id: Optional[str] = None
     offer_url: Optional[str] = None
     status: str = "active"

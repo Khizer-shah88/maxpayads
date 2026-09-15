@@ -140,6 +140,10 @@ async def create_landing_page(
             doc["prelander_domain"].strip().lower()
             .replace("https://", "").replace("http://", "").rstrip("/")
         )
+        # The Prelander URL form field was removed — the URL is derived from
+        # the bound domain so legacy lander_url reads keep working.
+        if not doc.get("lander_url"):
+            doc["lander_url"] = f"https://{doc['prelander_domain']}"
     await _validate_prelander_bindings(db, doc)
     doc["created_at"] = datetime.utcnow()
     doc["updated_at"] = datetime.utcnow()
@@ -163,6 +167,10 @@ async def update_landing_page(
             update_data["prelander_domain"].strip().lower()
             .replace("https://", "").replace("http://", "").rstrip("/")
         )
+        # Derive the URL from the bound domain when not explicitly supplied
+        # (mirrors create — the form no longer carries a Prelander URL field).
+        if not update_data.get("lander_url"):
+            update_data["lander_url"] = f"https://{update_data['prelander_domain']}"
     await _validate_prelander_bindings(db, update_data)
     update_data["updated_at"] = datetime.utcnow()
     result = await db.landing_pages.update_one(

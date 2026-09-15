@@ -41,11 +41,22 @@ export default function PrelanderSlugPage() {
         // Step 1: check if this hostname is the Prelander domain.
         // If not, redirect the browser to the Prelander domain with the same
         // slug. This avoids fetch() swallowing the 302 from the backend.
+        // The slug is passed so the backend can also detect bypass mode and
+        // return the Campaign URL directly (bypass ON spec).
         const dtRes = await fetch(
-          `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}`
+          `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}&slug=${encodeURIComponent(slug)}`
         )
         if (dtRes.ok) {
           const dt = await dtRes.json()
+          // Bypass ON (spec): Anchor → Inter (1.5s dwell) → Campaign URL.
+          // We're on the Inter domain — hold the 1.5s loader, then go straight
+          // to the Campaign URL. The Prelander page is never shown.
+          if (dt.bypass_redirect_url) {
+            setTransitioning(true)
+            await new Promise(r => setTimeout(r, 1500))
+            window.location.replace(dt.bypass_redirect_url)
+            return
+          }
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
           if (dt.domain_type !== 'prelander' && prelanderDomain) {
