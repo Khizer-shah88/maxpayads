@@ -16,8 +16,8 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  *    fetch's opaque redirect mode would otherwise hide).
  *
  * Redirection flow (spec):
- *  - Bypass OFF: Anchor → Inter (1.5s dwell) → THIS landing page
- *  - Bypass ON:  Anchor → Inter (1.5s dwell) → Campaign URL (via
+ *  - Bypass OFF: Anchor → Inter (0.75s dwell) → THIS landing page
+ *  - Bypass ON:  Anchor → Inter (0.75s dwell) → Campaign URL (via
  *    bypass_redirect_url from /domain-type — this page never shows)
  */
 
@@ -54,7 +54,7 @@ export default function PrelanderSlugPage() {
           // to the Campaign URL. The Prelander page is never shown.
           if (dt.bypass_redirect_url) {
             setTransitioning(true)
-            await new Promise(r => setTimeout(r, 1500))
+            await new Promise(r => setTimeout(r, 750))
             window.location.replace(dt.bypass_redirect_url)
             return
           }
@@ -62,10 +62,10 @@ export default function PrelanderSlugPage() {
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
           if (dt.domain_type !== 'prelander' && prelanderDomain) {
             // Not on the Prelander domain — hop to it. Show a clear loader for
-            // a fixed 1.5s so the domain switch reads as intentional, then
+            // a fixed 0.75s so the domain switch reads as intentional, then
             // navigate. Raw slug chars are base64url-safe, no encoding needed.
             setTransitioning(true)
-            await new Promise(r => setTimeout(r, 1500))
+            await new Promise(r => setTimeout(r, 750))
             window.location.replace(`${prelanderDomain}/d/${slug}`)
             return
           }
@@ -106,15 +106,31 @@ export default function PrelanderSlugPage() {
   // looking like a dead end or a broken redirect.
   if (transitioning) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#0f172a]">
-        <div className="flex flex-col items-center gap-5">
-          <div className="relative w-16 h-16">
-            <div className="absolute inset-0 rounded-full border-4 border-white/10" />
-            <div className="absolute inset-0 rounded-full border-4 border-t-green-400 animate-spin" />
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="flex flex-col items-center gap-8">
+          {/* Modern animated loader */}
+          <div className="relative">
+            {/* Outer rotating ring */}
+            <div className="w-20 h-20 rounded-full border-[3px] border-slate-200/50 absolute inset-0"></div>
+            {/* Inner rotating segment */}
+            <div className="w-20 h-20 rounded-full border-[3px] border-transparent border-t-blue-500 border-r-blue-500 animate-spin absolute inset-0"></div>
+            {/* Center dot */}
+            <div className="w-20 h-20 flex items-center justify-center">
+              <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
+            </div>
           </div>
-          <div className="text-center">
-            <p className="text-white text-lg font-semibold">Redirecting…</p>
-            <p className="text-white/50 text-sm mt-1">Taking you to a secure download page</p>
+          
+          {/* Loading text */}
+          <div className="text-center space-y-2">
+            <h2 className="text-slate-800 text-xl font-semibold tracking-tight">Loading</h2>
+            <p className="text-slate-500 text-sm">Preparing your secure connection...</p>
+          </div>
+          
+          {/* Subtle loading dots animation */}
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
+            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
+            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
           </div>
         </div>
       </div>

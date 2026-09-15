@@ -59,13 +59,20 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
                 # Not a redirect chain domain, continue normally
                 return await call_next(request)
             
-            # Handle the redirect chain flow
-            if host == chain["anchor_domain"]:
+            # Determine the position of this domain in the chain
+            chain_position = self._get_domain_position_in_chain(chain, host)
+            
+            # Handle the redirect chain flow based on position
+            if chain_position == "anchor":
                 return await self._handle_anchor_step(request, chain, db, redis)
-            elif host == chain_inter_domain(chain):
+            elif chain_position == "inter":
                 return await self._handle_intermediate_step(request, chain, db, redis)
-            elif host in chain_prelander_pool(chain):
+            elif chain_position == "prelander":
                 return await self._handle_prelander_step(request, chain, db, redis)
+            elif chain_position.startswith("extra_"):
+                # Handle extra hop domains (C, D, E, etc.)
+                hop_index = int(chain_position.split("_")[1])
+                return await self._handle_extra_hop(request, chain, db, redis, hop_index)
             else:
                 # Unknown domain in chain, continue normally
                 return await call_next(request)
@@ -85,9 +92,58 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
                 {LEGACY_INTER_DOMAIN_KEY: domain},
                 {"prelander_pool": domain},
                 {LEGACY_PRELANDER_POOL_KEY: domain},
+                {"extra_domains": domain},  # Support configurable chain length
             ],
             "status": "active"
         })
+    
+    def _get_domain_position_in_chain(self, chain: dict, domain: str) -> str:
+        """
+        Determine the position of a domain in the chain.
+        Returns: 'anchor', 'inter', 'extra_N' (where N is the index), or 'prelander'
+        """
+        if domain == chain["anchor_domain"]:
+            return "anchor"
+        elif domain == chain_inter_domain(chain):
+            return "inter"
+        
+        # Check extra domains
+        extra_domains = chain.get("extra_domains", [])
+        if domain in extra_domains:
+            return f"extra_{extra_domains.index(domain)}"
+        
+        # Check prelander pool
+        if domain in chain_prelander_pool(chain):
+            return "prelander"
+        
+        return "unknown"
+    
+    def _get_next_hop_in_chain(self, chain: dict, current_position: str) -> Optional[str]:
+        """
+        Get the next domain in the chain based on current position.
+        Chain flow: Anchor → Inter → Extra[0] → Extra[1] → ... → Extra[N] → Prelander
+        """
+        extra_domains = chain.get("extra_domains", [])
+        
+        if current_position == "anchor":
+            return chain_inter_domain(chain)
+        elif current_position == "inter":
+            # If there are extra hops, go to the first one, otherwise go to prelander
+            if extra_domains:
+                return extra_domains[0]
+            else:
+                # Return prelander from pool (will be selected with weights)
+                return "PRELANDER_POOL"
+        elif current_position.startswith("extra_"):
+            hop_index = int(current_position.split("_")[1])
+            # If there's a next extra hop, return it
+            if hop_index + 1 < len(extra_domains):
+                return extra_domains[hop_index + 1]
+            else:
+                # Last extra hop, go to prelander
+                return "PRELANDER_POOL"
+        
+        return None
     
     async def _handle_anchor_step(self, request: Request, chain: dict, db, redis):
         """
@@ -173,11 +229,12 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
     
     async def _handle_intermediate_step(self, request: Request, chain: dict, db, redis):
         """
-        Intermediate domain: Validate session cookie and redirect to pre-lander.
+        Intermediate domain: Validate session cookie and redirect to next hop.
+        Next hop could be an extra domain or prelander pool.
         """
         if not chain.get("session_validation", True):
             # Session validation disabled, pass through
-            return await self._redirect_to_prelander(request, chain, db)
+            return await self._redirect_to_next_hop(request, chain, db, "inter")
         
         chain_id = str(chain["_id"])
         cookie_name = f"rcs_{chain_id}"
@@ -215,24 +272,55 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             {"$set": {"inter_timestamp": datetime.utcnow()}}
         )
         
-        # Redirect to selected pre-lander domain
-        prelander_domain = session_info["selected_prelander"]
-        prelander_url = f"https://{prelander_domain}{request.url.path}"
-        if request.url.query:
-            prelander_url += f"?{request.url.query}"
+        # Redirect to next hop (extra domain or prelander)
+        return await self._redirect_to_next_hop(request, chain, db, "inter", session_info, cookie_name, session_token)
+    
+    async def _handle_extra_hop(self, request: Request, chain: dict, db, redis, hop_index: int):
+        """
+        Handle extra hop domains (C, D, E, etc.) in configurable-length chains.
+        Validates session and redirects to the next hop or prelander.
+        """
+        if not chain.get("session_validation", True):
+            # Session validation disabled, pass through
+            return await self._redirect_to_next_hop(request, chain, db, f"extra_{hop_index}")
         
-        response = RedirectResponse(url=prelander_url, status_code=302)
-        # Keep the session cookie for pre-lander validation
-        response.set_cookie(
-            key=cookie_name,
-            value=session_token,
-            max_age=chain["cookie_lifetime"] * 60,
-            secure=True,
-            httponly=True,
-            samesite="strict"
+        chain_id = str(chain["_id"])
+        cookie_name = f"rcs_{chain_id}"
+        session_token = request.cookies.get(cookie_name)
+        
+        if not session_token:
+            return await self._block_request(request, chain, db, "missing_session_cookie")
+        
+        # Validate session in Redis
+        session_key = f"redirect_chain_session:{session_token}"
+        session_data = await redis.get(session_key)
+        
+        if not session_data:
+            return await self._block_request(request, chain, db, "session_expired")
+        
+        # Parse session data
+        try:
+            import ast
+            session_info = ast.literal_eval(session_data.decode() if isinstance(session_data, bytes) else session_data)
+        except:
+            return await self._block_request(request, chain, db, "invalid_session_data")
+        
+        # Validate IP and User-Agent
+        visitor_ip = self._get_client_ip(request)
+        user_agent = request.headers.get("user-agent", "")
+        
+        if (session_info.get("visitor_ip") != visitor_ip or 
+            session_info.get("user_agent") != user_agent):
+            return await self._block_request(request, chain, db, "fingerprint_mismatch")
+        
+        # Update session record with extra hop timestamp
+        await db.redirect_chain_sessions.update_one(
+            {"session_token": session_token},
+            {"$set": {f"extra_hop_{hop_index}_timestamp": datetime.utcnow()}}
         )
         
-        return response
+        # Redirect to next hop
+        return await self._redirect_to_next_hop(request, chain, db, f"extra_{hop_index}", session_info, cookie_name, session_token)
     
     async def _handle_prelander_step(self, request: Request, chain: dict, db, redis):
         """
@@ -306,6 +394,63 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             prelander_url += f"?{request.url.query}"
         
         return RedirectResponse(url=prelander_url, status_code=302)
+    
+    async def _redirect_to_next_hop(
+        self, 
+        request: Request, 
+        chain: dict, 
+        db, 
+        current_position: str,
+        session_info: Optional[dict] = None,
+        cookie_name: Optional[str] = None,
+        session_token: Optional[str] = None
+    ):
+        """
+        Redirect to the next hop in the chain based on current position.
+        Supports configurable chain length: Anchor → Inter → C → D → ... → Prelander
+        """
+        from app.services.domain_service import select_active_prelander
+        
+        next_hop = self._get_next_hop_in_chain(chain, current_position)
+        
+        if not next_hop:
+            return await self._block_request(request, chain, db, "invalid_chain_configuration")
+        
+        # If next hop is prelander pool, select one
+        if next_hop == "PRELANDER_POOL":
+            if session_info and "selected_prelander" in session_info:
+                # Use pre-selected prelander from session
+                next_domain = session_info["selected_prelander"]
+            else:
+                # Select weighted prelander
+                next_domain = await select_active_prelander(db, chain_prelander_pool(chain))
+                if not next_domain:
+                    pool = chain_prelander_pool(chain)
+                    if not pool:
+                        return await self._block_request(request, chain, db, "no_active_prelander")
+                    next_domain = pool[0]
+        else:
+            next_domain = next_hop
+        
+        # Build next URL
+        next_url = f"https://{next_domain}{request.url.path}"
+        if request.url.query:
+            next_url += f"?{request.url.query}"
+        
+        response = RedirectResponse(url=next_url, status_code=302)
+        
+        # Keep session cookie if we have one
+        if cookie_name and session_token:
+            response.set_cookie(
+                key=cookie_name,
+                value=session_token,
+                max_age=chain["cookie_lifetime"] * 60,
+                secure=True,
+                httponly=True,
+                samesite="strict"
+            )
+        
+        return response
     
     async def _serve_prelander_content(self, request: Request, chain: dict, db):
         """

@@ -351,8 +351,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
     # ── Bypass handling ─────────────────────────────────────────────────────
     # Spec (both modes pass through the Intermediate domain):
-    #   Bypass OFF: Anchor → Inter (logs, 1.5s dwell) → Prelander landing page
-    #   Bypass ON:  Anchor → Inter (logs, 1.5s dwell) → Campaign URL
+    #   Bypass OFF: Anchor → Inter (logs, 0.75s dwell) → Prelander landing page
+    #   Bypass ON:  Anchor → Inter (logs, 0.75s dwell) → Campaign URL
     # In BOTH cases /click sends the visitor to the Inter domain /d/{slug}.
     # The slug carries campaign/offer ids; the prelander resolver on the Inter
     # domain logs the hop and decides the next hop (prelander vs campaign URL).
@@ -369,14 +369,28 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         clean_url = _clean_campaign_url(resolved_offer_url)
         if ctx is not None:
             ctx.skip_prelander = True
+        
+        # When a chain is configured, use anchor as entry point even in bypass mode
+        # The chain will handle hopping through domains, but prelander is skipped
+        anchor_base = chain.get("anchor_domain") if chain else None
         inter_base = chain_inter_domain(chain) if chain else None
-        if not inter_base:
-            try:
-                from app.services.domain_service import resolve_domain_url
-                inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-            except Exception:
-                inter_base = None
-        if inter_base:
+        
+        if anchor_base:
+            # Use anchor domain as entry when chain is configured
+            entry_base = f"https://{anchor_base}"
+            os_param_b = slug_os_param(os_name)
+            offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
+            slug_b = build_prelander_slug(os_param_b, str(campaign_id), offer_id_b, country_code)
+            dest = f"{entry_base.rstrip('/')}/d/{slug_b}"
+            logger.info("[ROUTE] BYPASS ON: via Anchor chain %s → campaign %s", dest, clean_url)
+            if ctx is not None:
+                ctx.anchor_url = entry_base
+                ctx.inter_url = inter_base
+            _record(ctx, STAGE_CHAIN, "resolved_bypass_anchor", anchor=anchor_base, inter=inter_base, chain=(chain or {}).get("name"))
+            _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_chain", source=bypass_source, url=clean_url, anchor=anchor_base)
+            return dest, referrer_suppression
+        elif inter_base:
+            # No chain but inter domain exists
             os_param_b = slug_os_param(os_name)
             offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
             slug_b = build_prelander_slug(os_param_b, str(campaign_id), offer_id_b, country_code)
@@ -387,7 +401,27 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=inter_base, chain=(chain or {}).get("name"))
             _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=inter_base)
             return dest, referrer_suppression
-        logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
+        
+        # No chain or inter domain
+        if not inter_base:
+            try:
+                from app.services.domain_service import resolve_domain_url
+                inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+                if inter_base:
+                    os_param_b = slug_os_param(os_name)
+                    offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
+                    slug_b = build_prelander_slug(os_param_b, str(campaign_id), offer_id_b, country_code)
+                    dest = f"{inter_base.rstrip('/')}/d/{slug_b}"
+                    logger.info("[ROUTE] BYPASS ON: via resolved Inter %s → campaign %s", dest, clean_url)
+                    if ctx is not None:
+                        ctx.inter_url = inter_base
+                    _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=inter_base, chain=None)
+                    _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=inter_base)
+                    return dest, referrer_suppression
+            except Exception:
+                pass
+        
+        logger.info(f"[ROUTE] BYPASS ON, no chain/inter domain: direct to campaign URL: {clean_url}")
         _record(ctx, STAGE_CHAIN, "not_needed_bypass")
         _record(ctx, STAGE_PRELANDER, "skipped_bypass", source=bypass_source, url=clean_url)
         return clean_url, referrer_suppression
@@ -452,15 +486,17 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             )
             last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
     intermediate_base = (chain_inter_domain(chain) if chain else None) or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-    has_managed_domain = bool(last_base or intermediate_base)
+    anchor_base = chain.get("anchor_domain") if chain else None
+    has_managed_domain = bool(last_base or intermediate_base or anchor_base)
 
     if ctx is not None:
         ctx.prelander_url = last_base
         ctx.inter_url = intermediate_base
+        ctx.anchor_url = anchor_base
     _record(
         ctx, STAGE_CHAIN,
         "resolved" if has_managed_domain else "no_managed_domain",
-        anchor=getattr(ctx, "request_host", None) if ctx is not None else None,
+        anchor=anchor_base or getattr(ctx, "request_host", None) if ctx is not None else None,
         inter=intermediate_base,
         prelander=last_base,
         chain=(chain or {}).get("name"),
@@ -480,17 +516,21 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
         # Entry point for the prelander hop. Per the documented redirection
         # architecture (Bypass OFF):
-        #   Publisher Smartlink → Anchor → Inter → Prelander → Campaign URL
-        # The Inter domain comes BEFORE the Prelander domain: it validates and
-        # logs the hop, then the /d/[slug] page on the Inter domain forwards the
-        # visitor to the Prelander domain. Only when no Inter domain is
-        # configured does the visitor land on the Prelander domain directly.
-        if intermediate_base:
+        #   Publisher Smartlink → Anchor → Inter → Extra Domains → Prelander → Campaign URL
+        # The Anchor domain is the entry point when a chain is configured: it
+        # generates the session cookie and starts the redirect chain flow.
+        # The middleware handles hopping through Inter → Extra → Prelander domains.
+        # Only when no chain/anchor is configured does the visitor land directly
+        # on Inter or Prelander.
+        if anchor_base:
+            entry_domain = f"https://{anchor_base}".rstrip("/")
+            logger.info("[ROUTE] Chain anchor domain (entry): %s", entry_domain)
+        elif intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] Inter domain (entry): %s", entry_domain)
+            logger.info("[ROUTE] Inter domain (entry, no chain): %s", entry_domain)
         elif last_base:
             entry_domain = last_base.rstrip("/")
-            logger.info("[ROUTE] No inter domain configured, entering on prelander: %s", entry_domain)
+            logger.info("[ROUTE] No chain/inter, entering on prelander: %s", entry_domain)
         else:
             entry_domain = lander_url.rstrip("/")
             logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
@@ -506,7 +546,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             ctx, STAGE_PRELANDER, "prelander",
             entry_domain=entry_domain,
             entry_type=(
-                "inter" if intermediate_base
+                "anchor" if anchor_base
+                else "inter" if intermediate_base
                 else "prelander" if last_base
                 else "legacy_lander"
             ),

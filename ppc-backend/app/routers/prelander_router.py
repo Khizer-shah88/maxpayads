@@ -133,7 +133,7 @@ async def get_domain_type(
 
     When slug is supplied and the host is NOT the Prelander domain, the slug is
     decoded and the campaign/offer bypass checked: bypass ON returns the
-    Campaign URL in bypass_redirect_url so the /d page (after its 1.5s dwell on
+    Campaign URL in bypass_redirect_url so the /d page (after its 0.75s dwell on
     the Inter domain) sends the visitor straight to the campaign.
 
     `last_domain` mirrors `prelander_domain` for browser sessions still running
@@ -148,7 +148,7 @@ async def get_domain_type(
     doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
     domain_type = normalize_domain_type(doc.get("domain_type"), default="unknown") if doc else "unknown"
 
-    # ── Bypass detection (spec: Inter dwells 1.5s, then Campaign URL) ────────
+    # ── Bypass detection (spec: Inter dwells 0.75s, then Campaign URL) ────────
     bypass_redirect_url = None
     if domain_type != DOMAIN_TYPE_PRELANDER and slug:
         decoded = _decode_slug(slug)
@@ -229,7 +229,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             publisher_id = publisher_ids[0] if publisher_ids else None
 
             # ── Bypass check (spec) ──────────────────────────────────────────
-            # Bypass ON: Anchor → Inter (logs, 1.5s dwell) → Campaign URL.
+            # Bypass ON: Anchor → Inter (logs, 0.75s dwell) → Campaign URL.
             # The visitor is on the Inter domain now, so decode the slug and
             # check the campaign/offer direct_redirect_mode. ON → 302 straight
             # to the Campaign URL, never touching the Prelander domain.
