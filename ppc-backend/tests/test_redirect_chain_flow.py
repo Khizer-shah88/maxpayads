@@ -226,13 +226,16 @@ class TestRedirectChainFlow:
     
     async def test_global_rule_applies_to_all_publishers(self, db):
         """Test that chains apply to ALL publishers (global rule)"""
-        # Create redirect chain
+        # Clean up any existing test chains first
+        await db.redirect_chains.delete_many({"name": {"$regex": "^Global Chain"}})
+        
+        # Create redirect chain with unique anchor domain
         chain_doc = {
-            "name": "Global Chain",
-            "anchor_domain": "anchor.global.com",
-            "inter_domain": "inter.global.com",
+            "name": "Global Chain Test",
+            "anchor_domain": "anchor.globaltest.com",
+            "inter_domain": "inter.globaltest.com",
             "extra_domains": [],
-            "prelander_pool": ["pre.global.com"],
+            "prelander_pool": ["pre.globaltest.com"],
             "session_validation": True,
             "cookie_lifetime": 60,
             "status": "active",
@@ -249,31 +252,37 @@ class TestRedirectChainFlow:
         # Create multiple publishers
         pub1 = await db.publishers.insert_one({
             "name": "Publisher 1",
-            "email": "pub1@test.com",
+            "email": "pub1globaltest@test.com",
             "status": "active",
             "created_at": datetime.utcnow(),
         })
         pub2 = await db.publishers.insert_one({
             "name": "Publisher 2",
-            "email": "pub2@test.com",
+            "email": "pub2globaltest@test.com",
             "status": "active",
             "created_at": datetime.utcnow(),
         })
         
         # Resolve chain for different publishers - should return same chain
+        # Use the anchor domain to specifically resolve our test chain
         from app.services.traffic_router import resolve_active_chain
         
-        chain_for_pub1 = await resolve_active_chain(db, str(pub1.inserted_id))
-        chain_for_pub2 = await resolve_active_chain(db, str(pub2.inserted_id))
-        chain_for_none = await resolve_active_chain(db, None)
+        chain_for_pub1 = await resolve_active_chain(db, str(pub1.inserted_id), "anchor.globaltest.com")
+        chain_for_pub2 = await resolve_active_chain(db, str(pub2.inserted_id), "anchor.globaltest.com")
+        chain_for_none = await resolve_active_chain(db, None, "anchor.globaltest.com")
         
-        # All should get the same chain
+        # All should get the same chain (our specific test chain)
         assert chain_for_pub1 is not None
         assert chain_for_pub2 is not None
         assert chain_for_none is not None
         assert str(chain_for_pub1["_id"]) == str(chain_id)
         assert str(chain_for_pub2["_id"]) == str(chain_id)
         assert str(chain_for_none["_id"]) == str(chain_id)
+        
+        # Verify it's the same chain object regardless of publisher
+        assert chain_for_pub1["anchor_domain"] == "anchor.globaltest.com"
+        assert chain_for_pub2["anchor_domain"] == "anchor.globaltest.com"
+        assert chain_for_none["anchor_domain"] == "anchor.globaltest.com"
         
         # Cleanup
         await db.redirect_chains.delete_one({"_id": chain_id})
