@@ -195,6 +195,11 @@ export interface LandingPage {
   campaign_id?: string | null
   status: 'active' | 'paused'
   weight: number
+  // Prelander infrastructure bindings (Domain Glossary)
+  prelander_domain?: string | null
+  prelander_domain_name?: string | null
+  prelander_template_id?: string | null
+  prelander_template_name?: string | null
   created_at: string
 }
 

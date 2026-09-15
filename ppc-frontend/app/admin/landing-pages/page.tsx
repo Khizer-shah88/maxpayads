@@ -1,16 +1,17 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Edit, Trash2, Globe, Monitor, Apple, Smartphone, X } from 'lucide-react'
+import { Plus, Edit, Trash2, Globe, Monitor, Apple, Smartphone, X, Layout } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { landingPageApi, campaignApi } from '@/lib/api'
+import { landingPageApi, campaignApi, adminApi, prlanderTemplateApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { LandingPage } from '@/types'
+import type { RedirectionDomain } from '@/types'
 
 interface DeviceCampaign {
   id: string
@@ -18,6 +19,14 @@ interface DeviceCampaign {
   device_os: string
   offer_url: string
   password: string
+}
+
+interface PrelanderTemplateLite {
+  id: string
+  name: string
+  os_type: string
+  status: string
+  is_default: boolean
 }
 
 const DEVICE_ICONS: Record<string, any> = {
@@ -53,22 +62,30 @@ export default function LandingPagesPage() {
   const { initialize } = useAuth()
   const [pages, setPages] = useState<LandingPage[]>([])
   const [campaigns, setCampaigns] = useState<DeviceCampaign[]>([])
+  const [prelanderDomains, setPrelanderDomains] = useState<RedirectionDomain[]>([])
+  const [templates, setTemplates] = useState<PrelanderTemplateLite[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50' })
+  const [form, setForm] = useState({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<LandingPage | null>(null)
   const [deleting, setDeleting] = useState(false)
+  // OS filter for the list (Requirement 4) — '' = all
+  const [osFilter, setOsFilter] = useState('')
 
   useEffect(() => { initialize() }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [lpRes, cRes] = await Promise.all([
+      const [lpRes, cRes, dRes, tRes] = await Promise.all([
         landingPageApi.getAll().catch(() => ({ data: { landing_pages: [] } })),
         campaignApi.getAll({ status: 'active' }).catch(() => ({ data: { campaigns: [] } })),
+        adminApi.getRedirectionDomains({ domain_type: 'prelander', status: 'active' })
+          .catch(() => ({ data: { domains: [] } })),
+        prlanderTemplateApi.getAll({ status: 'active' })
+          .catch(() => ({ data: { templates: [] } })),
       ])
       setPages(lpRes.data.landing_pages || [])
 
@@ -82,6 +99,8 @@ export default function LandingPagesPage() {
         password: c.password || '',
       }))
       setCampaigns(campaignList)
+      setPrelanderDomains(dRes.data.domains || [])
+      setTemplates(tRes.data.templates || [])
     } catch { setPages([]) }
     finally { setLoading(false) }
   }, [])
@@ -108,6 +127,8 @@ export default function LandingPagesPage() {
         status: form.status,
         weight,
         campaign_id: form.campaign_id,
+        prelander_domain: form.prelander_domain || null,
+        prelander_template_id: form.prelander_template_id || null,
       }
       if (modal === 'edit' && editId) {
         await landingPageApi.update(editId, data)
@@ -138,6 +159,15 @@ export default function LandingPagesPage() {
   const activePages = pages.filter(p => p.status === 'active')
   const totalWeight = activePages.reduce((sum, p) => sum + p.weight, 0)
 
+  // OS filter (Requirement 4): a landing page matches when its bound campaign's
+  // device_os equals the filter. 'all' shows everything.
+  const filteredPages = osFilter
+    ? pages.filter(p => {
+        const c = campaigns.find(c => c.id === p.campaign_id)
+        return c?.device_os === osFilter
+      })
+    : pages
+
   const getCampaignDisplay = (campaignId: string) => {
     const c = campaigns.find(c => c.id === campaignId)
     if (!c) return null
@@ -154,6 +184,26 @@ export default function LandingPagesPage() {
   const columns = [
     { key: 'name', label: 'Name', render: (p: LandingPage) => <span className="font-medium text-gray-900">{p.name}</span> },
     { key: 'lander_url', label: 'Prelander URL', render: (p: LandingPage) => <span className="text-sm text-gray-500 max-w-xs block truncate font-mono">{p.lander_url}</span> },
+    { key: 'prelander_domain', label: 'Prelander Domain', render: (p: LandingPage) => (
+      p.prelander_domain_name ? (
+        <div className="flex items-center gap-1.5">
+          <Globe size={13} className="text-emerald-600 flex-shrink-0" />
+          <span className="text-sm font-mono text-gray-800">{p.prelander_domain_name}</span>
+        </div>
+      ) : (
+        <span className="text-xs text-gray-300">—</span>
+      )
+    )},
+    { key: 'prelander_template', label: 'Prelander Template', render: (p: LandingPage) => (
+      p.prelander_template_name ? (
+        <div className="flex items-center gap-1.5">
+          <Layout size={13} className="text-blue-600 flex-shrink-0" />
+          <span className="text-sm text-gray-800">{p.prelander_template_name}</span>
+        </div>
+      ) : (
+        <span className="text-xs text-gray-300">—</span>
+      )
+    )},
     { key: 'campaign_id', label: 'Campaign', render: (p: LandingPage) => {
       return p.campaign_id ? getCampaignDisplay(p.campaign_id) || <span className="text-gray-300">—</span> : <span className="text-amber-500 text-xs">Unassigned</span>
     }},
@@ -180,6 +230,8 @@ export default function LandingPagesPage() {
             campaign_id: p.campaign_id || '',
             status: p.status,
             weight: p.weight.toString(),
+            prelander_domain: p.prelander_domain || '',
+            prelander_template_id: p.prelander_template_id || '',
           })
           setModal('edit')
         }}
@@ -194,7 +246,7 @@ export default function LandingPagesPage() {
 
   const openCreate = () => {
     setEditId(null)
-    setForm({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50' })
+    setForm({ name: '', lander_url: '', campaign_id: '', status: 'active', weight: '50', prelander_domain: '', prelander_template_id: '' })
     setModal('create')
   }
 
@@ -221,7 +273,25 @@ export default function LandingPagesPage() {
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 p-6">
-          <DataTable columns={columns} data={pages} loading={loading} emptyMessage="No landing pages yet." />
+          {/* OS filter (Requirement 4) */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <Monitor size={15} className="text-gray-400" />
+            <select
+              value={osFilter}
+              onChange={e => setOsFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">All OS</option>
+              <option value="windows">Windows</option>
+              <option value="mac">Mac</option>
+              <option value="android">Android</option>
+              <option value="global">Global</option>
+            </select>
+            <span className="text-sm text-gray-400 ml-auto">
+              {filteredPages.length} of {pages.length} page{pages.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <DataTable columns={columns} data={filteredPages} loading={loading} emptyMessage="No landing pages yet." />
         </div>
 
         {modal && (
@@ -268,6 +338,37 @@ export default function LandingPagesPage() {
                       </div>
                     )
                   })()}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Prelander Domain</label>
+                  <select value={form.prelander_domain} onChange={e => setForm(p => ({ ...p, prelander_domain: e.target.value }))} className={inputClass}>
+                    <option value="">Not bound (uses routing engine pool)</option>
+                    {prelanderDomains.map(d => (
+                      <option key={d.id} value={d.domain}>{d.domain}{d.is_default ? ' ★' : ''}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">Prelander redirection domains from the Domain Glossary</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Prelander Template</label>
+                  <select
+                    value={form.prelander_template_id}
+                    onChange={e => setForm(p => ({ ...p, prelander_template_id: e.target.value }))}
+                    className={inputClass}
+                    disabled={!form.prelander_domain}
+                  >
+                    <option value="">OS Default Template</option>
+                    {templates.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}{t.is_default ? ' (default)' : ''} — {t.os_type}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {form.prelander_domain
+                      ? 'Pick a specific template, or leave as OS Default for the domain\'s assigned/default template'
+                      : 'Select a prelander domain first to enable template selection'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
