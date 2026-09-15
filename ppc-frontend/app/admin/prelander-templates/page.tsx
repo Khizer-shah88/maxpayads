@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, LayoutTemplate, Eye, EyeOff, Archive,
-  CheckCircle, Tag, MonitorSmartphone, Monitor, Apple, Globe, Star, X, Smartphone,
+  CheckCircle, MonitorSmartphone, Star, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -38,46 +38,14 @@ interface PrlanderTemplate {
   used_by?: { id: string; name: string; lander_url: string; status: string }[]
 }
 
+// Spec: the template form collects ONLY Template Name, Internal Notes and
+// Status. Every other template field keeps its backend default (os_type "both",
+// built-in page copy); on edit those fields are never sent, so existing HTML
+// templates stay intact (the backend updates only what the client sends).
 const EMPTY_FORM = {
   name: '',
-  description: '',
-  os_type: 'both' as 'windows' | 'mac' | 'android' | 'both',
   status: 'active' as 'active' | 'paused' | 'archived',
-  title: 'Your file is ready to download',
-  subtitle: 'Your file is prepared. Copy the link to download.',
-  button_text: 'Copy',
-  show_password_field: true,
-  show_video: false,
-  video_url: '',
-  tags: '',
   notes: '',
-  // Full HTML template
-  full_html_template: '',
-}
-
-// ─── Os chip ──────────────────────────────────────────────────────────────────
-
-function OsChip({ os }: { os: string }) {
-  if (os === 'windows') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-      <Monitor size={11} /> Windows
-    </span>
-  )
-  if (os === 'mac') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-700 border border-gray-200">
-      <Apple size={11} /> Mac
-    </span>
-  )
-  if (os === 'android') return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
-      <Smartphone size={11} /> Android
-    </span>
-  )
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-      <Globe size={11} /> Both
-    </span>
-  )
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -87,7 +55,6 @@ export default function PrlanderTemplatesPage() {
   const [templates, setTemplates] = useState<PrlanderTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
-  const [osFilter, setOsFilter] = useState('')
   const [modal, setModal] = useState<'create' | 'edit' | 'view' | null>(null)
   const [selected, setSelected] = useState<PrlanderTemplate | null>(null)
   const [form, setForm] = useState({ ...EMPTY_FORM })
@@ -105,7 +72,6 @@ export default function PrlanderTemplatesPage() {
     try {
       const res = await prlanderTemplateApi.getAll({
         status: statusFilter || undefined,
-        os_type: osFilter || undefined,
       })
       setTemplates(res.data?.templates ?? [])
     } catch (err: any) {
@@ -113,7 +79,7 @@ export default function PrlanderTemplatesPage() {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, osFilter])
+  }, [statusFilter])
 
   useEffect(() => { load() }, [load])
 
@@ -129,19 +95,8 @@ export default function PrlanderTemplatesPage() {
     setSelected(t)
     setForm({
       name: t.name,
-      description: t.description || '',
-      os_type: t.os_type,
       status: t.status,
-      title: t.title,
-      subtitle: t.subtitle,
-      button_text: t.button_text,
-      show_password_field: t.show_password_field,
-      show_video: t.show_video,
-      video_url: t.video_url || '',
-      tags: t.tags.join(', '),
       notes: t.notes || '',
-      // Full HTML template
-      full_html_template: t.full_html_template || '',
     })
     setModal('edit')
   }
@@ -161,20 +116,13 @@ export default function PrlanderTemplatesPage() {
     if (!form.name.trim()) { toast.error('Name is required'); return }
     setSaving(true)
     try {
+      // Only the three spec'd fields are sent. The backend fills defaults for
+      // everything else on create, and exclude_unset keeps every other field
+      // (including an existing full_html_template) untouched on update.
       const payload = {
         name: form.name.trim(),
-        description: form.description.trim() || null,
-        os_type: form.os_type,
         status: form.status,
-        title: form.title.trim(),
-        subtitle: form.subtitle.trim(),
-        button_text: form.button_text.trim(),
-        show_password_field: form.show_password_field,
-        show_video: form.show_video,
-        video_url: form.video_url.trim() || null,
-        tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
         notes: form.notes.trim() || null,
-        full_html_template: form.full_html_template.trim() || null,
       }
       let res: any
       if (modal === 'edit' && selected) {
@@ -279,14 +227,6 @@ export default function PrlanderTemplatesPage() {
             <option value="paused">Paused</option>
             <option value="archived">Archived</option>
           </select>
-          <select value={osFilter} onChange={e => setOsFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20">
-            <option value="">All OS</option>
-            <option value="windows">Windows</option>
-            <option value="mac">Mac</option>
-            <option value="android">Android</option>
-            <option value="both">Both</option>
-          </select>
           <span className="text-sm text-gray-400 ml-auto">{templates.length} template{templates.length !== 1 ? 's' : ''}</span>
         </div>
 
@@ -312,8 +252,8 @@ export default function PrlanderTemplatesPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 truncate">{t.name}</p>
-                    {t.description && (
-                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{t.description}</p>
+                    {t.notes && (
+                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{t.notes}</p>
                     )}
                   </div>
                   <StatusBadge status={t.status} />
@@ -321,20 +261,9 @@ export default function PrlanderTemplatesPage() {
 
                 {/* Chips */}
                 <div className="flex flex-wrap gap-1.5">
-                  <OsChip os={t.os_type} />
                   {t.is_default && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                       <Star size={10} className="fill-amber-400 text-amber-400" /> Default
-                    </span>
-                  )}
-                  {t.show_video && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                      📹 Video
-                    </span>
-                  )}
-                  {t.show_password_field && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
-                      🔑 Password
                     </span>
                   )}
                   {t.full_html_template && (
@@ -344,24 +273,12 @@ export default function PrlanderTemplatesPage() {
                   )}
                 </div>
 
-                {/* Content preview */}
-                <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-600 space-y-1">
-                  <p><span className="text-gray-400">Title:</span> {t.title}</p>
-                  <p><span className="text-gray-400">Button:</span> {t.button_text}</p>
-                </div>
-
-                {/* Usage + tags */}
+                {/* Usage */}
                 <div className="flex items-center justify-between text-xs text-gray-400">
                   <span className="flex items-center gap-1">
                     <CheckCircle size={12} className={t.usage_count > 0 ? 'text-emerald-500' : ''} />
                     Used by {t.usage_count} landing page{t.usage_count !== 1 ? 's' : ''}
                   </span>
-                  {t.tags.length > 0 && (
-                    <span className="flex items-center gap-1">
-                      <Tag size={10} />
-                      {t.tags.slice(0, 2).join(', ')}{t.tags.length > 2 ? ` +${t.tags.length - 2}` : ''}
-                    </span>
-                  )}
                 </div>
 
                 {/* Actions */}
@@ -429,82 +346,14 @@ export default function PrlanderTemplatesPage() {
                     placeholder="e.g. Windows Download v2" className={inp} />
                 </div>
 
-                {/* Description */}
+                {/* Status */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-                    placeholder="Optional short description" className={inp} />
-                </div>
-
-                {/* OS type + Status */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">OS Target</label>
-                    <select value={form.os_type} onChange={e => setForm(p => ({ ...p, os_type: e.target.value as typeof form.os_type }))} className={inp}>
-                      <option value="both">Both (auto-detect)</option>
-                      <option value="windows">Windows only</option>
-                      <option value="mac">Mac only</option>
-                      <option value="android">Android only</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as typeof form.status }))} className={inp}>
-                      <option value="active">Active</option>
-                      <option value="paused">Paused</option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Page content */}
-                <div className="border border-gray-200 rounded-xl p-4 space-y-3">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Page Content</p>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Headline / Title</label>
-                    <input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} className={inp} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Subtitle</label>
-                    <input value={form.subtitle} onChange={e => setForm(p => ({ ...p, subtitle: e.target.value }))} className={inp} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Button Text</label>
-                    <input value={form.button_text} onChange={e => setForm(p => ({ ...p, button_text: e.target.value }))} className={inp} />
-                  </div>
-                </div>
-
-                {/* Toggles */}
-                <div className="flex flex-wrap gap-4">
-                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                    <input type="checkbox" checked={form.show_password_field}
-                      onChange={e => setForm(p => ({ ...p, show_password_field: e.target.checked }))}
-                      className="rounded border-gray-300 text-primary focus:ring-primary/30 w-4 h-4" />
-                    <span className="text-sm text-gray-700">Show password field</span>
-                  </label>
-                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                    <input type="checkbox" checked={form.show_video}
-                      onChange={e => setForm(p => ({ ...p, show_video: e.target.checked }))}
-                      className="rounded border-gray-300 text-primary focus:ring-primary/30 w-4 h-4" />
-                    <span className="text-sm text-gray-700">Show video tutorial</span>
-                  </label>
-                </div>
-
-                {form.show_video && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Video URL</label>
-                    <input value={form.video_url} onChange={e => setForm(p => ({ ...p, video_url: e.target.value }))}
-                      placeholder="https://... or /terminal.mp4" className={inp} />
-                  </div>
-                )}
-
-                {/* Tags */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tags <span className="text-gray-400 font-normal">(comma-separated)</span>
-                  </label>
-                  <input value={form.tags} onChange={e => setForm(p => ({ ...p, tags: e.target.value }))}
-                    placeholder="windows, download, v2" className={inp} />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as typeof form.status }))} className={inp}>
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="archived">Archived</option>
+                  </select>
                 </div>
 
                 {/* Notes */}
@@ -512,108 +361,6 @@ export default function PrlanderTemplatesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Internal Notes</label>
                   <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
                     rows={2} placeholder="Optional admin notes" className={inp} />
-                </div>
-
-                {/* Full Source Code Editor */}
-                <div className="border border-gray-200 rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-gray-700">Full Source Code Template</p>
-                    <span className="text-xs text-gray-400">Complete HTML/CSS/JS</span>
-                  </div>
-                  
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                    <p className="font-semibold mb-1">⚠️ Advanced Template Editor</p>
-                    <p>Paste your complete HTML template below. This replaces all default styling and layout. 
-                    Ensure you include click-tracking parameters and platform link handling.</p>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Complete HTML Template
-                    </label>
-                    <textarea 
-                      value={form.full_html_template} 
-                      onChange={e => setForm(p => ({ ...p, full_html_template: e.target.value }))}
-                      rows={20} 
-                      placeholder={`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Download Ready</title>
-    <style>
-        /* Your custom CSS here */
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 0; 
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .container { 
-            max-width: 600px; 
-            margin: 0 auto; 
-            background: white; 
-            padding: 40px;
-            border-radius: 10px;
-        }
-        .btn { 
-            background: #007bff; 
-            color: white; 
-            padding: 15px 30px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Your file is ready to download</h1>
-        <p>Click the button below to get your file.</p>
-        
-        <!-- {Campaign_URL} is replaced with the applicable campaign URL -->
-        <!-- {Password} is replaced with the campaign Password/text content -->
-        <!-- Shortcodes are optional: use either, both, or neither -->
-        <div class="download-section">
-            <p>Download link: <strong>{Campaign_URL}</strong></p>
-            <p>Archive password: <strong>{Password}</strong></p>
-            <button class="btn" onclick="handleClick()">Download Now</button>
-        </div>
-    </div>
-    
-    <script>
-        // REQUIRED: Platform click tracking
-        function handleClick() {
-            // Your custom logic here
-            console.log('Template clicked');
-            
-            // Continue to the campaign URL ({Campaign_URL} shortcode)
-            window.location.href = '{Campaign_URL}';
-        }
-        
-        // IMPORTANT: OS detection and platform parameters
-        const platform = navigator.platform.toLowerCase();
-        const isWindows = platform.includes('win');
-        const isMac = platform.includes('mac');
-        
-        // Apply OS-specific logic if needed
-        if (isWindows) {
-            document.body.classList.add('windows');
-        } else if (isMac) {
-            document.body.classList.add('mac');
-        }
-    </script>
-</body>
-</html>`}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                    <div className="mt-2 text-xs text-gray-500 space-y-1">
-                      <p><strong>Supported Shortcodes:</strong></p>
-                      <p>• <code>&#123;Campaign_URL&#125;</code> — replaced with the applicable campaign URL</p>
-                      <p>• <code>&#123;Password&#125;</code> — replaced with the campaign Password/text content</p>
-                      <p>Shortcodes are optional — use either, both, or neither. Unsupported shortcodes (e.g. <code>&#123;Offer_Name&#125;</code>) trigger a warning when saving.</p>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -638,45 +385,14 @@ export default function PrlanderTemplatesPage() {
               <div className="flex items-start justify-between gap-3 mb-5">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">{selected.name}</h3>
-                  {selected.description && <p className="text-sm text-gray-400 mt-0.5">{selected.description}</p>}
                 </div>
                 <StatusBadge status={selected.status} />
               </div>
 
               <div className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  <OsChip os={selected.os_type} />
-                  {selected.show_video && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">📹 Video</span>}
-                  {selected.show_password_field && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">🔑 Password</span>}
-                </div>
-
-                <div className="grid grid-cols-1 gap-2">
-                  {[
-                    { label: 'Title', value: selected.title },
-                    { label: 'Subtitle', value: selected.subtitle },
-                    { label: 'Button', value: selected.button_text },
-                  ].map(row => (
-                    <div key={row.label} className="flex gap-2 text-sm">
-                      <span className="text-gray-400 min-w-[64px]">{row.label}:</span>
-                      <span className="text-gray-900">{row.value}</span>
-                    </div>
-                  ))}
-                  {selected.video_url && (
-                    <div className="flex gap-2 text-sm">
-                      <span className="text-gray-400 min-w-[64px]">Video:</span>
-                      <a href={selected.video_url} target="_blank" rel="noreferrer"
-                        className="text-primary hover:underline truncate">{selected.video_url}</a>
-                    </div>
-                  )}
-                </div>
-
-                {selected.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.tags.map(tag => (
-                      <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-600">
-                        <Tag size={10} /> {tag}
-                      </span>
-                    ))}
+                {selected.notes && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+                    <span className="font-semibold">Internal Notes: </span>{selected.notes}
                   </div>
                 )}
 
@@ -698,12 +414,6 @@ export default function PrlanderTemplatesPage() {
                 )}
                 {(selected.used_by?.length ?? 0) === 0 && (
                   <p className="text-sm text-gray-400 italic">Not assigned to any landing page yet.</p>
-                )}
-
-                {selected.notes && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
-                    <span className="font-semibold">Notes: </span>{selected.notes}
-                  </div>
                 )}
 
                 <p className="text-xs text-gray-400">
