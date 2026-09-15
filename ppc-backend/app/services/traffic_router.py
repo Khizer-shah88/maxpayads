@@ -2,6 +2,7 @@ from typing import Optional, Tuple
 from app.services.campaign_service import get_campaign_for_website, select_weighted_campaign
 from app.utils.db_utils import campaign_id_filter, normalize_id
 from app.core.constants import DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
+from app.models.redirect_chain import chain_inter_domain, chain_prelander_pool
 import logging
 import time
 import base64
@@ -103,6 +104,34 @@ def build_prelander_slug(
     key = "mxp2026"
     xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
     return base64.urlsafe_b64encode(xored).decode().rstrip("=")
+
+
+async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Optional[str] = None) -> Optional[dict]:
+    """
+    Resolve the admin-configured Redirection Chain for a click.
+
+    GLOBAL RULE: every configured chain applies to ALL publishers — publisher
+    identity never determines chain ownership, and no chain is ever created
+    per publisher. Resolution is host-based: when the request came in on a
+    chain's Anchor domain, that chain wins. Otherwise the first active chain
+    is used so the admin-built flow always drives traffic.
+
+    Returns the chain document or None when none are configured.
+    """
+    try:
+        query: dict = {"status": "active"}
+        if request_host:
+            chain = await db.redirect_chains.find_one({
+                "anchor_domain": request_host,
+                **query,
+            })
+            if chain:
+                return chain
+        # Any active chain applies to every publisher — take the first.
+        return await db.redirect_chains.find_one(query)
+    except Exception as e:
+        logger.warning("[CHAIN] Resolution failed: %s", e)
+        return None
 
 
 def select_weighted_landing_page(landing_pages: list) -> Optional[dict]:
@@ -329,15 +358,24 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     # domain logs the hop and decides the next hop (prelander vs campaign URL).
     # Going direct to the Campaign URL happens ONLY when no Inter domain is
     # configured at all.
+
+    # Admin-built Redirection Chain takes priority: it defines the Inter hop
+    # (and any extra hops) and applies to ALL publishers — global rule.
+    chain = await resolve_active_chain(
+        db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
+    )
+
     if is_bypass_on:
         clean_url = _clean_campaign_url(resolved_offer_url)
         if ctx is not None:
             ctx.skip_prelander = True
-        try:
-            from app.services.domain_service import resolve_domain_url
-            inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-        except Exception:
-            inter_base = None
+        inter_base = chain_inter_domain(chain) if chain else None
+        if not inter_base:
+            try:
+                from app.services.domain_service import resolve_domain_url
+                inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+            except Exception:
+                inter_base = None
         if inter_base:
             os_param_b = slug_os_param(os_name)
             offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
@@ -346,7 +384,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             logger.info("[ROUTE] BYPASS ON: via Inter %s → campaign %s", dest, clean_url)
             if ctx is not None:
                 ctx.inter_url = inter_base
-            _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=inter_base)
+            _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=inter_base, chain=(chain or {}).get("name"))
             _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=inter_base)
             return dest, referrer_suppression
         logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
@@ -389,23 +427,31 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         resolve_domain_url, domain_to_url, normalize_domain,
         select_active_prelander,
     )
-    # Prelander resolution (Domain Glossary): a publisher-assigned Prelander
-    # domain wins outright; otherwise eligible traffic distributes across the
-    # ACTIVE Prelander pool by weight (inactive prelanders get no traffic).
-    publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
-    if publisher_prelander:
-        last_base = publisher_prelander
+    # Prelander resolution (Domain Glossary + admin-built chains):
+    # 1. An active admin-built chain wins — its Inter domain is the hop and its
+    #    Prelander pool provides the final landing pages (global rule: applies
+    #    to every publisher).
+    # 2. Otherwise: publisher-assigned Prelander domain, then the ACTIVE
+    #    Prelander pool by weight (inactive prelanders get no traffic).
+    chain_prelander_pool_list = chain_prelander_pool(chain) if chain else []
+    if chain_prelander_pool_list:
+        weighted_chain_pick = await select_active_prelander(db, chain_prelander_pool_list)
+        last_base = domain_to_url(weighted_chain_pick) if weighted_chain_pick else domain_to_url(chain_prelander_pool_list[0])
     else:
-        prelander_filter = domain_type_filter(DOMAIN_TYPE_PRELANDER)
-        pool_docs = await db.redirection_domains.find({
-            "domain_type": prelander_filter,
-            "status": "active",
-        }).to_list(length=200)
-        weighted_pick = await select_active_prelander(
-            db, [d.get("domain") for d in pool_docs]
-        )
-        last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
-    intermediate_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+        publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
+        if publisher_prelander:
+            last_base = publisher_prelander
+        else:
+            prelander_filter = domain_type_filter(DOMAIN_TYPE_PRELANDER)
+            pool_docs = await db.redirection_domains.find({
+                "domain_type": prelander_filter,
+                "status": "active",
+            }).to_list(length=200)
+            weighted_pick = await select_active_prelander(
+                db, [d.get("domain") for d in pool_docs]
+            )
+            last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
+    intermediate_base = (chain_inter_domain(chain) if chain else None) or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
     has_managed_domain = bool(last_base or intermediate_base)
 
     if ctx is not None:
@@ -417,6 +463,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         anchor=getattr(ctx, "request_host", None) if ctx is not None else None,
         inter=intermediate_base,
         prelander=last_base,
+        chain=(chain or {}).get("name"),
         landing_pages_considered=len(landing_pages),
     )
 
