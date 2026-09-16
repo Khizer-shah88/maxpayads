@@ -1,14 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
 import { useParams } from 'next/navigation'
-import {
-  Eye, Target, Percent, BarChart2, TrendingUp, Trophy,
-  CalendarDays, Monitor, Smartphone, AlertCircle, ChevronDown, Apple,
-} from 'lucide-react'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import { publicStatsApi } from '@/lib/api'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface DayRow {
   date: string
@@ -49,34 +46,63 @@ interface StatsData {
   preferences: Record<string, boolean>
 }
 
-// ─── Sparkline (SVG) ──────────────────────────────────────────────────────────
-function Sparkline({ data, color }: { data: number[]; color: string }) {
-  if (!data.length) return null
-  const max = Math.max(...data, 1)
-  const w = 100, h = 32, pts = data.length
-  const xs = data.map((_, i) => (i / Math.max(pts - 1, 1)) * w)
-  const ys = data.map(v => h - (v / max) * h * 0.9 - 2)
-  const d = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x},${ys[i]}`).join(' ')
+// â”€â”€â”€ Corner sparkline (KPI card decoration, example style) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function CornerSpark({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null
+  const w = 96, h = 34
+  const max = Math.max(...data), min = Math.min(...data)
+  const range = (max - min) || 1
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w
+    const y = h - 4 - ((v - min) / range) * (h - 12)
+    return `${x.toFixed(1)} ${y.toFixed(1)}`
+  })
+  const line = 'M' + pts.join(' L')
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-8 mt-2" preserveAspectRatio="none">
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+      className="absolute right-0 bottom-0 w-24 h-[34px] opacity-85 pointer-events-none">
+      <path d={`${line} L${w} ${h} L0 ${h} Z`} fill={color} opacity="0.10" />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.6" opacity="0.8" />
     </svg>
   )
 }
 
-// ─── Trend badge ──────────────────────────────────────────────────────────────
-function Trend({ pct }: { pct: number }) {
-  if (!pct) return null
-  const up = pct > 0
+// â”€â”€â”€ Trend delta chip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function Delta({ pct }: { pct: number }) {
+  const cls = pct > 0
+    ? 'text-emerald-400 bg-emerald-400/10'
+    : pct < 0
+      ? 'text-[#F0563E] bg-[#F0563E]/10'
+      : 'text-[#5C6B7E] bg-white/[0.04]'
   return (
-    <span className={`text-xs font-semibold flex items-center gap-0.5 ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-      <TrendingUp size={11} className={up ? '' : 'rotate-180'} />
-      {up ? '+' : ''}{pct.toFixed(1)}%
+    <span className={`text-[11.5px] font-medium px-1.5 py-0.5 rounded-md whitespace-nowrap tabular-nums ${cls}`}>
+      {pct > 0 ? '+' : ''}{pct.toFixed(0)}%
     </span>
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ KPI card (label + delta, big value, sub, corner spark) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function Kpi({ label, value, sub, delta, spark }: {
+  label: string
+  value: string
+  sub: string
+  delta?: ReactNode
+  spark?: ReactNode
+}) {
+  return (
+    <div className="relative overflow-hidden bg-[#111721] border border-[#1D2634] rounded-[10px] px-4 pt-3.5 pb-3">
+      {spark}
+      <div className="relative flex items-center justify-between gap-2">
+        <span className="text-xs text-[#8695A8]">{label}</span>
+        {delta}
+      </div>
+      <p className="text-[26px] font-semibold leading-[1.1] tracking-[-0.02em] text-[#E8EEF6] mt-1.5 tabular-nums">{value}</p>
+      <p className="text-[11.5px] text-[#5C6B7E] mt-1">{sub}</p>
+    </div>
+  )
+}
+
+// â”€â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function PublisherStatsPage() {
   const params = useParams()
   const shareId = params.publisherId as string
@@ -87,6 +113,10 @@ export default function PublisherStatsPage() {
   const [chartRange, setChartRange] = useState<'7' | '14' | '30'>('7')
   // Platform click filters — empty set = show all platforms
   const [platformFilters, setPlatformFilters] = useState<Set<'windows' | 'mac' | 'android'>>(new Set())
+  // Chart series visibility + hover crosshair + refresh timestamp
+  const [series, setSeries] = useState({ imp: true, uni: true, conv: true })
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const [lastUpdated, setLastUpdated] = useState('')
 
   const loadStats = useCallback(async () => {
     if (!shareId) { setError(true); setLoading(false); return }
@@ -148,12 +178,13 @@ export default function PublisherStatsPage() {
       setError(true)
     } finally {
       setLoading(false)
+      setLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
     }
   }, [shareId])
 
   useEffect(() => { loadStats() }, [loadStats])
 
-  // ─── Platform filter toggle ───────────────────────────────────────────────
+  // â”€â”€â”€ Platform filter toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const togglePlatform = (key: 'windows' | 'mac' | 'android') => {
     setPlatformFilters(prev => {
       const next = new Set(prev)
@@ -163,30 +194,30 @@ export default function PublisherStatsPage() {
     })
   }
 
-  // ─── Loading ───────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (loading) return (
-    <div className="min-h-screen bg-[#0b0d15] flex items-center justify-center">
+    <div className="min-h-screen bg-[#0A0E14] flex items-center justify-center">
       <div className="flex flex-col items-center gap-4">
-        <div className="w-8 h-8 border-2 border-white/10 border-t-indigo-400 rounded-full animate-spin" />
-        <p className="text-gray-500 text-sm">Loading stats…</p>
+        <div className="w-8 h-8 border-2 border-[#1D2634] border-t-[#3B82F6] rounded-full animate-spin" />
+        <p className="text-[#8695A8] text-sm">Loading stats…</p>
       </div>
     </div>
   )
 
-  // ─── Expired / error screen — deliberately minimal, reveals nothing ─────────
+  // â”€â”€â”€ Expired / error screen — deliberately minimal, reveals nothing â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (error || !stats) return (
-    <div className="min-h-screen bg-[#0b0d15] flex items-center justify-center">
+    <div className="min-h-screen bg-[#0A0E14] flex items-center justify-center">
       <div className="text-center max-w-sm px-6">
-        <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-        <h1 className="text-lg font-medium text-gray-300 mb-2">Stats</h1>
-        <p className="text-sm text-gray-500">This statistics link has expired.</p>
+        <AlertCircle className="w-12 h-12 text-[#3D4A5E] mx-auto mb-4" />
+        <h1 className="text-lg font-medium text-[#E8EEF6] mb-2">Stats</h1>
+        <p className="text-sm text-[#5C6B7E]">This statistics link has expired.</p>
       </div>
     </div>
   )
 
   const prefs = stats.preferences
 
-  // ─── Platform filter helpers ──────────────────────────────────────────────
+  // â”€â”€â”€ Platform filter helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Respect the admin's per-OS toggles: an OS the admin hid is not shown at all.
   const platformChips: PlatformChip[] = [
     ...(prefs.show_windows_clicks !== false
@@ -217,7 +248,6 @@ export default function PublisherStatsPage() {
 
   const filteredClicks = filteredRows.reduce((s, r) => s + r.clicks, 0)
   const filteredConversions = filteredRows.reduce((s, r) => s + r.conversions, 0)
-  const filteredCr = filteredClicks > 0 ? (filteredConversions / filteredClicks) * 100 : 0
 
   const chartDays = parseInt(chartRange)
   const chartData = filteredRows.slice(-chartDays)
@@ -236,386 +266,419 @@ export default function PublisherStatsPage() {
     } catch { return d }
   }
 
-  // Build SVG chart lines
-  const chartH = 200
-  const chartW = 600
-  const padL = 48, padR = 24, padT = 16, padB = 40
+  // â”€â”€â”€ Chart geometry (example style: area fill + right axis for series 2) â”€â”€
+  const chartH = 280
+  const chartW = 900
+  const padL = 52, padR = 52, padT = 16, padB = 30
   const plotW = chartW - padL - padR
   const plotH = chartH - padT - padB
-  const impVals = chartData.map(r => r.clicks)
-  const convVals = chartData.map(r => r.conversions)
-  const maxImp = Math.max(...impVals, 1)
-  const maxConv = Math.max(...convVals, 1)
+  const ceilTo = (v: number, s: number) => Math.max(s, Math.ceil(v / s) * s)
+  const maxImp = ceilTo(Math.max(...chartData.map(r => r.clicks), 1), 50)
+  const maxUni = ceilTo(Math.max(
+    ...chartData.map(r => Math.max(r.unique_wins, r.conversions)), 1,
+  ), 10)
   const xOf = (i: number) => padL + (i / Math.max(chartData.length - 1, 1)) * plotW
   const yImp = (v: number) => padT + plotH - (v / maxImp) * plotH
-  const yConv = (v: number) => padT + plotH - (v / maxConv) * plotH
+  const yUni = (v: number) => padT + plotH - (v / maxUni) * plotH
 
-  const impPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yImp(r.clicks)}`).join(' ')
-  const convPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yConv(r.conversions)}`).join(' ')
+  const impPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)} ${yImp(r.clicks).toFixed(1)}`).join(' ')
+  const uniPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)} ${yUni(r.unique_wins).toFixed(1)}`).join(' ')
+  const convPath = chartData.map((r, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)} ${yUni(r.conversions).toFixed(1)}`).join(' ')
+  const areaPath = chartData.length > 1
+    ? `${impPath} L${xOf(chartData.length - 1).toFixed(1)} ${yImp(0)} L${padL} ${yImp(0)} Z`
+    : ''
 
-  // Y-axis labels
-  const impTicks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(maxImp * t))
-  const convTicks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(maxConv * t))
+  const onChartMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const px = ((e.clientX - rect.left) / rect.width) * chartW
+    const idx = Math.round((px - padL) / (plotW / Math.max(chartData.length - 1, 1)))
+    setHoverIdx(Math.max(0, Math.min(chartData.length - 1, idx)))
+  }
 
-  // peak row
-  const peakIdx = chartData.findIndex(r => r.date === stats.peak_day_date)
+  // KPI values (example layout: 5 cards with corner sparks + delta chips)
+  const uniTotal = filteredRows.reduce((s, r) => s + r.unique_wins, 0)
+  const avgDaily = chartData.length ? Math.round(filteredClicks / chartData.length) : 0
+  const peak = chartData.reduce((a, r) => (r.clicks >= (a?.clicks || 0) ? r : a), chartData[0])
+  const peakCvr = peak && peak.clicks ? ((peak.conversions / peak.clicks) * 100).toFixed(2) : '0.00'
+  const impSpark = chartData.map(r => r.clicks)
+  const uniSpark = chartData.map(r => r.unique_wins)
+  const convSpark = chartData.map(r => r.conversions)
+
+  const toggleSeries = (k: 'imp' | 'uni' | 'conv') =>
+    setSeries(prev => ({ ...prev, [k]: !prev[k] }))
+
+  const hovered = hoverIdx !== null ? chartData[hoverIdx] : null
 
   return (
-    <div className="min-h-screen bg-[#0b0d15] text-white font-sans">
-      {/* ── Header — title only, fully white-labeled ─────────────────────── */}
-      <header className="sticky top-0 z-20 bg-[#0b0d15]/90 backdrop-blur border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
-            <h1 className="text-base font-semibold text-white tracking-tight">Stats</h1>
+    <div className="min-h-screen bg-[#0A0E14] text-[#E8EEF6] font-sans">
+      {/* â”€â”€ Top bar — brand, platform chips, range segment, refresh â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      <header className="sticky top-0 z-20 bg-[#0D131C] border-b border-[#1D2634]">
+        <div className="max-w-[1280px] mx-auto px-5 py-3 flex items-center justify-between gap-3.5 flex-wrap">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <svg viewBox="0 0 140 80" className="w-[34px] h-5 text-[#3B82F6] flex-none" aria-hidden="true">
+              <path fill="currentColor" d="M12 44C12 30 30 20 54 20c22 0 38 6 50 16l20-14c-4 12-4 24 0 36l-20-12c-12 8-30 12-50 12C30 58 12 52 12 44Z" />
+              <path fill="currentColor" d="M56 52c2 9 10 15 20 14-6-3-11-8-14-15Z" />
+              <circle cx="28" cy="38" r="3" fill="#0D131C" />
+            </svg>
+            <div className="min-w-0">
+              <b className="block text-[15px] font-semibold tracking-[-0.01em] leading-tight">Stats</b>
+              <span className="block text-[11px] text-[#5C6B7E]">Performance tracking</span>
+            </div>
           </div>
-          <span className="text-xs text-gray-400 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/5">
-            {stats.date_range}
-          </span>
-        </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-
-        {/* ── Platform click filters ───────────────────────────────────── */}
-        {showFilters && (
-          <div className="bg-[#10131f] rounded-2xl px-4 py-3 border border-white/5 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mr-2">Platform</span>
-            {platformChips.map(chip => {
+          <div className="flex items-center gap-2 flex-wrap">
+            {showFilters && platformChips.map(chip => {
               const active = platformFilters.has(chip.key)
               return (
                 <button
                   key={chip.key}
                   onClick={() => togglePlatform(chip.key)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-colors ${
                     active
-                      ? 'bg-indigo-500/15 border-indigo-400/40 text-indigo-200'
-                      : 'bg-white/[0.03] border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-300'
+                      ? 'bg-[#3B82F6]/15 border-[#3B82F6]/40 text-[#E8EEF6]'
+                      : 'bg-[#111721] border-[#1D2634] text-[#8695A8] hover:border-[#26313F] hover:text-[#E8EEF6]'
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-indigo-400' : 'bg-gray-600'}`} />
                   {chip.label}
-                  <span className={`font-mono ${chip.color}`}>{chip.value.toLocaleString()}</span>
+                  <b className="font-medium text-[#E8EEF6] tabular-nums">{chip.value.toLocaleString()}</b>
                 </button>
               )
             })}
-            {filterActive && (
-              <button
-                onClick={() => setPlatformFilters(new Set())}
-                className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1"
-              >
-                Clear
-              </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex bg-[#111721] border border-[#1D2634] rounded-lg p-0.5">
+              {(['7', '14', '30'] as const).map(d => (
+                <button
+                  key={d}
+                  onClick={() => setChartRange(d)}
+                  className={`px-2.5 py-1 rounded-md text-[12.5px] transition-colors ${
+                    chartRange === d ? 'bg-[#3B82F6] text-white font-medium' : 'text-[#8695A8] hover:text-[#E8EEF6]'
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={loadStats}
+              className="inline-flex items-center gap-1.5 bg-[#111721] border border-[#1D2634] rounded-lg px-2.5 py-1.5 text-xs text-[#8695A8] hover:text-[#E8EEF6] hover:border-[#26313F] transition-colors"
+            >
+              <RefreshCw size={13} />
+              <span className="tabular-nums">{lastUpdated || '—'}</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1280px] mx-auto px-5 py-5 flex flex-col gap-4">
+        {/* â”€â”€ KPI grid — 5 cards with corner sparks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          {prefs.show_impressions !== false && (
+            <Kpi
+              label="Impressions"
+              value={(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
+              sub={filterActive ? 'Filtered by platform' : stats.date_range}
+              delta={<Delta pct={stats.trend_impressions_pct} />}
+              spark={<CornerSpark data={impSpark} color="#3B82F6" />}
+            />
+          )}
+          {prefs.show_valid_clicks !== false && (
+            <Kpi
+              label="Unique wins"
+              value={(stats.unique_wins).toLocaleString()}
+              sub={`validated clicks · ${stats.days_tracked} days`}
+              delta={<Delta pct={stats.trend_wins_pct} />}
+              spark={<CornerSpark data={uniSpark} color="#8B5CF6" />}
+            />
+          )}
+          {prefs.show_conversions !== false && (
+            <Kpi
+              label="Conversions"
+              value={(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
+              sub={filterActive ? 'Filtered by platform' : stats.date_range}
+              spark={<CornerSpark data={convSpark} color="#F59E0B" />}
+            />
+          )}
+          {prefs.show_cr !== false && (
+            <Kpi
+              label="Conversion rate"
+              value={`${(stats.conversion_rate).toFixed(2)}%`}
+              sub="conversions / impressions"
+            />
+          )}
+          <Kpi
+            label="Daily average"
+            value={avgDaily.toLocaleString()}
+            sub={peak ? `Peak ${fmtShort(peak.date)} · ${peak.clicks.toLocaleString()}` : 'impressions per day'}
+            delta={<Delta pct={stats.trend_avg_pct} />}
+            spark={<CornerSpark data={impSpark} color="#22C55E" />}
+          />
+        </section>
+
+        {/* â”€â”€ Chart panel — area + lines, legend toggles, hover tooltip â”€â”€â”€â”€â”€ */}
+        <section className="bg-[#111721] border border-[#1D2634] rounded-[10px]">
+          <div className="flex items-center justify-between gap-3.5 flex-wrap px-4 py-3.5 border-b border-[#1D2634]">
+            <div>
+              <h2 className="text-sm font-semibold text-[#E8EEF6]">Traffic over time</h2>
+              <p className="text-xs text-[#8695A8] mt-0.5">Impressions, unique wins and conversions per day</p>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {([
+                { k: 'imp' as const, label: 'Impressions', color: '#3B82F6' },
+                { k: 'uni' as const, label: 'Unique wins', color: '#8B5CF6' },
+                { k: 'conv' as const, label: 'Conversions', color: '#F59E0B' },
+              ]).map(item => (
+                <button
+                  key={item.k}
+                  onClick={() => toggleSeries(item.k)}
+                  className={`inline-flex items-center gap-1.5 bg-[#0D131C] border border-[#1D2634] rounded-md px-2.5 py-1.5 text-xs text-[#8695A8] transition-opacity ${series[item.k] ? '' : 'opacity-40'}`}
+                >
+                  <i className="w-2 h-2 rounded-[2px] flex-none" style={{ background: item.color }} />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="px-2.5 pt-3.5 pb-1.5">
+            {chartData.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-[#5C6B7E] text-sm">
+                {filterActive ? 'No data for the selected platforms' : 'No data available'}
+              </div>
+            ) : (
+              <div className="relative">
+                <svg
+                  viewBox={`0 0 ${chartW} ${chartH}`}
+                  className="block w-full h-auto"
+                  onMouseMove={onChartMove}
+                  onMouseLeave={() => setHoverIdx(null)}
+                >
+                  <defs>
+                    <linearGradient id="impArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" stopColor="#3B82F6" stopOpacity="0.28" />
+                      <stop offset="1" stopColor="#3B82F6" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* grid + dual axes */}
+                  {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
+                    const y = padT + plotH - t * plotH
+                    return (
+                      <g key={i}>
+                        <line x1={padL} y1={y} x2={chartW - padR} y2={y} stroke="rgba(232,238,246,.07)" />
+                        <text x={padL - 10} y={y + 4} textAnchor="end" fontSize="11" fill="#5C6B7E">
+                          {Math.round(maxImp * t) >= 1000 ? `${(Math.round(maxImp * t) / 1000).toFixed(0)}K` : Math.round(maxImp * t)}
+                        </text>
+                        <text x={chartW - padR + 10} y={y + 4} fontSize="11" fill="#5C6B7E">
+                          {Math.round(maxUni * t)}
+                        </text>
+                      </g>
+                    )
+                  })}
+
+                  {/* impressions area + line */}
+                  {series.imp && (
+                    <>
+                      <path d={areaPath} fill="url(#impArea)" />
+                      <path d={impPath} fill="none" stroke="#3B82F6" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
+                      <circle cx={xOf(chartData.length - 1)} cy={yImp(chartData[chartData.length - 1].clicks)} r="4" fill="#3B82F6" />
+                    </>
+                  )}
+                  {series.uni && (
+                    <path d={uniPath} fill="none" stroke="#8B5CF6" strokeWidth="1.8" strokeLinejoin="round" />
+                  )}
+                  {series.conv && (
+                    <path d={convPath} fill="none" stroke="#F59E0B" strokeWidth="1.8" strokeDasharray="4 4" />
+                  )}
+
+                  {/* x labels */}
+                  {chartData.map((r, i) => {
+                    const every = chartData.length > 20 ? 5 : chartData.length > 9 ? 2 : 1
+                    if (i % every && i !== chartData.length - 1) return null
+                    return (
+                      <text key={`x-${i}`} x={xOf(i)} y={chartH - 8} textAnchor="middle" fontSize="11" fill="#5C6B7E">
+                        {fmtShort(r.date)}
+                      </text>
+                    )
+                  })}
+
+                  {/* hover crosshair + marker */}
+                  {hovered !== null && (
+                    <g>
+                      <line x1={xOf(hoverIdx!)} y1={padT} x2={xOf(hoverIdx!)} y2={padT + plotH} stroke="#8695A8" strokeOpacity="0.35" />
+                      <circle cx={xOf(hoverIdx!)} cy={yImp(chartData[hoverIdx!].clicks)} r="4.5" fill="#111721" stroke="#3B82F6" strokeWidth="2" />
+                    </g>
+                  )}
+                </svg>
+
+                {/* tooltip */}
+                {hovered && (
+                  <div
+                    className="absolute pointer-events-none -translate-x-1/2 z-10 bg-[#0D131C] border border-[#26313F] rounded-lg px-2.5 py-2 text-xs whitespace-nowrap shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+                    style={{
+                      left: `${(xOf(hoverIdx!) / chartW) * 100}%`,
+                      top: `${(yImp(hovered.clicks) / chartH) * 100}%`,
+                      transform: 'translate(-50%, -110%)',
+                    }}
+                  >
+                    <div className="text-[#8695A8] text-[11.5px] mb-1.5">{fmtDate(hovered.date)}</div>
+                    {series.imp && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="inline-flex items-center gap-1.5 text-[#8695A8]"><i className="w-[7px] h-[7px] rounded-[2px]" style={{ background: '#3B82F6' }} />Impressions</span>
+                        <b className="font-semibold tabular-nums">{hovered.clicks.toLocaleString()}</b>
+                      </div>
+                    )}
+                    {series.uni && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-[#8695A8] inline-flex items-center gap-1.5"><i className="w-[7px] h-[7px] rounded-[2px]" style={{ background: '#8B5CF6' }} />Unique</span>
+                        <b className="font-semibold tabular-nums">{hovered.unique_wins.toLocaleString()}</b>
+                      </div>
+                    )}
+                    {series.conv && (
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-[#8695A8] inline-flex items-center gap-1.5"><i className="w-[7px] h-[7px] rounded-[2px]" style={{ background: '#F59E0B' }} />Conversions</span>
+                        <b className="font-semibold tabular-nums">{hovered.conversions.toLocaleString()}</b>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
-        )}
+        </section>
 
-        {/* ── Row 1: top 4 metric cards ─────────────────────────────────── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-
-          {/* Total Impressions */}
-          {prefs.show_impressions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-400/10 flex items-center justify-center flex-shrink-0">
-                  <Eye size={16} className="text-indigo-300" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Total Impressions</span>
-              </div>
-              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
-                {(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
-              <Sparkline data={chartData.map(r => r.clicks)} color="#818cf8" />
+        {/* â”€â”€ Platforms share + Daily breakdown (two-column) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        <section className="grid md:grid-cols-[minmax(0,4fr)_minmax(0,6fr)] gap-4">
+          {/* Platform share bars */}
+          <div className="bg-[#111721] border border-[#1D2634] rounded-[10px]">
+            <div className="px-4 py-3.5 border-b border-[#1D2634]">
+              <h2 className="text-sm font-semibold text-[#E8EEF6]">Top platforms</h2>
+              <p className="text-xs text-[#8695A8] mt-0.5">Share of total clicks</p>
             </div>
-          )}
-
-          {/* Total Conversions */}
-          {prefs.show_conversions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-400/10 flex items-center justify-center flex-shrink-0">
-                  <Target size={16} className="text-purple-300" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Conversions</span>
-              </div>
-              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
-                {(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
-              <Sparkline data={chartData.map(r => r.conversions)} color="#a78bfa" />
-            </div>
-          )}
-
-          {/* Conversion Rate */}
-          {prefs.show_cr !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-400/10 flex items-center justify-center flex-shrink-0">
-                  <Percent size={16} className="text-emerald-400" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Conversion Rate</span>
-              </div>
-              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
-                {(filterActive ? filteredCr : stats.conversion_rate).toFixed(2)}%
-              </p>
-              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
-              <div className="mt-2"><Trend pct={stats.trend_conversions_pct} /></div>
-            </div>
-          )}
-
-          {/* Avg Daily Impressions */}
-          {prefs.show_impressions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-sky-500/10 border border-sky-400/10 flex items-center justify-center flex-shrink-0">
-                  <BarChart2 size={16} className="text-sky-400" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Avg Daily</span>
-              </div>
-              <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.avg_daily_impressions.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-2">per day</p>
-              <div className="mt-2"><Trend pct={stats.trend_avg_pct} /></div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Row 2: lower 4 cards ───────────────────────────────────────── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-
-          {/* Peak Day */}
-          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-400/10 flex items-center justify-center flex-shrink-0">
-                <TrendingUp size={16} className="text-emerald-400" />
-              </div>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Peak Day</span>
-            </div>
-            <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.peak_day_value.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-2">{stats.peak_day_date ? fmtDate(stats.peak_day_date) : '—'}</p>
-          </div>
-
-          {/* Unique Wins */}
-          {prefs.show_valid_clicks !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-400/10 flex items-center justify-center flex-shrink-0">
-                  <Trophy size={16} className="text-amber-400" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Unique Wins</span>
-              </div>
-              <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.unique_wins.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-2">validated clicks</p>
-              <div className="mt-2"><Trend pct={stats.trend_wins_pct} /></div>
-            </div>
-          )}
-
-          {/* Days Tracked */}
-          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-400/10 flex items-center justify-center flex-shrink-0">
-                <CalendarDays size={16} className="text-indigo-300" />
-              </div>
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Days Tracked</span>
-            </div>
-            <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.days_tracked}</p>
-            <p className="text-xs text-gray-500 mt-2">in this period</p>
-          </div>
-
-          {/* Platforms */}
-          {prefs.show_device !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-400/10 flex items-center justify-center flex-shrink-0">
-                  <Monitor size={16} className="text-purple-300" />
-                </div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Platforms</span>
-              </div>
-              <div className="space-y-2.5">
-                {platformChips.map(c => (
-                  <div key={c.key} className="flex items-center justify-between text-xs">
-                    <span className="text-gray-400 flex items-center gap-2">
-                      {c.key === 'windows' ? <Monitor size={12} /> : c.key === 'mac' ? <Apple size={12} /> : <Smartphone size={12} />}
-                      {c.label}
-                    </span>
-                    <span className={`font-mono font-semibold ${c.color}`}>{c.value.toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Chart ───────────────────────────────────────────────────────── */}
-        <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <p className="text-sm font-semibold text-white">Impressions &amp; Conversions Over Time</p>
-              <p className="text-xs text-gray-500 mt-0.5">Daily performance across the selected range</p>
-            </div>
-            <div className="relative">
-              <select
-                value={chartRange}
-                onChange={e => setChartRange(e.target.value as any)}
-                className="appearance-none bg-[#181c2c] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none focus:border-indigo-400/40"
-              >
-                <option value="7">Last 7 days</option>
-                <option value="14">Last 14 days</option>
-                <option value="30">Last 30 days</option>
-              </select>
-              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <div className="px-4 pt-1.5 pb-3.5">
+              {platformChips.length === 0 ? (
+                <p className="text-sm text-[#5C6B7E] py-6 text-center">No platform data</p>
+              ) : (
+                (() => {
+                  const top = Math.max(...platformChips.map(c => c.value), 1)
+                  return platformChips.map(c => (
+                    <button
+                      key={c.key}
+                      onClick={() => togglePlatform(c.key)}
+                      className="w-full text-left grid grid-cols-[1fr_64px] gap-3 items-center py-2 border-b border-[#1D2634] last:border-b-0 group"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2.5 text-[13px]">
+                          <span className="w-5 h-3.5 rounded-[3px] bg-white/[0.04] border border-[#1D2634] grid place-items-center text-[9px] font-semibold text-[#5C6B7E] uppercase">
+                            {c.key.slice(0, 2)}
+                          </span>
+                          <span className={filterActive && platformFilters.has(c.key) ? 'text-[#E8EEF6]' : 'text-[#C7D2E0]'}>{c.label}</span>
+                        </div>
+                        <div className="relative h-[5px] rounded-[3px] bg-white/[0.04] mt-1.5 overflow-hidden">
+                          <span
+                            className="absolute inset-y-0 left-0 rounded-[3px] bg-[#3B82F6] transition-all"
+                            style={{ width: `${(c.value / top) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-right text-[12.5px] text-[#8695A8] tabular-nums">
+                        {((c.value / Math.max(stats.total_impressions, 1)) * 100).toFixed(1)}%
+                      </span>
+                    </button>
+                  ))
+                })()
+              )}
+              {filterActive && (
+                <button
+                  onClick={() => setPlatformFilters(new Set())}
+                  className="mt-2 text-xs text-[#3B82F6] hover:underline"
+                >
+                  Clear platform filter
+                </button>
+              )}
             </div>
           </div>
 
-          {chartData.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-gray-600 text-sm">
-              {filterActive ? 'No data for the selected platforms' : 'No data available'}
+          {/* Daily breakdown table */}
+          <div className="bg-[#111721] border border-[#1D2634] rounded-[10px] overflow-hidden">
+            <div className="px-4 py-3.5 border-b border-[#1D2634]">
+              <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
+              <p className="text-xs text-[#8695A8] mt-0.5">
+                {filterActive ? 'Filtered by selected platforms' : 'Impressions, unique wins and conversions per day'}
+              </p>
             </div>
-          ) : (
             <div className="overflow-x-auto">
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full" style={{ minWidth: '320px' }}>
-                {/* Grid lines */}
-                {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
-                  <g key={i}>
-                    <line
-                      x1={padL} y1={padT + plotH - t * plotH}
-                      x2={padL + plotW} y2={padT + plotH - t * plotH}
-                      stroke="#ffffff08" strokeWidth="1"
-                    />
-                    <text x={padL - 6} y={padT + plotH - t * plotH + 4} textAnchor="end" fontSize="9" fill="#6b7280">
-                      {impTicks[i] >= 1000 ? `${(impTicks[i] / 1000).toFixed(0)}K` : impTicks[i]}
-                    </text>
-                    <text x={padL + plotW + 6} y={padT + plotH - t * plotH + 4} textAnchor="start" fontSize="9" fill="#6b7280">
-                      {convTicks[i]}
-                    </text>
-                  </g>
-                ))}
-
-                {/* Peak highlight */}
-                {peakIdx >= 0 && (
-                  <line
-                    x1={xOf(peakIdx)} y1={padT}
-                    x2={xOf(peakIdx)} y2={padT + plotH}
-                    stroke="#818cf820" strokeWidth="2"
-                  />
-                )}
-
-                {/* Impressions line */}
-                <path d={impPath} fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                {chartData.map((r, i) => (
-                  <circle key={`imp-${i}`} cx={xOf(i)} cy={yImp(r.clicks)} r="3" fill="#818cf8" opacity="0.8" />
-                ))}
-
-                {/* Conversions line */}
-                <path d={convPath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                {chartData.map((r, i) => (
-                  <circle key={`conv-${i}`} cx={xOf(i)} cy={yConv(r.conversions)} r="3" fill="#a78bfa" opacity="0.8" />
-                ))}
-
-                {/* X-axis labels */}
-                {chartData.map((r, i) => {
-                  if (chartData.length > 10 && i % 2 !== 0) return null
-                  return (
-                    <text key={`x-${i}`} x={xOf(i)} y={chartH - 6} textAnchor="middle" fontSize="9" fill="#6b7280">
-                      {fmtShort(r.date)}
-                    </text>
-                  )
-                })}
-              </svg>
-
-              {/* Legend */}
-              <div className="flex items-center gap-5 mt-2 px-1">
-                <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                  <span className="w-3 h-0.5 bg-indigo-400 inline-block rounded" /> Impressions
-                </span>
-                <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                  <span className="w-3 h-0.5 bg-purple-400 inline-block rounded" /> Conversions
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Daily Breakdown Table ─────────────────────────────────────── */}
-        {prefs.show_daily_breakdown !== false && filteredRows.length > 0 && (
-          <div className="bg-[#10131f] rounded-2xl border border-white/5 overflow-hidden">
-            <div className="px-5 py-4 border-b border-white/5">
-              <p className="text-sm font-semibold text-white">Daily Breakdown</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {filterActive ? 'Filtered by selected platforms' : 'Impressions and conversions per day'}
-              </p>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-white/5 bg-white/[0.02]">
-                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                  <tr>
+                    <th className="px-4 py-2.5 text-left text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Date</th>
                     {prefs.show_impressions !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-indigo-300 uppercase tracking-wide">Impressions</th>
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Impressions</th>
                     )}
                     {prefs.show_valid_clicks !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Unique Wins</th>
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Unique</th>
                     )}
                     {prefs.show_conversions !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-purple-300 uppercase tracking-wide">Conversions</th>
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
                     )}
                     {prefs.show_cr !== false && (
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Conv. Rate</th>
-                    )}
-                    {showFilters && (
-                      <>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-sky-400/80 uppercase tracking-wide">Windows</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-violet-400/80 uppercase tracking-wide">Mac</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-emerald-400/80 uppercase tracking-wide">Android</th>
-                      </>
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">CVR</th>
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.slice(0, 30).map(row => {
-                    const isPeak = row.date === stats.peak_day_date
+                  {filteredRows.slice(0, 10).map((row, i) => {
+                    const maxImpRow = Math.max(...filteredRows.map(r => r.clicks), 1)
+                    const cvr = row.clicks ? ((row.conversions / row.clicks) * 100).toFixed(2) : '0.00'
                     return (
-                      <tr key={row.date} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                        <td className="px-5 py-3 text-sm font-medium text-gray-200 whitespace-nowrap">
-                          {isPeak && <span className="mr-1.5 text-amber-400">★</span>}
+                      <tr key={row.date} className="hover:bg-white/[0.03] transition-colors border-b border-[#1D2634] last:border-b-0">
+                        <td className="px-4 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
                           {fmtDate(row.date)}
+                          {i === 0 && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
+                          {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className="px-4 py-3 font-mono font-semibold text-indigo-300">{row.clicks.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">
+                            {row.clicks.toLocaleString()}
+                            <span
+                              className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
+                              style={{ width: Math.round((row.clicks / maxImpRow) * 40) }}
+                            />
+                          </td>
                         )}
                         {prefs.show_valid_clicks !== false && (
-                          <td className="px-4 py-3 font-mono text-gray-300">{row.unique_wins.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.unique_wins.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className="px-4 py-3 font-mono font-semibold text-purple-300">{row.conversions.toLocaleString()}</td>
+                          <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>
+                            {row.conversions.toLocaleString()}
+                          </td>
                         )}
                         {prefs.show_cr !== false && (
-                          <td className="px-4 py-3 text-gray-300 font-mono">{row.cr.toFixed(2)}%</td>
-                        )}
-                        {showFilters && (
-                          <>
-                            <td className="px-4 py-3 text-gray-400 font-mono">{row.windows_clicks.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-400 font-mono">{row.mac_clicks.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-gray-400 font-mono">{row.android_clicks.toLocaleString()}</td>
-                          </>
+                          <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>{cvr}%</td>
                         )}
                       </tr>
                     )
                   })}
+                  {filteredRows.length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-[#5C6B7E]">No data in this range</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            <div className="px-4 py-2.5 text-xs text-[#5C6B7E] flex justify-between gap-2.5 flex-wrap border-t border-[#1D2634]">
+              <span>Showing {Math.min(10, filteredRows.length)} of {filteredRows.length} days</span>
+              <span>{stats.date_range}</span>
+            </div>
           </div>
-        )}
+        </section>
+      </main>
 
-        {/* Footer — neutral, no identifying info */}
-        <div className="text-center py-6 border-t border-white/5">
-          <div className="flex items-center justify-center gap-4 text-xs text-gray-600">
-            <span>All times in UTC</span>
-          </div>
+      <footer className="border-t border-[#1D2634]">
+        <div className="max-w-[1280px] mx-auto px-5 py-5 flex items-center justify-center text-xs text-[#5C6B7E]">
+          <span>All times in UTC</span>
         </div>
-      </div>
+      </footer>
     </div>
   )
 }
