@@ -484,21 +484,31 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     # configurable denied fallback — revealing nothing about the prelander's
     # existence or contents.
     decoded_pre = _decode_slug(slug)
-    if not await _request_is_authorized(
-        request, slug, db, expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
-    ):
+    auth_session = await get_authorized_session(
+        request, slug, db,
+        expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
+    )
+    if not auth_session or auth_session is True:
         return await _denied_response()
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
     if not decoded:
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return await _denied_response()
+
+    # STEP 10 — same hostname, different campaigns: the CONTENT comes from
+    # the VALIDATED server-side session, never from the hostname. Two visitors
+    # on prelander-domain.com hold sessions for different campaigns and each
+    # receives their own campaign's selected content.
+    session_campaign = getattr(auth_session, "campaign_id", "") or ""
+    session_offer = getattr(auth_session, "offer_id", "") or ""
+    session_country = getattr(auth_session, "country_code", "") or ""
 
     return await _get_prelander_data(
         request, decoded["os"], db,
-        offer_id=decoded.get("offer_id"),
-        campaign_id=decoded.get("campaign_id"),
-        country_code=decoded.get("country_code"),
+        offer_id=session_offer or decoded.get("offer_id"),
+        campaign_id=session_campaign or decoded.get("campaign_id"),
+        country_code=session_country or decoded.get("country_code"),
     )
 
 

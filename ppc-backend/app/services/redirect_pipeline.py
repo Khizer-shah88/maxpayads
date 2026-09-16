@@ -577,12 +577,32 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
     from app.utils.ip_utils import get_client_ip
 
     ip = get_client_ip(ctx.headers, ctx.ip or "0.0.0.0")
+
+    # STEP 9 — the SELECTED prelander host, not the entry (Inter) host. The
+    # session's prelander binding must name the landing-page domain the
+    # visitor is actually heading to, so the access middleware's domain check
+    # (STEP 5) pins authorization to the right prelander. route_click already
+    # resolved the exact selected prelander onto ctx.prelander_url — reuse it
+    # verbatim so the authorization and the routing can never disagree.
     prelander_host = ""
     try:
         from urllib.parse import urlparse
-        prelander_host = (urlparse(dest).hostname or "").lower()
+        from app.services.domain_service import normalize_domain
+
+        selected = getattr(ctx, "prelander_url", None) or ""
+        if selected:
+            prelander_host = normalize_domain(selected)
+        if not prelander_host:
+            # No managed prelander (legacy lander hop) — bind to the
+            # destination host as the best available statement of where the
+            # visitor is heading.
+            prelander_host = (urlparse(dest).hostname or "").lower()
     except Exception:
-        pass
+        try:
+            from urllib.parse import urlparse
+            prelander_host = (urlparse(dest).hostname or "").lower()
+        except Exception:
+            prelander_host = ""
 
     # Chain context — the id of the admin-built chain that drove this click,
     # when one matched (resolved by route_click via resolve_active_chain).

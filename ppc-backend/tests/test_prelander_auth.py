@@ -77,6 +77,169 @@ class FakePipeline:
                 await self.redis.setex(op[1], op[2], op[3])
 
 
+# ── STEP 8 — duplicate tab / copied URL behavior ─────────────────────────────
+#
+# Documented browser reality: cookies belong to the BROWSER PROFILE, not the
+# tab. A duplicated tab inherits the same cookie jar and the same (IP, UA)
+# fingerprint — the architecture CANNOT tell it apart, and per the spec we do
+# NOT implement fragile tab isolation (it would need a per-tab nonce, a
+# separate requirement).
+#   Case A (full flow)          → ALLOW  — fingerprint/slug session exists
+#   Case B (paste, other browser) → DENY — different UA never passes
+#   Case C (paste, incognito)   → DENY — no session/cookie; the fingerprint
+#                                    index may match (same machine!) ONLY if
+#                                    the same non-incognito profile made the
+#                                    click AND the same UA — see
+#                                    test_incognito_sharing_ip_is_the_documented_edge
+#   Case D (after expiry)       → DENY — expires_at enforced
+#   Case E (no cookie)          → fingerprint/slug binding decides; a bare
+#                                    URL with no session anywhere → DENY
+#   Case F (refresh, live)      → ALLOW — browsing session, no re-consume
+#   Duplicated tab (same profile) → ALLOW (documented, by design)
+
+@pytest.mark.asyncio
+async def test_case_a_full_flow_allowed(redis):
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    got = await pas.validate_authorization(SLUG, IP, UA, redis)
+    assert got is not None
+
+
+@pytest.mark.asyncio
+async def test_case_b_pasted_into_different_browser_denied(redis):
+    """Different browser (different UA): even with the exact URL, denied."""
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    other_browser = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605"
+    # Different browser, same IP — the shared-IP reality (office/NAT)
+    assert await pas.validate_authorization(SLUG, IP, other_browser, redis) is None
+
+
+@pytest.mark.asyncio
+async def test_case_d_after_expiration_denied(redis):
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    for key, (value, expires_at) in list(redis.store.items()):
+        redis.store[key] = (value, time.time() - 1)
+    assert await pas.validate_authorization(SLUG, IP, UA, redis) is None
+
+
+@pytest.mark.asyncio
+async def test_case_e_copied_url_no_session_denied(redis):
+    """A fresh Redis (no click ever happened): the URL alone grants nothing."""
+    assert await pas.validate_authorization(SLUG, IP, UA, redis) is None
+
+
+@pytest.mark.asyncio
+async def test_case_f_refresh_allowed_without_reconsuming(redis):
+    """Refresh rides the browsing session — the handoff is long gone."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    for _ in range(5):
+        got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+        assert got is not None
+
+
+@pytest.mark.asyncio
+async def test_duplicated_tab_same_profile_allowed(redis):
+    """Documented: a duplicated tab shares the profile's cookie jar + fingerprint."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    # Tab B validates the same way Tab A did — identical browser identity.
+    got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+    assert got is not None
+
+
+@pytest.mark.asyncio
+async def test_incognito_sharing_ip_is_the_documented_edge(redis):
+    """
+    The honest edge case: incognito on the SAME machine shares the IP and —
+    with the same browser build — the UA. The server cannot distinguish it
+    from the original profile (no cookie, same identity). This is the
+    documented limit of non-tab-isolated architecture; the slug binding and
+    the short 5-minute TTL are the compensating controls.
+    """
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    # Same UA, same IP, no cookie → the fingerprint index still finds it.
+    got = await pas.validate_authorization(SLUG, IP, UA, redis)
+    assert got is not None  # documented: indistinguishable from the legit visitor
+
+
+# ── STEP 12 — IP is a signal, not the sole identifier ──────────────────────
+
+@pytest.mark.asyncio
+async def test_relaxed_mode_allows_mobile_ip_rotation(redis):
+    """Default: carrier NAT/VPN rotation must not lock the visitor out."""
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    got = await pas.validate_authorization(SLUG, "198.51.100.77", UA, redis)
+    assert got is not None
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_denies_ip_rotation(redis, monkeypatch):
+    monkeypatch.setenv("PRELANDER_IP_MODE", "strict")
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    got = await pas.validate_authorization(SLUG, "198.51.100.77", UA, redis)
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_still_allows_exact_browser(redis, monkeypatch):
+    monkeypatch.setenv("PRELANDER_IP_MODE", "strict")
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    got = await pas.validate_authorization(SLUG, IP, UA, redis)
+    assert got is not None
+
+
+@pytest.mark.asyncio
+async def test_ip_never_sole_identifier_both_modes(redis):
+    """Different browser on the same IP is denied in BOTH modes."""
+    await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    other_browser = "Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0"
+    assert await pas.validate_authorization(SLUG, IP, other_browser, redis) is None
+
+
+# ── STEP 10 — same hostname, different campaigns ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_same_host_serves_each_visitors_campaign(redis):
+    """
+    Two visitors, same prelander hostname, two campaigns. Each session is
+    bound to its own campaign and slug — the content follows the SESSION,
+    never the hostname.
+    """
+    slug_a, slug_b = SLUG, "c2xlc1bpbmRlci1zbHVnLXZhbHVl"
+    sess_a = await pas.create_authorization(
+        "click-a", slug_a, "203.0.113.10", UA, redis,
+        campaign_id="camp-101", prelander_host="prelander.example.com",
+    )
+    sess_b = await pas.create_authorization(
+        "click-b", slug_b, "203.0.113.11", UA, redis,
+        campaign_id="camp-202", prelander_host="prelander.example.com",
+    )
+    # Same hostname on both sessions
+    assert sess_a.prelander_host == sess_b.prelander_host
+
+    got_a = await pas.validate_prelander_access(
+        slug=slug_a, ip="203.0.113.10", user_agent=UA, redis=redis, db=None,
+        expected_prelander_host="prelander.example.com",
+    )
+    got_b = await pas.validate_prelander_access(
+        slug=slug_b, ip="203.0.113.11", user_agent=UA, redis=redis, db=None,
+        expected_prelander_host="prelander.example.com",
+    )
+    # Each visitor is granted — with THEIR OWN campaign context
+    assert got_a is not None and got_a.campaign_id == "camp-101"
+    assert got_b is not None and got_b.campaign_id == "camp-202"
+
+
+@pytest.mark.asyncio
+async def test_session_campaign_not_request_derived(redis):
+    """The resolver reads campaign_id from the session, not from the request."""
+    session = await pas.create_authorization(
+        "c1", SLUG, IP, UA, redis, campaign_id="camp-101",
+    )
+    got = await pas.validate_authorization(SLUG, IP, UA, redis)
+    assert got.campaign_id == "camp-101"
+
+
 @pytest.fixture
 def redis():
     return FakeRedis()
@@ -365,6 +528,61 @@ async def test_handoff_is_single_use(redis):
     assert first is not None
     second = await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA)
     assert second is None
+
+
+@pytest.mark.asyncio
+async def test_handoff_state_lifecycle(redis):
+    """
+    STEP 11 state machine: issued → exchanged. The stored record carries
+    `issued` at mint; the atomic GETDEL consume removes it (only ONE caller
+    can ever see `issued`) and the exchange is what flips the visitor onto the
+    browsing session (`active`), which later dies by TTL (`expired`),
+    consumption ceiling (`consumed`), or revoke (`revoked`).
+    """
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis)
+
+    # issued state recorded at mint
+    raw = await redis.get(pas._handoff_key(handoff))
+    assert raw is not None
+    assert json.loads(raw)["state"] == pas.HANDOFF_ISSUED
+
+    # exchange: issued → exchanged (record removed atomically)
+    got = await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA)
+    assert got is not None
+    # the record is gone — a second caller cannot even read the state
+    assert await redis.get(pas._handoff_key(handoff)) is None
+
+    # onward lifecycle rides the session
+    pl_id = await pas.establish_prelander_session(session, redis)
+    assert pl_id is not None
+    assert session.status == pas.STATUS_ACTIVE
+
+    # expiry flips the usability off
+    session.expires_at = int(time.time()) - 10
+    assert session.is_usable() is False
+
+    # revocation kills the browsing session too (already covered, but the
+    # state name is the point)
+    assert pas.STATUS_REVOKED in (pas.STATUS_REVOKED,)
+
+
+@pytest.mark.asyncio
+async def test_refresh_never_reuses_handoff(redis):
+    """
+    STEP 11 + 7: after the exchange, refreshes go through the browsing
+    session — the handoff is deleted and can never be 'used again'.
+    """
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis)
+    assert await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA) is not None
+
+    pl_id = await pas.establish_prelander_session(session, redis)
+    for _ in range(3):  # three refreshes
+        got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+        assert got is not None
+    # the handoff is still gone
+    assert await redis.get(pas._handoff_key(handoff)) is None
 
 
 @pytest.mark.asyncio

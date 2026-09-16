@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # Target for redirect mode (a safe, public entry URL — never the campaign).
     PRELANDER_DENIED_FALLBACK_URL: str = ""
 
+    # STEP 12 — IP-usage policy for prelander authorization. IP is an
+    # anti-abuse SIGNAL, never the sole identifier (NAT/VPN/mobile rotation).
+    #   relaxed - User-Agent is the browser binding; an IP change falls back
+    #             to the slug-index path (default — mobile/VPN safe)
+    #   strict  - full (IP+UA) fingerprint must match; rotated IPs are denied
+    PRELANDER_IP_MODE: str = "relaxed"
+
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
     # Turn off to keep click documents minimal on very high volume.

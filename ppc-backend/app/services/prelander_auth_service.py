@@ -163,12 +163,42 @@ def _pl_session_key(pl_session_id: str) -> str:
     return f"{_PL_SESSION_PREFIX}{pl_session_id}"
 
 
+# ── STEP 12 — IP-usage policy ────────────────────────────────────────────────────
+# IP is an anti-abuse SIGNAL, never the sole session identifier: carrier NAT,
+# proxies, corporate networks, VPNs and mobile IP rotation make it unreliable
+# as a primary key. The User-Agent is the primary browser binding; the IP check
+# is risk-based and CONFIGURABLE:
+#   strict  — fingerprint (IP+UA) must match exactly; a rotated IP fails
+#              (highest strictness, most false denials on mobile)
+#   relaxed — UA must match; an IP change only downgrades the validation path
+#              (default — mobile NAT/VPN-safe, still UA-bound and slug-bound)
+def _ip_mode() -> str:
+    import os
+    from app.config import get_settings
+    raw = (os.getenv("PRELANDER_IP_MODE", "") or "").strip().lower()
+    if raw in ("strict", "relaxed"):
+        return raw
+    configured = (getattr(get_settings(), "PRELANDER_IP_MODE", "") or "").strip().lower()
+    if configured in ("strict", "relaxed"):
+        return configured
+    return "relaxed"
+
+
 # ── Session record ─────────────────────────────────────────────────────────────
 
-# Authorization lifecycle status.
+# Authorization lifecycle status (STEP 11 state machine).
+#   active    — issued at click time; usable
+#   consumed  — consumption ceiling reached; dead handle
+#   revoked   — administratively/anti-fraud killed
 STATUS_ACTIVE = "active"
 STATUS_CONSUMED = "consumed"
 STATUS_REVOKED = "revoked"
+
+# Handoff lifecycle (STEP 11): issued → exchanged (→ the browsing session it
+# minted carries the onward lifecycle; the handoff record itself dies at the
+# atomic exchange).
+HANDOFF_ISSUED = "issued"
+HANDOFF_EXCHANGED = "exchanged"
 
 
 @dataclass
@@ -474,7 +504,7 @@ async def validate_authorization(
     Server-side authorization decision — called BEFORE prelander data is built.
 
     Valid when the visitor carries an ACTIVE, unexpired session bound to this
-    exact browser and this exact slug. Lookup paths (defense in depth):
+    browser and this exact slug. Lookup paths (defense in depth):
 
       1. Cookie — the signed `token.signature` reference names the session.
       2. Fingerprint index — cross-domain reality: no cookie travels between
@@ -482,6 +512,14 @@ async def validate_authorization(
          (IP, UA) browser to its live session.
       3. Slug index — mobile IP rotation: the slug still names the session;
          the UA (stable half of the fingerprint) confirms the same browser.
+
+    STEP 12 — IP policy (PRELANDER_IP_MODE, default relaxed):
+      strict  — the full fingerprint (IP+UA) must match; a rotated IP fails
+                paths 1-2 (path 3 still saves it only via exact UA).
+      relaxed  — the UA is the browser binding; an IP change downgrades the
+                visitor to the slug-index path, which still demands the
+                exact UA. A DIFFERENT BROWSER never passes anywhere, and the
+                slug binding pins the route either way.
 
     The slug-hash match pins the authorization to the route: an authorization
     gained for one slug cannot be replayed to view a different prelander's
@@ -499,8 +537,13 @@ async def validate_authorization(
     target_hash = _slug_hash(slug)
     visitor_fp = _fingerprint(ip, user_agent)
     now = int(time.time())
+    strict_ip = _ip_mode() == "strict"
 
-    async def _check(token: Optional[str], *, require_fingerprint: bool = True) -> Optional[AuthorizationSession]:
+    async def _check(
+        token: Optional[str],
+        *,
+        require_fingerprint: bool = True,
+    ) -> Optional[AuthorizationSession]:
         """Fetch and verify the session named by token against browser+slug."""
         if not token:
             return None
@@ -511,8 +554,15 @@ async def validate_authorization(
             return None
         if session.slug_hash != target_hash:
             return None
-        if require_fingerprint and session.fingerprint != visitor_fp:
-            return None
+        if require_fingerprint:
+            # STEP 12: in relaxed mode the UA — not the IP — is the browser
+            # binding. The fingerprint check still runs in strict mode.
+            if strict_ip:
+                if session.fingerprint != visitor_fp:
+                    return None
+            else:
+                if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
+                    return None
         return session
 
     session: Optional[AuthorizationSession] = None
@@ -537,7 +587,9 @@ async def validate_authorization(
 
     # ── Path 3: slug-hash index (rotating-IP edge case) ──────────────────
     # Same browser, new network hop: the UA must still match exactly — a
-    # different browser sharing the URL cannot pass this path.
+    # different browser sharing the URL cannot pass this path. In STRICT IP
+    # mode a rotated IP is denied here too (path 2 already demanded the full
+    # fingerprint); in relaxed mode this is the mobile/VPN-safe fallback.
     try:
         token = await redis.get(_sh_key(target_hash))
         if token:
@@ -547,6 +599,7 @@ async def validate_authorization(
                 and session.is_usable(now)
                 and session.slug_hash == target_hash
                 and hmac.compare_digest(session.user_agent, (user_agent or "")[:500])
+                and (not strict_ip or session.fingerprint == visitor_fp)
             ):
                 await _accept(session, redis, consume)
                 return session
@@ -638,10 +691,18 @@ async def mint_handoff(
     try:
         effective_ttl = int(ttl) if ttl and int(ttl) > 0 else _handoff_ttl()
         handoff_token = secrets.token_urlsafe(32)
-        value = json.dumps({"st": session.token, "th": (target_host or "")})
+        value = json.dumps({
+            "st": session.token,
+            "th": (target_host or ""),
+            # STEP 11 lifecycle: issued → exchanged (at consume). The atomic
+            # GETDEL below is the actual single-use guard; this field is the
+            # auditable state trail.
+            "state": HANDOFF_ISSUED,
+        })
         await redis.setex(_handoff_key(handoff_token), effective_ttl, value)
         logger.info(
-            "[PRELANDER-AUTH] Handoff minted (ttl=%ss target=%s)", effective_ttl, target_host or "-",
+            "[PRELANDER-AUTH] Handoff minted (state=issued ttl=%ss target=%s)",
+            effective_ttl, target_host or "-",
         )
         return handoff_token
     except Exception as e:
@@ -668,9 +729,12 @@ async def consume_handoff(
     if not handoff_token or redis is None:
         return None
     try:
-        # Consume FIRST — the atomic single-use guarantee.
+        # STEP 11 — atomic single-use consume: GETDEL deletes FIRST, so exactly
+        # one concurrent caller can win the value; every later attempt (replay,
+        # double-click, back button, shared URL) sees nothing.
         raw = await redis.getdel(_handoff_key(handoff_token))
         if not raw:
+            logger.info("[PRELANDER-AUTH] Handoff replay/unknown token denied")
             return None
         payload = json.loads(raw)
         session_token = payload.get("st", "")
@@ -685,10 +749,20 @@ async def consume_handoff(
         session = await get_session(session_token, redis)
         if session is None or not session.is_usable():
             return None
-        # Browser binding survives the handoff: same UA required (IP may rotate).
-        if ip and session.fingerprint != _fingerprint(ip, user_agent):
-            if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
-                return None
+        # STEP 12 — browser binding: the UA must match (IP is a signal, and
+        # in relaxed mode a mid-flow IP rotation is legitimate). A different
+        # browser on the same IP never passes.
+        if ip:
+            if session.fingerprint != _fingerprint(ip, user_agent):
+                if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
+                    logger.info("[PRELANDER-AUTH] Handoff exchanged from a different browser — denied")
+                    return None
+        # state trail: the handoff record is already deleted (atomic); the
+        # exchange is logged so the lifecycle is auditable.
+        logger.info(
+            "[PRELANDER-AUTH] Handoff exchanged (state=%s click=%s)",
+            HANDOFF_EXCHANGED, session.click_id,
+        )
         return session
     except Exception as e:
         logger.warning("[PRELANDER-AUTH] Handoff consume failed: %s", e)
