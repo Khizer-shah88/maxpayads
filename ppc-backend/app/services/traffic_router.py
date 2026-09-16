@@ -418,26 +418,31 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         except Exception:
             pass
 
-    # ── Bypass handling ─────────────────────────────────────────────────────
-    # Spec (both modes pass through the Intermediate domain):
-    #   Bypass OFF: Anchor → Inter (logs, 0.75s dwell) → Prelander landing page
-    #   Bypass ON:  Anchor → Inter (logs, 0.75s dwell) → Campaign URL
-    # In BOTH cases /click sends the visitor to the Inter domain /d/{slug}.
-    # The slug carries campaign/offer ids; the prelander resolver on the Inter
-    # domain logs the hop and decides the next hop (prelander vs campaign URL).
-    # Going direct to the Campaign URL happens ONLY when no Inter domain is
-    # configured at all.
-    #
-    # NOTE: the admin-built Redirection Chain system is intentionally NOT
-    # connected to this flow right now — the classic redirection-domain
-    # resolution (publisher-assigned → global default → active pool) is the
-    # only driver. Chains remain admin-configurable but dormant until they are
-    # re-wired properly. Do not re-introduce chain lookups here without
-    # normalizing every domain through domain_to_url() first (raw protocol-less
-    # chain domains produced relative /d/ destinations like
-    # "clicklyspot.icu/d/…" that the browser resolved against the publisher's
-    # page, sending visitors to https://publisher.com/clicklyspot.icu/d/…).
-    chain = None
+    # ── Chain override (domain mapping only) ──────────────────────────────────
+    # The Redirection Chain Builder is a DOMAIN-LEVEL OVERRIDE: an active chain
+    # whose Anchor domain IS the host /click ran on redefines where this
+    # domain's traffic goes (Inter → extra hops → Prelander pool). No chain
+    # for this anchor → the DEFAULT redirection-domain flow stays exactly as
+    # is (publisher-assigned → global default → active pool).
+    # Every chain domain is forced to an absolute https:// URL — a bare
+    # hostname in a chain field would build a RELATIVE /d/{slug} destination
+    # and the browser would resolve it against the publisher's page.
+    chain = await resolve_active_chain(
+        db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
+    )
+    chain_inter = _absolute_base(chain_inter_domain(chain)) if chain else None
+    chain_pool: list = []
+    if chain:
+        for d in chain_prelander_pool(chain):
+            base = _absolute_base(d)
+            if base:
+                chain_pool.append(base)
+    chain_hops: list = []
+    if chain:
+        for d in chain_extra_hops(chain):
+            base = _absolute_base(d)
+            if base:
+                chain_hops.append(base)
 
     if is_bypass_on:
         clean_url = _clean_campaign_url(resolved_offer_url)
@@ -450,14 +455,15 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         # Campaign URL — the landing page is never shown. The first hop built
         # here is the INTER domain; the anchor is the domain /click already ran
         # on, so sending the visitor back there loops on the same domain.
-        entry_base = None
-        try:
-            from app.services.domain_service import resolve_domain_url
-            resolved_inter = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-            if resolved_inter:
-                entry_base = _absolute_base(resolved_inter)
-        except Exception:
-            pass
+        entry_base = chain_inter
+        if not entry_base:
+            try:
+                from app.services.domain_service import resolve_domain_url
+                resolved_inter = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+                if resolved_inter:
+                    entry_base = _absolute_base(resolved_inter)
+            except Exception:
+                pass
         
         if entry_base:
             os_param_b = slug_os_param(os_name)
@@ -467,7 +473,11 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             logger.info("[ROUTE] BYPASS ON: via Inter %s → campaign %s", dest, clean_url)
             if ctx is not None:
                 ctx.inter_url = entry_base
-            _record(ctx, STAGE_CHAIN, "resolved_bypass_inter", inter=entry_base)
+            _record(
+                ctx, STAGE_CHAIN, "resolved_bypass_inter",
+                inter=entry_base, chain=(chain or {}).get("name"),
+                extra_hops=len(chain_hops),
+            )
             _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=entry_base)
             return dest, referrer_suppression
         logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
@@ -510,30 +520,38 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         resolve_domain_url, domain_to_url, normalize_domain,
         select_active_prelander,
     )
-    # Prelander resolution (classic redirection-domain flow only — chains are
-    # NOT connected):
-    # 1. Publisher-assigned Prelander domain, then the ACTIVE Prelander pool by
-    #    weight (inactive prelanders get no traffic).
-    publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
-    if publisher_prelander:
-        last_base = publisher_prelander
-    else:
-        prelander_filter = domain_type_filter(DOMAIN_TYPE_PRELANDER)
-        pool_docs = await db.redirection_domains.find({
-            "domain_type": prelander_filter,
-            "status": "active",
-        }).to_list(length=200)
-        weighted_pick = await select_active_prelander(
-            db, [d.get("domain") for d in pool_docs]
+    # Prelander resolution — chain override first, default flow untouched:
+    # 1. Chain matched (anchor host mapping): its Prelander pool (weighted
+    #    pick among ACTIVE domains) is the final landing page source, its
+    #    extra hops follow the Inter.
+    # 2. No chain: classic redirection-domain flow (publisher-assigned →
+    #    global default → active pool by weight).
+    if chain_pool:
+        weighted_chain_pick = await select_active_prelander(
+            db, [normalize_domain(b) for b in chain_pool]
         )
-        last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
-    intermediate_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+        last_base = _absolute_base(weighted_chain_pick) if weighted_chain_pick else (chain_pool[0] if chain_pool else None)
+    else:
+        publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
+        if publisher_prelander:
+            last_base = publisher_prelander
+        else:
+            prelander_filter = domain_type_filter(DOMAIN_TYPE_PRELANDER)
+            pool_docs = await db.redirection_domains.find({
+                "domain_type": prelander_filter,
+                "status": "active",
+            }).to_list(length=200)
+            weighted_pick = await select_active_prelander(
+                db, [d.get("domain") for d in pool_docs]
+            )
+            last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
+    intermediate_base = chain_inter or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
     # Guard every resolved base: bare hostnames must never reach the /d URL
     # builders (they would produce a RELATIVE destination → visitor 404s on
     # https://publisher.com/<hostname>/d/{slug}).
     last_base = _absolute_base(last_base)
     intermediate_base = _absolute_base(intermediate_base)
-    has_managed_domain = bool(last_base or intermediate_base)
+    has_managed_domain = bool(last_base or intermediate_base or chain_hops)
 
     if ctx is not None:
         ctx.prelander_url = last_base
@@ -545,6 +563,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         anchor=getattr(ctx, "request_host", None) if ctx is not None else None,
         inter=intermediate_base,
         prelander=last_base,
+        chain=(chain or {}).get("name"),
+        extra_hops=len(chain_hops),
         landing_pages_considered=len(landing_pages),
     )
 
@@ -562,15 +582,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
         # Entry point for the prelander hop. Spec flow (Bypass OFF):
         #   Anchor (Smartlink host, /click runs here) → Inter /d/{slug} (0.75s
-        #   loader) → Landing Page.
+        #   loader) → [chain extra hops] → Landing Page.
         # The visitor is ALREADY on the Anchor domain — /click executes there —
         # so the first hop this router builds must be the INTER domain, never
         # the anchor again (sending them to anchor/d/{slug} loops on the same
         # domain). Only when no Inter domain exists does the visitor enter on
-        # the Prelander domain (or legacy lander URL) directly.
+        # the first chain extra hop, the Prelander domain, or the legacy lander.
         if intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
             logger.info("[ROUTE] Inter domain (entry): %s", entry_domain)
+        elif chain_hops:
+            entry_domain = chain_hops[0].rstrip("/")
+            logger.info("[ROUTE] No inter configured, entering on first chain hop: %s", entry_domain)
         elif last_base:
             entry_domain = last_base.rstrip("/")
             logger.info("[ROUTE] No inter domain configured, entering on prelander: %s", entry_domain)
@@ -600,9 +623,11 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             entry_domain=entry_domain,
             entry_type=(
                 "inter" if intermediate_base
+                else "chain_hop" if (chain_hops and not last_base)
                 else "prelander" if last_base
                 else "legacy_lander"
             ),
+            remaining_hops=len(chain_hops),
             os_param=os_param,
             offer_id=offer_id or None,
         )

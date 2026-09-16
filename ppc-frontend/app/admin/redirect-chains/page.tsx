@@ -161,8 +161,16 @@ export default function RedirectChainsPage() {
   useEffect(() => { loadData() }, [loadData])
 
   // ── Form handlers ──────────────────────────────────────────────────────────
+
+  // All active Prelander domains — the default pool content. A new chain
+  // starts with EVERY Prelander domain pre-selected; the admin can remove the
+  // ones this chain shouldn't use.
+  const prelanderDomainNames = domains
+    .filter(d => d.domain_type === 'prelander' && d.status === 'active')
+    .map(d => d.domain)
+
   const openCreate = () => {
-    setForm({ ...EMPTY_CHAIN })
+    setForm({ ...EMPTY_CHAIN, prelander_pool: [...prelanderDomainNames] })
     setEditTarget(null)
     setModal('create')
   }
@@ -602,6 +610,9 @@ export default function RedirectChainsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Prelander Domain Pool <span className="text-red-500">*</span>
                   </label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Pre-populated with every active Prelander domain — remove the ones this chain should not use.
+                  </p>
                   
                   {/* Add Domain Selector */}
                   <div className="flex gap-2 mb-3">
@@ -623,6 +634,17 @@ export default function RedirectChainsPage() {
                           </option>
                         ))}
                     </select>
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({
+                        ...prev,
+                        prelander_pool: Array.from(new Set([...prev.prelander_pool, ...prelanderDomainNames]))
+                      }))}
+                      title="Add every active Prelander domain to the pool"
+                      className="px-4 py-2.5 rounded-xl text-sm font-medium text-primary border border-primary/20 hover:bg-primary/5 whitespace-nowrap"
+                    >
+                      Add All
+                    </button>
                   </div>
 
                   {/* Pool Display */}
