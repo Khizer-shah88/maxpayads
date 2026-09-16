@@ -118,6 +118,39 @@ async def get_public_stats(
         elif "android" in os_val:
             android_clicks += cnt
 
+    # ── Country breakdown (share page country stats) ──────────────────────────
+    # Top countries by click volume. Grouped by country_code (stable key);
+    # the display name rides the most frequent country_name seen for that code.
+    # Clicks without a resolvable country land in "Unknown". Gated by the
+    # report preferences like every other block.
+    country_breakdown: list = []
+    if prefs.get("show_country", True):
+        country_pipeline = [
+            {"$match": click_match},
+            {"$group": {
+                "_id": {"$ifNull": ["$country_code", ""]},
+                "clicks": {"$sum": 1},
+                "names": {"$push": {"$ifNull": ["$country_name", ""]}},
+            }},
+            {"$sort": {"clicks": -1}},
+            {"$limit": 10},
+        ]
+        country_rows = await db.clicks.aggregate(country_pipeline).to_list(length=None)
+        for row in country_rows:
+            code = (row.get("_id") or "").strip().upper()
+            names = [n for n in (row.get("names") or []) if n]
+            # Most frequent stored name for this code (names arrive unsorted;
+            # pick the first non-empty as the representative label).
+            label = names[0] if names else (code or "Unknown")
+            country_breakdown.append({
+                "country_code": code or "UNKNOWN",
+                "country": label,
+                "clicks": row.get("clicks", 0),
+            })
+        total_for_share = sum(c["clicks"] for c in country_breakdown) or 1
+        for c in country_breakdown:
+            c["share_pct"] = round(c["clicks"] / total_for_share * 100, 1)
+
     # ── Manual conversions (entered by admin) ─────────────────────────────────
     # The Direct Link Stats page writes every admin-entered value to BOTH
     # direct_link_manual_conversions and conversion_overrides (same value, same
@@ -286,6 +319,9 @@ async def get_public_stats(
         "avg_daily_clicks": avg_daily_clicks,
         "trend_direction": trend,
     }
+
+    if prefs.get("show_country", True):
+        response_data["country_breakdown"] = country_breakdown
 
     return {
         "success": True,

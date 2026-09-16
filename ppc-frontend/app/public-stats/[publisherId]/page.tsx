@@ -25,6 +25,13 @@ interface PlatformChip {
   color: string
 }
 
+interface CountryRow {
+  country_code: string
+  country: string
+  clicks: number
+  share_pct: number
+}
+
 interface StatsData {
   date_range: string
   total_impressions: number
@@ -43,6 +50,7 @@ interface StatsData {
   trend_avg_pct: number
   trend_wins_pct: number
   daily_breakdown: DayRow[]
+  country_breakdown?: CountryRow[]
   preferences: Record<string, boolean>
 }
 
@@ -173,6 +181,7 @@ export default function PublisherStatsPage() {
         trend_avg_pct: d.trend_avg_pct || 0,
         trend_wins_pct: d.trend_wins_pct || 0,
         daily_breakdown: daily,
+        country_breakdown: d.country_breakdown || [],
         preferences: d.preferences || {},
       })
     } catch (err: any) {
@@ -620,12 +629,57 @@ export default function PublisherStatsPage() {
             </div>
           </div>
 
+          {/* Country share bars — country-based stats (example style) */}
+          {prefs.show_country !== false && (
+            <div className="bg-[#111721] border border-[#1D2634] rounded-[10px]">
+              <div className="px-4 py-3.5 border-b border-[#1D2634]">
+                <h2 className="text-sm font-semibold text-[#E8EEF6]">Top countries</h2>
+                <p className="text-xs text-[#8695A8] mt-0.5">Clicks by country</p>
+              </div>
+              <div className="px-4 pt-1.5 pb-3.5">
+                {(stats.country_breakdown?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-[#5C6B7E] py-6 text-center">No country data</p>
+                ) : (
+                  (() => {
+                    const countries = stats.country_breakdown || []
+                    const top = Math.max(...countries.map(c => c.clicks), 1)
+                    return countries.map(c => (
+                      <div
+                        key={c.country_code}
+                        className="grid grid-cols-[1fr_110px] gap-3 items-center py-2 border-b border-[#1D2634] last:border-b-0"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2.5 text-[13px]">
+                            <span className="w-6 h-3.5 rounded-[3px] bg-white/[0.04] border border-[#1D2634] grid place-items-center text-[9px] font-semibold text-[#5C6B7E] uppercase">
+                              {c.country_code === 'UNKNOWN' ? '??' : c.country_code.slice(0, 2)}
+                            </span>
+                            <span className="text-[#C7D2E0] truncate">{c.country}</span>
+                          </div>
+                          <div className="relative h-[5px] rounded-[3px] bg-white/[0.04] mt-1.5 overflow-hidden">
+                            <span
+                              className="absolute inset-y-0 left-0 rounded-[3px] bg-[#8B5CF6] transition-all"
+                              style={{ width: `${(c.clicks / top) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="text-right text-[12.5px] text-[#8695A8] tabular-nums flex items-baseline justify-end gap-2">
+                          <b className="text-[#E8EEF6] font-medium">{c.clicks.toLocaleString()}</b>
+                          <span className="text-[11px] text-[#5C6B7E]">{c.share_pct?.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    ))
+                  })()
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Daily breakdown table */}
           <div className="bg-[#111721] border border-[#1D2634] rounded-[10px] overflow-hidden">
             <div className="px-4 py-3.5 border-b border-[#1D2634]">
               <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
               <p className="text-xs text-[#8695A8] mt-0.5">
-                {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS, conversions and CVR per day'}
+                {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS and conversions per day'}
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -648,15 +702,11 @@ export default function PublisherStatsPage() {
                     {prefs.show_conversions !== false && (
                       <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
                     )}
-                    {prefs.show_cr !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">CVR</th>
-                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredRows.slice(0, 10).map((row, i) => {
                     const maxImpRow = Math.max(...filteredRows.map(r => r.clicks), 1)
-                    const cvr = row.clicks ? ((row.conversions / row.clicks) * 100).toFixed(2) : '0.00'
                     return (
                       <tr key={row.date} className="hover:bg-white/[0.03] transition-colors border-b border-[#1D2634] last:border-b-0">
                         <td className="px-4 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
@@ -687,9 +737,6 @@ export default function PublisherStatsPage() {
                           <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>
                             {row.conversions.toLocaleString()}
                           </td>
-                        )}
-                        {prefs.show_cr !== false && (
-                          <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>{cvr}%</td>
                         )}
                       </tr>
                     )
