@@ -537,6 +537,58 @@ async def _finalize(ctx: RedirectResolutionContext, db, outcome: str) -> None:
         logger.debug(f"Failed to persist resolution trace: {e}")
 
 
+async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -> None:
+    """
+    Create the prelander authorization session for this click, if the routed
+    destination is a managed prelander hop (/d/{slug} on an Inter/Prelander
+    domain).
+
+    Reuses the existing Redis and the click already recorded by
+    stage_record_click. Bound to (client IP, User-Agent) — the same identity
+    the fraud fingerprint uses — and to the slug hash so the authorization
+    only ever covers THIS click's prelander route.
+
+    Fail-open by design at creation time: if the session cannot be written the
+    click still redirects normally (the prelander side then shows its neutral
+    page). Authorization must never break the "visitor always leaves with a
+    URL" rule.
+    """
+    dest = ctx.destination_url or ""
+    if "/d/" not in dest:
+        return  # direct campaign URL (bypass) or fallback — nothing to authorize
+
+    try:
+        slug = dest.rstrip("/").rsplit("/d/", 1)[-1]
+    except Exception:
+        return
+    if not slug:
+        return
+
+    from app.services import prelander_auth_service as pas
+    from app.utils.ip_utils import get_client_ip
+
+    ip = get_client_ip(ctx.headers, ctx.ip or "0.0.0.0")
+    prelander_host = ""
+    try:
+        from urllib.parse import urlparse
+        prelander_host = (urlparse(dest).hostname or "").lower()
+    except Exception:
+        pass
+
+    created = await pas.create_authorization(
+        click_id=ctx.click_id or "",
+        slug=slug,
+        ip=ip,
+        user_agent=ctx.user_agent or "",
+        redis=redis,
+        prelander_host=prelander_host,
+    )
+    ctx.record(
+        STAGE_PRELANDER, "authorized" if created else "authorization_skipped",
+        click_id=ctx.click_id or None, host=prelander_host or None,
+    )
+
+
 async def resolve_redirect(ctx: RedirectResolutionContext, db, redis) -> RedirectResolutionContext:
     """
     Run one click through every stage and return the completed context.
@@ -569,6 +621,7 @@ async def resolve_redirect(ctx: RedirectResolutionContext, db, redis) -> Redirec
         await _log_screening_outcome(ctx, db)
 
     await stage_resolve_route(ctx, db, redis)
+    await stage_authorize_prelander(ctx, db, redis)
     await stage_resolve_cpc(ctx, db)
     await _finalize(ctx, db, "routed")
     return ctx

@@ -544,7 +544,9 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
         HTML exactly like the /p/render endpoint does.
         """
         from fastapi.responses import HTMLResponse
-        from app.routers.prelander_router import _decode_slug, _get_prelander_data
+        from app.routers.prelander_router import (
+            _decode_slug, _get_prelander_data, _request_is_authorized,
+        )
         from app.services.prelander_service import generate_fallback_html
         import logging as _logging
 
@@ -552,6 +554,16 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
         path = request.url.path.rstrip("/")
         slug = path.rsplit("/", 1)[-1] if "/" in path else ""
         if not slug:
+            return HTMLResponse(
+                content=generate_fallback_html("Not Found"),
+                status_code=404,
+            )
+
+        # SERVER-SIDE AUTHORIZATION GATE — DOMAIN != AUTHORIZATION. Before any
+        # protected prelander HTML is resolved, the visitor must hold the
+        # click-time authorization session (same gate as the /prelander/resolve
+        # API). Direct visits get the same neutral fallback page.
+        if not await _request_is_authorized(request, slug, db):
             return HTMLResponse(
                 content=generate_fallback_html("Not Found"),
                 status_code=404,

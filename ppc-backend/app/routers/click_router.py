@@ -39,7 +39,36 @@ async def track_click(
     """
     ctx = context_from_request(request, pub, site)
     await resolve_redirect(ctx, db, redis)
-    return build_redirect(ctx.destination_url, ctx.referrer_suppression)
+    response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
+
+    # Authorization cookie — a signed reference to this click's prelander
+    # session (created by stage_authorize_prelander during resolve_redirect).
+    # HttpOnly + SameSite=Lax: readable by no script, never sent on
+    # cross-site subresource requests. Cross-domain hops rely on the
+    # server-side fingerprint/slug binding instead (see
+    # prelander_auth_service.validate_authorization) — the cookie is the
+    # convenient factor when the prelander runs on this same domain.
+    try:
+        from app.services import prelander_auth_service as pas
+        from app.utils.ip_utils import get_client_ip
+
+        if ctx.click_id and "/d/" in (ctx.destination_url or ""):
+            ip = get_client_ip(ctx.headers, ctx.ip or "0.0.0.0")
+            reference = pas.session_reference(ctx.click_id, ip, ctx.user_agent or "")
+            if reference:
+                response.set_cookie(
+                    key=pas.COOKIE_NAME,
+                    value=reference,
+                    max_age=pas.COOKIE_TTL_SECONDS,
+                    httponly=True,
+                    samesite="lax",
+                    secure=True,
+                )
+    except Exception:
+        # The cookie is an optional factor — never let it break the redirect.
+        pass
+
+    return response
 
 
 @router.get("/clicks/{click_id}/trace")

@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 _XOR_KEY = "mxp2026"
 
 
+def get_redis_safe():
+    """Redis client for the authorization gate; None when not yet connected."""
+    try:
+        from app.cache.redis_client import get_redis
+        return get_redis()
+    except Exception:
+        return None
+
+
 def _decode_slug(slug: str) -> Optional[dict]:
     """
     Decode an XOR-encrypted slug → {os, timestamp, offer_id, campaign_id, country_code}.
@@ -116,6 +125,62 @@ async def _resolve_bypass_destination(
                 or camp.get("url")
             )
     return None
+
+
+async def _request_is_authorized(
+    request: Request,
+    slug: str,
+    db,
+) -> bool:
+    """
+    Server-side prelander authorization decision (DOMAIN != AUTHORIZATION).
+
+    Valid when the visitor carries an authorization session created at
+    Smartlink click time (stage_authorize_prelander) that matches this exact
+    browser (client IP + User-Agent fingerprint) and this exact slug.
+
+    A PRELANDER_AUTH_REQUIRED=False setting (env) disables the gate — a safety
+    valve so a misconfiguration can never lock the whole prelander flow.
+    Default: enabled.
+    """
+    import os
+    from app.utils.ip_utils import get_client_ip
+    from app.services import prelander_auth_service as pas
+
+    # Kill switch — off only when explicitly disabled in the environment.
+    if os.getenv("PRELANDER_AUTH_REQUIRED", "true").strip().lower() in ("false", "0", "no", "off"):
+        return True
+
+    try:
+        redis = get_redis_safe()
+        if redis is None:
+            # Redis unavailable at validation time — fail CLOSED for protected
+            # content (the neutral page), never open. Log loudly so ops sees it.
+            logger.error("[PRELANDER-AUTH] Redis unavailable at validation — denying")
+            return False
+
+        headers = dict(request.headers)
+        ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+        user_agent = headers.get("user-agent", "")
+        cookie_reference = request.cookies.get(pas.COOKIE_NAME)
+
+        authorized = await pas.validate_authorization(
+            slug=slug,
+            ip=ip,
+            user_agent=user_agent,
+            redis=redis,
+            cookie_reference=cookie_reference,
+        )
+        if not authorized:
+            logger.info(
+                "[PRELANDER-AUTH] Denied prelander access for slug=%s… ip=%s",
+                slug[:10], ip,
+            )
+        return authorized
+    except Exception as e:
+        # Validation itself failed — deny, but never leak why to the client.
+        logger.error("[PRELANDER-AUTH] Validation error (denying): %s", e)
+        return False
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
@@ -339,8 +404,12 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             # Bypass ON: Anchor → Inter (logs, 0.75s dwell) → Campaign URL —
             # decode the slug and check the campaign/offer direct_redirect_mode.
             # ON → 302 straight to the Campaign URL, never the Prelander domain.
+            # Same server-side authorization gate as the prelander data: the
+            # bypass destination is a protected campaign URL.
             decoded_bypass = _decode_slug(slug)
             if decoded_bypass:
+                if not await _request_is_authorized(request, slug, db):
+                    return JSONResponse(status_code=404, content={"detail": "Not found"})
                 bypass_url = await _resolve_bypass_destination(
                     db, decoded_bypass.get("campaign_id"), decoded_bypass.get("offer_id")
                 )
@@ -369,6 +438,18 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                 )
         # Either on the Prelander domain already, or none configured → serve data
 
+    # ── SERVER-SIDE AUTHORIZATION GATE ────────────────────────────────────────
+    # DOMAIN != AUTHORIZATION: knowing the prelander URL is not sufficient.
+    # Before any protected prelander data (offer URL, password, template HTML)
+    # is built, the visitor must hold an authorization session created at
+    # Smartlink click time (redirect_pipeline.stage_authorize_prelander) and
+    # bound to this exact browser fingerprint and slug. Direct visits, shared
+    # links, scrapers and replayed slugs without a session get the same neutral
+    # 404 the page shows for invalid slugs — revealing nothing about the
+    # prelander's existence or contents.
+    if not await _request_is_authorized(request, slug, db):
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
     if not decoded:
@@ -389,7 +470,17 @@ async def get_prelander_data_legacy(
     pub: Optional[str] = Query(None, description="Publisher ID"),
     db=Depends(get_db),
 ):
-    """Legacy endpoint — returns prelander data without a slug."""
+    """
+    Legacy endpoint — returns prelander data without a slug.
+
+    Gated by the same server-side authorization as the slug route: without a
+    slug there is no route binding, so only the cookie/fingerprint path can
+    validate. An empty slug never matches any session, so unauthenticated
+    direct calls get the neutral 404 — exactly like the frontend's invalid-
+    slug page, revealing nothing.
+    """
+    if not await _request_is_authorized(request, "", db):
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
     return await _get_prelander_data(request, os, db)
 
 
