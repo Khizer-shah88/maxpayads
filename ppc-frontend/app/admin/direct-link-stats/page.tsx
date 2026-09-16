@@ -378,10 +378,12 @@ export default function DirectLinkStatsPage() {
     setHistoryLoading(true)
     setEditingConversion(null)
     try {
-      const res = await statsProfileApi.listManualConversions({ publisher_id: pub.id })
+      const res = await directLinkApi.listManualConversions({ publisher_id: pub.id })
       setHistoryRows(res.data?.conversions || [])
-    } catch {
-      toast.error('Failed to load conversion history')
+    } catch (err: any) {
+      console.error('Failed to load conversion history:', err)
+      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to load conversion history'
+      toast.error(errorMsg)
       setHistoryRows([])
     } finally {
       setHistoryLoading(false)
@@ -394,17 +396,18 @@ export default function DirectLinkStatsPage() {
     if (!editConvReason.trim()) { toast.error('Reason is required'); return }
     setSavingConversion(true)
     try {
-      await statsProfileApi.updateManualConversion(editingConversion.id, {
+      await directLinkApi.updateManualConversion(editingConversion.id, {
         conversions: editConvValue,
         reason: editConvReason.trim(),
       })
       toast.success('Conversion entry updated')
       setEditingConversion(null)
       // Refresh the open history list
-      const res = await statsProfileApi.listManualConversions({ publisher_id: editingConversion.publisher_id })
+      const res = await directLinkApi.listManualConversions({ publisher_id: editingConversion.publisher_id })
       setHistoryRows(res.data?.conversions || [])
-    } catch {
-      toast.error('Failed to update the conversion entry')
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to update the conversion entry'
+      toast.error(errorMsg)
     } finally {
       setSavingConversion(false)
     }
@@ -412,11 +415,12 @@ export default function DirectLinkStatsPage() {
 
   const deleteConversion = async (row: ManualConversionRow) => {
     try {
-      await statsProfileApi.deleteManualConversion(row.id)
+      await directLinkApi.deleteManualConversion(row.id)
       toast.success(`Conversion entry for ${row.date} deleted`)
       setHistoryRows(prev => prev.filter(r => r.id !== row.id))
-    } catch {
-      toast.error('Failed to delete the conversion entry')
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to delete the conversion entry'
+      toast.error(errorMsg)
     }
   }
 
@@ -526,7 +530,7 @@ export default function DirectLinkStatsPage() {
           manual_conversions: overrideForm.manual_conversions,
           reason: overrideForm.reason,
         }),
-        statsProfileApi.createManualConversion({
+        directLinkApi.createManualConversion({
           date: overrideForm.date,
           publisher_id: overrideForm.publisher_id,
           link_id: overrideForm.link_id || null,
@@ -538,7 +542,8 @@ export default function DirectLinkStatsPage() {
       setShowOverrideModal(false)
       loadData()
     } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Failed to apply override')
+      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to apply override'
+      toast.error(errorMsg)
     } finally {
       setSavingOverride(false)
     }
@@ -997,74 +1002,7 @@ export default function DirectLinkStatsPage() {
           </div>
         )}
 
-        {/* All links table (when no publisher selected) */}
-        {!selectedPublisher && !loading && links.length > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="p-5 border-b border-gray-100">
-              <h2 className="text-base font-bold text-gray-900">All Direct Links</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-100">
-                  <tr>
-                    {['Name / Publisher', 'Masked URL', 'Status', 'Clicks', 'Conv.', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {links.map(link => (
-                    <tr key={link.id} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{link.name}</p>
-                        <p className="text-xs text-gray-400">{link.publisher_name || link.publisher_id.slice(-8)}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <code className="text-xs bg-gray-100 px-2 py-0.5 rounded font-mono text-gray-700 truncate max-w-[200px]">
-                            {link.masked_url}
-                          </code>
-                          <CopyButton text={link.masked_url} label="" />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3"><StatusBadge status={link.status} /></td>
-                      <td className="px-4 py-3 font-mono text-gray-700">{link.total_clicks.toLocaleString()}</td>
-                      <td className="px-4 py-3 font-mono text-gray-700">{link.total_conversions.toLocaleString()}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              const today = new Date().toISOString().split('T')[0]
-                              setOverrideForm({
-                                date: today,
-                                publisher_id: link.publisher_id,
-                                link_id: link.id,
-                                manual_conversions: 0,
-                                reason: '',
-                              })
-                              setShowOverrideModal(true)
-                            }}
-                            className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-                            title="Override"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => setDeleteLinkTarget(link)}
-                            className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        {/* All Direct Links section removed - publishers are displayed in the grid above */}
 
 
         {/* ── Create Link Modal ────────────────────────────────────────────── */}
