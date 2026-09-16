@@ -37,8 +37,8 @@ async def track_click(
     Backward compatible: accepts ?pub=ObjectId&site=ObjectId as well as
     ?pub=PUB_XXXXXXXX&site=SITE_XXXXXXXX.
     """
-    ctx = context_from_request(request, pub, site)
     try:
+        ctx = context_from_request(request, pub, site)
         await resolve_redirect(ctx, db, redis)
         response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
     except Exception:

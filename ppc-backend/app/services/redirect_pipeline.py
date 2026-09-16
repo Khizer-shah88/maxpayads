@@ -239,7 +239,13 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db) -> bool:
     """
     from app.utils.public_id_utils import resolve_publisher_id, resolve_website_id
 
-    ctx.publisher_id = await resolve_publisher_id(db, (ctx.raw_pub or "").strip())
+    try:
+        ctx.publisher_id = await resolve_publisher_id(db, (ctx.raw_pub or "").strip())
+    except Exception as e:
+        # A transient DB error must degrade to the fallback redirect, never a 500.
+        logger.error(f"Publisher lookup failed: {e}")
+        ctx.record(STAGE_IDENTIFY, "lookup_error", error=str(e))
+        return False
     if not ctx.publisher_id:
         logger.warning(f"Invalid publisher identifier: {ctx.raw_pub}")
         ctx.record(STAGE_IDENTIFY, "unknown_publisher", pub=ctx.raw_pub)
