@@ -264,23 +264,34 @@ class SessionSecurityMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         # Add secure cookie attributes
-        if "Set-Cookie" in response.headers:
-            # Note: FastAPI handles this, but we ensure it
-            cookies = response.headers.getlist("Set-Cookie")
-            new_cookies = []
-            for cookie in cookies:
-                if "HttpOnly" not in cookie:
-                    cookie += "; HttpOnly"
-                if "SameSite" not in cookie:
-                    cookie += "; SameSite=Lax"
-                if request.url.scheme == "https" and "Secure" not in cookie:
-                    cookie += "; Secure"
-                new_cookies.append(cookie)
-            
-            # Replace cookies
-            response.headers.pop("Set-Cookie")
-            for cookie in new_cookies:
-                response.headers.append("Set-Cookie", cookie)
+        try:
+            if "Set-Cookie" in response.headers:
+                # Note: FastAPI handles this, but we ensure it
+                cookies = response.headers.getlist("Set-Cookie")
+                new_cookies = []
+                for cookie in cookies:
+                    if "HttpOnly" not in cookie:
+                        cookie += "; HttpOnly"
+                    if "SameSite" not in cookie:
+                        cookie += "; SameSite=Lax"
+                    if request.url.scheme == "https" and "Secure" not in cookie:
+                        cookie += "; Secure"
+                    new_cookies.append(cookie)
+                
+                # Replace cookies. MutableHeaders has no .pop() — the previous
+                # response.headers.pop("Set-Cookie") raised AttributeError on
+                # EVERY response that carried a Set-Cookie header (e.g. /click
+                # setting the prelander authorization reference), crashing the
+                # request AFTER the endpoint had succeeded and turning it into
+                # a 500. __delitem__ removes all values for the key; append
+                # re-adds each cookie preserving duplicates.
+                del response.headers["Set-Cookie"]
+                for cookie in new_cookies:
+                    response.headers.append("Set-Cookie", cookie)
+        except Exception as e:
+            # Header manipulation must never break a response the endpoint
+            # already produced successfully.
+            logger.warning(f"Cookie hardening skipped: {e}")
         
         return response
 
