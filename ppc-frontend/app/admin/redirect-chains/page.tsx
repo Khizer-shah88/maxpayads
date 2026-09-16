@@ -36,7 +36,7 @@ interface RedirectChain {
 interface Domain {
   id: string
   domain: string
-  domain_type: 'anchor' | 'inter' | 'prelander'
+  domain_type: 'anchor' | 'inter' | 'prelander' | 'link' | 'last' | string
   status: 'active' | 'paused'
   dns_status: 'verified' | 'failed' | 'pending'
 }
@@ -164,16 +164,33 @@ export default function RedirectChainsPage() {
 
   // All active Prelander domains — the default pool content. A new chain
   // starts with EVERY Prelander domain pre-selected; the admin can remove the
-  // ones this chain shouldn't use.
-  const prelanderDomainNames = domains
-    .filter(d => d.domain_type === 'prelander' && d.status === 'active')
-    .map(d => d.domain)
+  // ones this chain shouldn't use. Legacy data may still store the prelander
+  // type as "last" (pre-glossary spelling), so both are accepted.
+  const prelanderDomainNames = Array.from(new Set(
+    domains
+      .filter(d => (d.domain_type === 'prelander' || d.domain_type === 'last') && d.status === 'active')
+      .map(d => d.domain)
+      .filter(Boolean)
+  ))
 
   const openCreate = () => {
     setForm({ ...EMPTY_CHAIN, prelander_pool: [...prelanderDomainNames] })
     setEditTarget(null)
     setModal('create')
   }
+
+  // Keep an open Create modal's pool in sync with the loaded domain list —
+  // if domains finish loading after the modal opened (or a domain was added
+  // in another tab), the pool picks up every active prelander automatically.
+  useEffect(() => {
+    if (modal !== 'create') return
+    setForm(prev => {
+      const missing = prelanderDomainNames.filter(d => !prev.prelander_pool.includes(d))
+      if (missing.length === 0) return prev
+      return { ...prev, prelander_pool: [...prev.prelander_pool, ...missing] }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domains, modal])
 
   const openEdit = (chain: RedirectChain) => {
     setEditTarget(chain)
@@ -285,9 +302,12 @@ export default function RedirectChainsPage() {
   }
 
   // ── Filter domains ─────────────────────────────────────────────────────────
-  const anchorDomains = domains.filter(d => d.domain_type === 'anchor' && d.status === 'active')
-  const interDomains = domains.filter(d => d.domain_type === 'inter' && d.status === 'active')
-  const prelanderDomains = domains.filter(d => d.domain_type === 'prelander' && d.status === 'active')
+  // Legacy documents may still store the pre-glossary spellings ("link" for
+  // anchor, "intermediate" for inter, "last" for prelander) — accept both so
+  // every configured domain appears in the builder dropdowns.
+  const anchorDomains = domains.filter(d => (d.domain_type === 'anchor' || d.domain_type === 'link') && d.status === 'active')
+  const interDomains = domains.filter(d => (d.domain_type === 'inter' || d.domain_type === 'intermediate') && d.status === 'active')
+  const prelanderDomains = domains.filter(d => (d.domain_type === 'prelander' || d.domain_type === 'last') && d.status === 'active')
 
   const inputClass = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm'
 
