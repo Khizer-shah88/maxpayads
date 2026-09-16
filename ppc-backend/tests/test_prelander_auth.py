@@ -837,12 +837,19 @@ async def test_t12_malformed_and_guessed_tokens_denied_safely(redis):
         assert await pas.get_session(guess, redis) is None
         # Guessed browsing-session id
         assert await pas.validate_prelander_session(guess, redis, slug=SLUG) is None
-            # Forged cookie reference: the signature never verifies, and for a
-            # different browser no fingerprint/slug path rescues the request.
-            attacker_ua = "attacker-browser/1.0"
-            assert await pas.validate_authorization(
-                SLUG, IP, attacker_ua, redis, cookie_reference=guess,
-            ) is None
+        # Forged cookie reference: the signature never verifies, and for a
+        # different browser no fingerprint/slug path rescues the request.
+        attacker_ua = "attacker-browser/1.0"
+        assert await pas.validate_authorization(
+            SLUG, IP, attacker_ua, redis, cookie_reference=guess,
+        ) is None
+
+
+# T13: expired token replay is denied (the handoff TTL kills the record).
+@pytest.mark.asyncio
+async def test_t13_expired_token_replay_denied(redis, monkeypatch):
+    monkeypatch.setenv("PRELANDER_HANDOFF_TTL", "1")
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
     handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
 
     # Expire everything in the store
