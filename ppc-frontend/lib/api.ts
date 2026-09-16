@@ -260,6 +260,9 @@ export const directLinkApi = {
     api.put(`/direct-links/manual-conversions/${id}`, data),
   deleteManualConversion: (id: string) =>
     api.delete(`/direct-links/manual-conversions/${id}`),
+  // Get publisher domains (which domains each publisher has)
+  getPublisherDomains: () =>
+    api.get('/direct-links/publisher-domains'),
 }
 
 // ==================== PUBLIC STATS (NO AUTH) ====================

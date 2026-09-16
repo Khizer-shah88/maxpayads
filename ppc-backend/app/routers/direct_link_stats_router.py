@@ -619,3 +619,78 @@ async def delete_manual_conversion(
         "success": True,
         "message": "Manual conversion deleted"
     }
+
+
+
+# ─── Publisher Domain Stats ───────────────────────────────────────────────────
+
+@router.get("/publisher-domains")
+async def get_publisher_domains(
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Get all publishers with their assigned domains.
+    Returns domain information (anchor, inter, prelander) for each publisher.
+    """
+    from app.core.glossary import normalize_domain_type
+    from app.core.constants import DOMAIN_TYPE_ANCHOR, DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
+    
+    # Get all redirection domains
+    domains_cursor = db.redirection_domains.find({"status": "active"})
+    domains = await domains_cursor.to_list(length=1000)
+    
+    # Get all publishers
+    publishers_cursor = db.publishers.find({"role": "publisher"})
+    publishers = await publishers_cursor.to_list(length=500)
+    
+    # Build publisher -> domains mapping
+    publisher_domains = {}
+    
+    for domain in domains:
+        domain_type = normalize_domain_type(domain.get("domain_type"), default="unknown")
+        publisher_ids = domain.get("publisher_ids", [])
+        domain_name = domain.get("domain")
+        
+        for pub_id in publisher_ids:
+            if pub_id not in publisher_domains:
+                publisher_domains[pub_id] = {
+                    "anchor": [],
+                    "inter": [],
+                    "prelander": [],
+                }
+            
+            if domain_type == DOMAIN_TYPE_ANCHOR:
+                publisher_domains[pub_id]["anchor"].append(domain_name)
+            elif domain_type == DOMAIN_TYPE_INTER:
+                publisher_domains[pub_id]["inter"].append(domain_name)
+            elif domain_type == DOMAIN_TYPE_PRELANDER:
+                publisher_domains[pub_id]["prelander"].append(domain_name)
+    
+    # Build response
+    results = []
+    for pub in publishers:
+        pub_id = str(pub["_id"])
+        domains_info = publisher_domains.get(pub_id, {
+            "anchor": [],
+            "inter": [],
+            "prelander": [],
+        })
+        
+        results.append({
+            "publisher_id": pub_id,
+            "publisher_name": pub.get("name"),
+            "publisher_email": pub.get("email"),
+            "domains": {
+                "anchor": domains_info.get("anchor", []),
+                "inter": domains_info.get("inter", []),
+                "prelander": domains_info.get("prelander", []),
+                "total": len(domains_info.get("anchor", [])) + len(domains_info.get("inter", [])) + len(domains_info.get("prelander", [])),
+            }
+        })
+    
+    return {
+        "success": True,
+        "publisher_domains": results,
+        "total_publishers": len(results),
+    }

@@ -160,6 +160,7 @@ export default function DirectLinkStatsPage() {
 
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [links, setLinks] = useState<DirectLink[]>([])
+  const [publisherDomains, setPublisherDomains] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [selectedPublisherId, setSelectedPublisherId] = useState<string>('')
 
@@ -230,10 +231,11 @@ export default function DirectLinkStatsPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      // Load both independently — one failure never blocks the other
-      const [pubResult, linksResult] = await Promise.allSettled([
+      // Load publishers, links, and domain info together
+      const [pubResult, linksResult, domainsResult] = await Promise.allSettled([
         adminApi.getPublishers({ limit: 200 }),
         directLinkApi.getAll(),
+        directLinkApi.getPublisherDomains(),
       ])
 
       // Backend's get_all_publishers already filters role=publisher in DB
@@ -250,6 +252,16 @@ export default function DirectLinkStatsPage() {
 
       setPublishers(allPubs)
       setLinks(allLinks)
+
+      // Process publisher domains
+      if (domainsResult.status === 'fulfilled') {
+        const domainsData = domainsResult.value.data?.publisher_domains ?? []
+        const domainsMap: Record<string, any> = {}
+        domainsData.forEach((pd: any) => {
+          domainsMap[pd.publisher_id] = pd.domains
+        })
+        setPublisherDomains(domainsMap)
+      }
 
       // Show a user-visible error if publishers failed to load
       if (pubResult.status === 'rejected') {
@@ -780,6 +792,54 @@ export default function DirectLinkStatsPage() {
                     </span>
                   </div>
                 </div>
+
+                {/* Domain Stats - Show which domains this publisher has */}
+                {publisherDomains[pub.id] && publisherDomains[pub.id].total > 0 && (
+                  <div className="mb-3 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wider">Assigned Domains</span>
+                      <span className="text-xs font-bold text-blue-600">{publisherDomains[pub.id].total}</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {publisherDomains[pub.id].anchor?.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-semibold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded uppercase">Anchor</span>
+                          <div className="flex-1 flex flex-wrap gap-1">
+                            {publisherDomains[pub.id].anchor.map((domain: string, idx: number) => (
+                              <span key={idx} className="text-[10px] text-indigo-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
+                                {domain}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {publisherDomains[pub.id].inter?.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-semibold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase">Inter</span>
+                          <div className="flex-1 flex flex-wrap gap-1">
+                            {publisherDomains[pub.id].inter.map((domain: string, idx: number) => (
+                              <span key={idx} className="text-[10px] text-purple-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
+                                {domain}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {publisherDomains[pub.id].prelander?.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-semibold text-teal-600 bg-teal-100 px-1.5 py-0.5 rounded uppercase">Prelander</span>
+                          <div className="flex-1 flex flex-wrap gap-1">
+                            {publisherDomains[pub.id].prelander.map((domain: string, idx: number) => (
+                              <span key={idx} className="text-[10px] text-teal-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
+                                {domain}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-2 border-t border-gray-100 flex-wrap">
                   <button
