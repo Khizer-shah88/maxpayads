@@ -377,14 +377,31 @@ async def resolve_domain_url(
     legacy_key = _SETTINGS_KEYS.get(canonical_type, "platform_domain")
     legacy = await db.system_settings.find_one({"key": legacy_key})
     if legacy and legacy.get("value"):
-        return legacy["value"].rstrip("/")
+        return _to_absolute_url(legacy["value"])
 
     if canonical_type == DOMAIN_TYPE_ANCHOR:
         legacy = await db.system_settings.find_one({"key": "platform_domain"})
         if legacy and legacy.get("value"):
-            return legacy["value"].rstrip("/")
+            return _to_absolute_url(legacy["value"])
 
     return None
+
+
+def _to_absolute_url(raw: str) -> str:
+    """
+    Force a stored domain value to a full https:// URL.
+
+    Legacy system_settings values may be stored as bare hostnames
+    ("clicklyspot.icu"). Returning one raw made route_click build a
+    RELATIVE destination ("clicklyspot.icu/d/{slug}") which the browser
+    resolved against the publisher's page — sending visitors to
+    https://publisher.com/clicklyspot.icu/d/{slug} (404). Never trust the
+    stored spelling: strip protocol/path and rebuild the absolute URL.
+    """
+    host = normalize_domain(raw)
+    if not host:
+        return (raw or "").rstrip("/")
+    return f"https://{host}"
 
 
 async def get_dns_instructions(db) -> dict:

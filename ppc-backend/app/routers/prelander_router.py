@@ -120,26 +120,13 @@ async def _resolve_bypass_destination(
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
     """
-    True when `host` is positioned inside an active chain's managed sequence
-    (its Inter domain or any extra hop) — meaning the chain still has a hop
-    after it (or a Prelander pool to draw from).
+    True when `host` is positioned inside an active chain's managed sequence.
+
+    DISABLED: the Redirection Chain system is intentionally NOT connected to
+    the redirection-domain flow right now (admin request — classic domain
+    resolution only). Kept as a stub so the call sites stay stable when
+    chains are re-wired properly later.
     """
-    from app.services.domain_service import normalize_domain
-    from app.models.redirect_chain import chain_inter_domain
-
-    host = normalize_domain(host)
-    if not host:
-        return False
-
-    chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
-    for chain in chains:
-        sequence: list = []
-        inter = chain_inter_domain(chain)
-        if inter:
-            sequence.append(inter)
-        sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
-        if host in [normalize_domain(d) for d in sequence if d]:
-            return True
     return False
 
 
@@ -147,68 +134,38 @@ async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
     """
     Next managed hop for a visitor currently on `current_host` (Bypass OFF).
 
-    The admin-built Redirection Chain defines the full ordered sequence:
-        Anchor → Inter → C → D → … → N → Prelander Pool
-    The visitor is somewhere inside that sequence. The next hop is the entry
-    AFTER the current host:
-
-      1. Chain whose Inter domain (or any extra hop) IS the current host wins
-         (chain applies to ALL publishers — global rule).
-      2. The next hop is the next extra domain after `current_host`; after the
-         last extra hop it is a weighted pick from the chain's Prelander pool.
-      3. No chain position (host not part of any chain) → legacy behaviour:
-         publisher/global Prelander domain via resolve_domain_url.
+    Classic redirection-domain flow (chains NOT connected): from any non-
+    Prelander host the next hop is the publisher-assigned (or global) Active
+    Prelander domain via resolve_domain_url — always normalized to a full
+    https:// URL so a bare-domain misconfiguration can never produce a
+    relative destination.
 
     Returns a URL (https://host) or None when there is nothing to hop to —
     the caller then serves prelander data on the current host.
     """
     from app.services.domain_service import (
-        domain_to_url, normalize_domain, resolve_domain_url, select_active_prelander,
+        domain_to_url, normalize_domain, resolve_domain_url,
     )
-    from app.models.redirect_chain import chain_inter_domain, chain_prelander_pool
 
     host = normalize_domain(current_host)
     if not host:
         return None
 
-    # Chains whose sequence contains this host (Inter + extra hops). Chains are
-    # global — first active chain that positions the host wins.
-    chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
-    for chain in chains:
-        sequence: list = []
-        inter = chain_inter_domain(chain)
-        if inter:
-            sequence.append(inter)
-        sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
-
-        normalized_seq = [normalize_domain(d) for d in sequence if d]
-        if host not in normalized_seq:
-            continue
-
-        idx = normalized_seq.index(host)
-        # Next extra hop after the current position
-        if idx + 1 < len(normalized_seq):
-            next_url = domain_to_url(normalized_seq[idx + 1])
-            # Never hop to ourselves — that would loop the visitor forever.
-            if next_url and normalize_domain(next_url) != host:
-                return next_url
-        # Current host is the last hop → weighted pick from the Prelander pool
-        pool = [normalize_domain(d) for d in chain_prelander_pool(chain) if d]
-        if pool:
-            pick = await select_active_prelander(db, pool)
-            if pick and normalize_domain(pick) != host:
-                return domain_to_url(pick)
-            # No ACTIVE prelander in the pool (or the pick IS this host) →
-            # caller serves data here
-            return None
-
-    # Host is not part of any chain sequence → legacy prelander resolution
+    # Publisher context of the CURRENT host (an Inter domain may be assigned
+    # to the publisher whose traffic it carries).
     publisher_ids_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
     publisher_ids = (publisher_ids_doc or {}).get("publisher_ids") or []
     publisher_id = publisher_ids[0] if publisher_ids else None
     prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
-    if prelander_base and normalize_domain(prelander_base) != host:
-        return prelander_base
+
+    # Normalize: resolve_domain_url may return a bare hostname from legacy
+    # system_settings — force it through domain_to_url so the /d page always
+    # navigates to an absolute https:// URL.
+    if prelander_base:
+        if not prelander_base.startswith(("http://", "https://")):
+            prelander_base = domain_to_url(prelander_base)
+        if prelander_base and normalize_domain(prelander_base) != host:
+            return prelander_base.rstrip("/")
     return None
 
 

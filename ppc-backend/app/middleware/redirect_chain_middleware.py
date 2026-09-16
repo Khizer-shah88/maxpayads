@@ -37,9 +37,21 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
     
     This middleware intercepts requests to configured redirect chain domains
     and handles the session validation and routing logic.
+
+    DISABLED: the Redirection Chain system is intentionally NOT connected to
+    the redirection-domain flow right now (admin request — the classic
+    redirection-domain flow is the only driver). Every request passes
+    straight through. Re-enable the dispatch body below when chains are
+    re-wired properly; every chain domain must then be normalized through
+    domain_to_url() before being used to build a redirect URL.
     """
     
     async def dispatch(self, request: Request, call_next):
+        # Chains disconnected from the redirection-domain flow — pass through.
+        return await call_next(request)
+
+    async def _dispatch_chains(self, request: Request, call_next):
+        """The chain-aware dispatch (dormant — not wired to the app)."""
         try:
             # API and infrastructure paths must always reach their handlers:
             # the /d/[slug] Next.js page drives the browser hops via the
