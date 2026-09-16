@@ -242,6 +242,24 @@ export const directLinkApi = {
   // One-time cleanup: archive duplicate/old links per publisher
   cleanupDuplicateLinks: () =>
     api.post('/direct-links/cleanup-duplicate-links'),
+  // Manual conversions (admin-entered for publisher stats pages)
+  createManualConversion: (data: {
+    date: string
+    publisher_id: string
+    link_id?: string | null
+    conversions: number
+    reason: string
+  }) => api.post('/direct-links/manual-conversions', data),
+  listManualConversions: (params?: {
+    publisher_id?: string
+    link_id?: string
+    date_from?: string
+    date_to?: string
+  }) => api.get('/direct-links/manual-conversions', { params }),
+  updateManualConversion: (id: string, data: { conversions: number; reason: string }) =>
+    api.put(`/direct-links/manual-conversions/${id}`, data),
+  deleteManualConversion: (id: string) =>
+    api.delete(`/direct-links/manual-conversions/${id}`),
 }
 
 // ==================== PUBLIC STATS (NO AUTH) ====================
