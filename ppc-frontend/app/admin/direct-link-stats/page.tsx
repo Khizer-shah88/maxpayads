@@ -696,12 +696,11 @@ export default function DirectLinkStatsPage() {
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {[
             { label: 'Total Links', value: links.length.toLocaleString(), icon: Link2, tone: 'text-primary', bg: 'bg-primary/10 border-primary/15' },
             { label: 'Publishers with Links', value: publisherStats.length.toLocaleString(), icon: Globe2, tone: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
             { label: 'Total Clicks', value: links.reduce((s, l) => s + l.total_clicks, 0).toLocaleString(), icon: MousePointerClick, tone: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
-            { label: 'Total Conversions', value: links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString(), icon: Target, tone: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
           ].map((s, i) => (
             <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
               <div className="flex items-center gap-3 mb-3">
@@ -713,6 +712,17 @@ export default function DirectLinkStatsPage() {
               <p className="text-2xl font-bold text-gray-900 tracking-tight">{s.value}</p>
             </div>
           ))}
+        </div>
+        
+        {/* Total Conversions - Full Width Card */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 bg-emerald-50 border-emerald-100">
+              <Target size={16} className="text-emerald-600" />
+            </div>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Total Conversions</span>
+          </div>
+          <p className="text-2xl font-bold text-gray-900 tracking-tight">{links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString()}</p>
         </div>
 
         {/* Date filter */}
@@ -728,7 +738,7 @@ export default function DirectLinkStatsPage() {
           </button>
         </div>
 
-        {/* Publisher stats grid */}
+        {/* Publisher stats table */}
         {loading ? (
           <div className="flex justify-center py-20"><Spinner size={32} /></div>
         ) : publisherStats.length === 0 ? (
@@ -744,164 +754,182 @@ export default function DirectLinkStatsPage() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
-            {publisherStats.map(pub => (
-              <div
-                key={pub.id}
-                onClick={() => setSelectedPublisherId(prev => prev === pub.id ? '' : pub.id)}
-                className={`bg-white rounded-2xl border p-5 cursor-pointer transition-all hover:shadow-md ${
-                  selectedPublisherId === pub.id
-                    ? 'border-primary shadow-md ring-2 ring-primary/20'
-                    : 'border-gray-100'
-                }`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 text-sm truncate">{pub.name}</h3>
-                    <p className="text-xs text-gray-400 truncate">{pub.email}</p>
-                  </div>
-                  <StatusBadge status={pub.status} />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <div className="bg-gray-50 rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider">Active Links</p>
-                    <p className="text-base font-bold text-gray-900">{pub.linkCount}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider">Today Conv.</p>
-                    <p className={`text-base font-bold ${pub.todayConversions > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
-                      {pub.todayConversions}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 text-xs mb-3">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Total Clicks</span>
-                    <span className="font-semibold text-gray-700">{pub.totalClicks.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Total Conversions</span>
-                    <span className="font-semibold text-gray-700">{pub.totalConversions.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">CR</span>
-                    <span className={`font-bold ${pub.cr >= 5 ? 'text-emerald-600' : pub.cr >= 2 ? 'text-amber-600' : 'text-gray-700'}`}>
-                      {pub.cr.toFixed(2)}%
-                    </span>
-                  </div>
-                </div>
-
-                {/* Domain Stats - Show which domains this publisher has */}
-                {publisherDomains[pub.id] && publisherDomains[pub.id].total > 0 && (
-                  <div className="mb-3 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wider">Assigned Domains</span>
-                      <span className="text-xs font-bold text-blue-600">{publisherDomains[pub.id].total}</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      {publisherDomains[pub.id].anchor?.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-semibold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded uppercase">Anchor</span>
-                          <div className="flex-1 flex flex-wrap gap-1">
-                            {publisherDomains[pub.id].anchor.map((domain: string, idx: number) => (
-                              <span key={idx} className="text-[10px] text-indigo-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
-                                {domain}
-                              </span>
-                            ))}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900">Publishers</h2>
+              <p className="text-xs text-gray-400 mt-0.5">{publisherStats.length} publisher{publisherStats.length !== 1 ? 's' : ''} with active links</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Publisher</th>
+                    <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Links</th>
+                    <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Clicks</th>
+                    <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
+                    <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
+                    <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">CR</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Domains</th>
+                    <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {publisherStats.map(pub => (
+                    <tr
+                      key={pub.id}
+                      onClick={() => setSelectedPublisherId(prev => prev === pub.id ? '' : pub.id)}
+                      className={`cursor-pointer transition-colors hover:bg-gray-50/70 ${
+                        selectedPublisherId === pub.id ? 'bg-primary/5' : ''
+                      }`}
+                    >
+                      {/* Publisher Info */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/10 flex items-center justify-center flex-shrink-0">
+                            <span className="text-sm font-bold text-primary">{pub.name.charAt(0).toUpperCase()}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">{pub.name}</p>
+                            <p className="text-xs text-gray-400 truncate max-w-[200px]">{pub.email}</p>
                           </div>
                         </div>
-                      )}
-                      {publisherDomains[pub.id].inter?.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-semibold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded uppercase">Inter</span>
-                          <div className="flex-1 flex flex-wrap gap-1">
-                            {publisherDomains[pub.id].inter.map((domain: string, idx: number) => (
-                              <span key={idx} className="text-[10px] text-purple-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
-                                {domain}
+                      </td>
+                      
+                      {/* Status */}
+                      <td className="px-3 py-4 text-center">
+                        <StatusBadge status={pub.status} />
+                      </td>
+                      
+                      {/* Active Links */}
+                      <td className="px-3 py-4 text-center">
+                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-50 border border-blue-100 text-sm font-bold text-blue-600">
+                          {pub.linkCount}
+                        </span>
+                      </td>
+                      
+                      {/* Total Clicks */}
+                      <td className="px-3 py-4 text-right">
+                        <span className="font-mono text-sm text-gray-700 font-semibold">{pub.totalClicks.toLocaleString()}</span>
+                      </td>
+                      
+                      {/* Total Conversions */}
+                      <td className="px-3 py-4 text-right">
+                        <span className="font-mono text-sm text-gray-700 font-semibold">{pub.totalConversions.toLocaleString()}</span>
+                      </td>
+                      
+                      {/* Today Conversions */}
+                      <td className="px-3 py-4 text-right">
+                        <span className={`inline-flex items-center justify-center min-w-[2rem] h-7 px-2 rounded-lg font-mono text-sm font-bold ${
+                          pub.todayConversions > 0 
+                            ? 'bg-emerald-50 border border-emerald-100 text-emerald-600' 
+                            : 'bg-gray-50 border border-gray-100 text-gray-400'
+                        }`}>
+                          {pub.todayConversions}
+                        </span>
+                      </td>
+                      
+                      {/* Conversion Rate */}
+                      <td className="px-3 py-4 text-right">
+                        <span className={`font-mono text-sm font-bold ${
+                          pub.cr >= 5 ? 'text-emerald-600' : pub.cr >= 2 ? 'text-amber-600' : 'text-gray-500'
+                        }`}>
+                          {pub.cr.toFixed(2)}%
+                        </span>
+                      </td>
+                      
+                      {/* Domain Stats */}
+                      <td className="px-3 py-4">
+                        {publisherDomains[pub.id] && publisherDomains[pub.id].total > 0 ? (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {publisherDomains[pub.id].anchor?.length > 0 && (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 border border-indigo-100">
+                                <span className="text-[9px] font-semibold text-indigo-700 uppercase">A</span>
+                                <span className="text-xs font-bold text-indigo-600">{publisherDomains[pub.id].anchor.length}</span>
                               </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {publisherDomains[pub.id].prelander?.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-semibold text-teal-600 bg-teal-100 px-1.5 py-0.5 rounded uppercase">Prelander</span>
-                          <div className="flex-1 flex flex-wrap gap-1">
-                            {publisherDomains[pub.id].prelander.map((domain: string, idx: number) => (
-                              <span key={idx} className="text-[10px] text-teal-700 bg-white/60 px-1.5 py-0.5 rounded font-mono truncate max-w-[120px]" title={domain}>
-                                {domain}
+                            )}
+                            {publisherDomains[pub.id].inter?.length > 0 && (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-purple-50 border border-purple-100">
+                                <span className="text-[9px] font-semibold text-purple-700 uppercase">I</span>
+                                <span className="text-xs font-bold text-purple-600">{publisherDomains[pub.id].inter.length}</span>
                               </span>
-                            ))}
+                            )}
+                            {publisherDomains[pub.id].prelander?.length > 0 && (
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-teal-50 border border-teal-100">
+                                <span className="text-[9px] font-semibold text-teal-700 uppercase">P</span>
+                                <span className="text-xs font-bold text-teal-600">{publisherDomains[pub.id].prelander.length}</span>
+                              </span>
+                            )}
                           </div>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
+                      
+                      {/* Actions */}
+                      <td className="px-3 py-4">
+                        <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => generateStatsUrl(pub.id, pub.name)}
+                            disabled={generatingShare === pub.id}
+                            title="Share stats link"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                          >
+                            {generatingShare === pub.id ? <Spinner size={14} /> : <Share2 size={14} />}
+                          </button>
+                          <button
+                            onClick={() => openPrefs(pub)}
+                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            title="Stats preferences"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
+                          >
+                            <Settings2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => openPubDomain(pub)}
+                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            title="Dedicated stats domain"
+                            className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
+                          >
+                            <Globe2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => openHistory(pub)}
+                            title="Conversion history"
+                            className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-100 transition-colors"
+                          >
+                            <History size={14} />
+                          </button>
+                          <button
+                            onClick={() => regenerateStatsUrl(pub.id, pub.name)}
+                            disabled={regenerating === pub.id}
+                            title="Regenerate stats link"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                          >
+                            {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                          </button>
+                          <button
+                            onClick={() => {
+                              const pubLinks = links.filter(l => l.publisher_id === pub.id)
+                              if (pubLinks.length === 0) return
+                              setDeleteAllTarget({
+                                name: pub.name,
+                                count: pubLinks.length,
+                                ids: pubLinks.map(l => l.id),
+                              })
+                            }}
+                            title="Delete all links"
+                            className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2 pt-2 border-t border-gray-100 flex-wrap">
-                  <button
-                    onClick={e => { e.stopPropagation(); generateStatsUrl(pub.id, pub.name) }}
-                    disabled={generatingShare === pub.id}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors disabled:opacity-60"
-                  >
-                    {generatingShare === pub.id
-                      ? <><Spinner size={12} /> Getting…</>
-                      : <><Share2 size={12} /> Share Stats</>
-                    }
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); openPrefs(pub) }}
-                    disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                    title="Choose what this publisher sees on their stats page (OS columns, conversions, CR…)"
-                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/5 border border-gray-200 transition-colors disabled:opacity-40"
-                  >
-                    <Settings2 size={13} />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); openPubDomain(pub) }}
-                    disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                    title="Assign a dedicated white-label stats domain for this publisher"
-                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 border border-gray-200 transition-colors disabled:opacity-40"
-                  >
-                    <Globe2 size={13} />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); openHistory(pub) }}
-                    title="View / edit / delete entered conversions (including old dates)"
-                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-amber-600 hover:bg-amber-50 border border-gray-200 transition-colors"
-                  >
-                    <History size={13} />
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); regenerateStatsUrl(pub.id, pub.name) }}
-                    disabled={regenerating === pub.id}
-                    title="Generate a new stats URL — the old link expires immediately; settings and data are kept"
-                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/5 border border-gray-200 transition-colors disabled:opacity-60"
-                  >
-                    {regenerating === pub.id ? <Spinner size={13} /> : <RefreshCw size={13} />}
-                  </button>
-                  <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      const pubLinks = links.filter(l => l.publisher_id === pub.id)
-                      if (pubLinks.length === 0) return
-                      setDeleteAllTarget({
-                        name: pub.name,
-                        count: pubLinks.length,
-                        ids: pubLinks.map(l => l.id),
-                      })
-                    }}
-                    title="Delete all links for this publisher"
-                    className="flex items-center justify-center p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 border border-red-100 transition-colors"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
