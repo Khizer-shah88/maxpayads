@@ -110,40 +110,54 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
     """
     Resolve the admin-configured Redirection Chain for a click.
 
-    GLOBAL RULE: every configured chain applies to ALL publishers — publisher
-    identity never determines chain ownership, and no chain is ever created
-    per publisher. Resolution is host-based: when the request came in on a
-    chain's Anchor domain, that chain wins. Otherwise the first active chain
-    is used so the admin-built flow always drives traffic.
+    DOMAIN-SPECIFIC RULE: chains are strictly tied to their Anchor domain. A
+    chain ONLY applies when traffic enters through its specified Anchor domain
+    (global publisher rule preserved: a matched chain applies to ALL
+    publishers — publisher identity never determines chain ownership).
 
-    Returns the chain document or None when none are configured.
+    Resolution:
+    - request_host matches a chain's anchor_domain → that chain
+    - no match → None (default domain routing applies instead)
+
+    The stored anchor hostname is normalized on both sides, so chains saved
+    with protocol/case variants still match the incoming host.
     """
     try:
         from app.services.domain_service import normalize_domain
 
-        query: dict = {"status": "active"}
-        if request_host:
-            host = normalize_domain(request_host)
-            if host:
-                chain = await db.redirect_chains.find_one({
-                    "anchor_domain": host,
-                    **query,
-                })
-                if not chain:
-                    # Chains may store the domain with protocol/case variants —
-                    # normalize both sides before deciding there is no match.
-                    chains = await db.redirect_chains.find(query).to_list(length=200)
-                    chain = next(
-                        (
-                            c for c in chains
-                            if normalize_domain(c.get("anchor_domain")) == host
-                        ),
-                        None,
-                    )
-                if chain:
-                    return chain
-        # Any active chain applies to every publisher — take the first.
-        return await db.redirect_chains.find_one(query)
+        if not request_host:
+            # No host specified - cannot match a chain
+            return None
+
+        host = normalize_domain(request_host)
+        if not host:
+            return None
+
+        # Direct anchor match first (fast path)
+        chain = await db.redirect_chains.find_one({
+            "anchor_domain": host,
+            "status": "active",
+        })
+
+        if not chain:
+            # Chains may store the domain with protocol/case variants —
+            # normalize both sides before deciding there is no match.
+            chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
+            chain = next(
+                (
+                    c for c in chains
+                    if normalize_domain(c.get("anchor_domain")) == host
+                ),
+                None,
+            )
+
+        if chain:
+            logger.info(f"[CHAIN] Matched chain '{chain.get('name')}' for anchor domain: {host}")
+            return chain
+
+        # No chain for this domain - will use default domain routing
+        logger.debug(f"[CHAIN] No chain configured for domain: {host}")
+        return None
     except Exception as e:
         logger.warning("[CHAIN] Resolution failed: %s", e)
         return None
@@ -387,16 +401,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
     # ── Bypass handling ─────────────────────────────────────────────────────
     # Spec (both modes pass through the Intermediate domain):
-    #   Bypass OFF: Anchor → Inter (logs, 1.5s dwell) → Prelander landing page
-    #   Bypass ON:  Anchor → Inter (logs, 1.5s dwell) → Campaign URL
+    #   Bypass OFF: Anchor → Inter (logs, 0.75s dwell) → Prelander landing page
+    #   Bypass ON:  Anchor → Inter (logs, 0.75s dwell) → Campaign URL
     # In BOTH cases /click sends the visitor to the Inter domain /d/{slug}.
     # The slug carries campaign/offer ids; the prelander resolver on the Inter
     # domain logs the hop and decides the next hop (prelander vs campaign URL).
     # Going direct to the Campaign URL happens ONLY when no Inter domain is
     # configured at all.
 
-    # Admin-built Redirection Chain takes priority: it defines the Inter hop
-    # (and any extra hops) and applies to ALL publishers — global rule.
+    # Admin-built Redirection Chain (domain-specific override):
+    # When traffic enters through a domain that has a configured chain, use that
+    # chain's routing. Otherwise use default domain resolution. Chains are strictly
+    # tied to their anchor domain and override default routing only for that domain.
     chain = await resolve_active_chain(
         db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
     )
@@ -405,22 +421,38 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         clean_url = _clean_campaign_url(resolved_offer_url)
         if ctx is not None:
             ctx.skip_prelander = True
+        
+        # When a chain is configured, use its Anchor as the entry point even in
+        # bypass mode: the chain middleware drives the hops (session cookie at
+        # the Anchor, validation at Inter/extra hops), while the prelander is
+        # skipped — the /d page on the Anchor's next hop reads the slug and
+        # 302s straight to the Campaign URL.
+        anchor_base = chain.get("anchor_domain") if chain else None
         inter_base = chain_inter_domain(chain) if chain else None
-        if not inter_base:
-            try:
-                from app.services.domain_service import resolve_domain_url
-                inter_base = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-            except Exception:
-                inter_base = None
-        # Extra hops configured on the chain come AFTER the Inter domain:
-        # Anchor → Inter → C → D → … → Campaign URL (bypass ON). When the
-        # chain defines hops but no Inter domain, the first hop becomes the
-        # entry point so the admin-built sequence is still traversed.
         hops = chain_hop_sequence(chain)
-        entry_base = (inter_base or "").rstrip("/") or None
-        if not entry_base and hops:
+        
+        entry_base = None
+        if anchor_base:
+            # Chain configured → Anchor domain is the entry (middleware flow)
+            entry_base = f"https://{anchor_base}"
+        elif inter_base:
+            # Chain Inter hop
+            entry_base = inter_base.rstrip("/")
+        elif hops:
+            # Chain defines extra hops but no Inter — first hop is the entry
             from app.services.domain_service import domain_to_url
             entry_base = domain_to_url(hops[0]) or None
+        
+        if not entry_base:
+            # No chain — resolve the Inter domain the classic way
+            try:
+                from app.services.domain_service import resolve_domain_url
+                resolved_inter = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+                if resolved_inter:
+                    entry_base = resolved_inter.rstrip("/")
+            except Exception:
+                pass
+        
         if entry_base:
             os_param_b = slug_os_param(os_name)
             offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
@@ -436,7 +468,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             )
             _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=entry_base)
             return dest, referrer_suppression
-        logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
+        logger.info(f"[ROUTE] BYPASS ON, no chain/inter domain: direct to campaign URL: {clean_url}")
         _record(ctx, STAGE_CHAIN, "not_needed_bypass")
         _record(ctx, STAGE_PRELANDER, "skipped_bypass", source=bypass_source, url=clean_url)
         return clean_url, referrer_suppression
@@ -501,15 +533,17 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             )
             last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
     intermediate_base = (chain_inter_domain(chain) if chain else None) or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
-    has_managed_domain = bool(last_base or intermediate_base or chain_extra_hops(chain))
+    anchor_base = chain.get("anchor_domain") if chain else None
+    has_managed_domain = bool(last_base or intermediate_base or anchor_base or chain_extra_hops(chain))
 
     if ctx is not None:
         ctx.prelander_url = last_base
         ctx.inter_url = intermediate_base
+        ctx.anchor_url = anchor_base
     _record(
         ctx, STAGE_CHAIN,
         "resolved" if has_managed_domain else "no_managed_domain",
-        anchor=getattr(ctx, "request_host", None) if ctx is not None else None,
+        anchor=anchor_base or getattr(ctx, "request_host", None) if ctx is not None else None,
         inter=intermediate_base,
         prelander=last_base,
         chain=(chain or {}).get("name"),
@@ -531,15 +565,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         # Entry point for the prelander hop. Per the documented redirection
         # architecture (Bypass OFF):
         #   Publisher Smartlink → Anchor → Inter → [extra hops] → Prelander → Campaign URL
-        # The Inter domain comes FIRST: it validates and logs the hop, then the
-        # /d/[slug] page on the Inter domain forwards the visitor through any
-        # remaining chain hops and finally to the Prelander domain. Only when no
-        # Inter domain is configured does the visitor land on the first chain
-        # hop (or the Prelander domain) directly.
+        # The Anchor domain is the entry point when a chain is configured: the
+        # chain middleware generates the session cookie there and drives the
+        # hops through Inter → extra domains → Prelander pool. Without a chain,
+        # the visitor lands on the Inter domain (classic flow); with neither,
+        # on the first chain hop or the Prelander domain directly.
         hops = chain_hop_sequence(chain)
-        if intermediate_base:
+        if anchor_base:
+            entry_domain = f"https://{anchor_base}".rstrip("/")
+            logger.info("[ROUTE] Chain anchor domain (entry): %s", entry_domain)
+        elif intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] Inter domain (entry): %s", entry_domain)
+            logger.info("[ROUTE] Inter domain (entry, no chain): %s", entry_domain)
         elif hops:
             from app.services.domain_service import domain_to_url as _dtu
             hop_url = _dtu(hops[0])
@@ -551,7 +588,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
                 logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
         elif last_base:
             entry_domain = last_base.rstrip("/")
-            logger.info("[ROUTE] No inter domain configured, entering on prelander: %s", entry_domain)
+            logger.info("[ROUTE] No chain/inter, entering on prelander: %s", entry_domain)
         else:
             entry_domain = lander_url.rstrip("/")
             logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
@@ -567,7 +604,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             ctx, STAGE_PRELANDER, "prelander",
             entry_domain=entry_domain,
             entry_type=(
-                "inter" if intermediate_base
+                "anchor" if anchor_base
+                else "inter" if intermediate_base
                 else "chain_hop" if (hops and not last_base)
                 else "prelander" if last_base
                 else "legacy_lander"

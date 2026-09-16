@@ -1,6 +1,15 @@
 """
-Redirect Chain — the Admin-configured pairing of Anchor + Inter + Prelander Pool
-+ status, per the Domain Glossary.
+Redirect Chain — Admin-configured domain-specific routing override.
+
+A Redirect Chain defines custom routing for traffic entering through a specific
+anchor domain. Chains override the default domain routing and allow admins to
+configure complex multi-hop flows for specific domains.
+
+Key concepts:
+- Chains are DOMAIN-SPECIFIC: tied to their anchor_domain
+- Chains only apply to traffic entering through their anchor domain
+- Other domains use default routing (no chain)
+- Multiple chains can exist, each for different anchor domains
 
 Field names follow the glossary: `anchor_domain`, `inter_domain`,
 `prelander_pool`. Documents written before migration 005 still carry the older
@@ -62,7 +71,8 @@ class RedirectChain(BaseModel):
         description=(
             "Ordered additional hops between Inter and the Prelander pool, giving "
             "chains a configurable length: Anchor → Inter → C → D → … → N. "
-            "Chains apply to ALL publishers — never tied to one publisher."
+            "Chains are domain-specific and only apply to traffic entering through "
+            "the specified anchor domain."
         ),
     )
     session_validation: bool = Field(True, description="Whether to enforce session cookie validation")

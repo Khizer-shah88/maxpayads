@@ -235,7 +235,7 @@ async def get_domain_type(
 
     When slug is supplied and the host is NOT the Prelander domain, the slug is
     decoded and the campaign/offer bypass checked: bypass ON returns the
-    Campaign URL in bypass_redirect_url so the /d page (after its 1.5s dwell on
+    Campaign URL in bypass_redirect_url so the /d page (after its 0.75s dwell on
     the Inter domain) sends the visitor straight to the campaign.
     """
     from app.services.domain_service import normalize_domain
@@ -252,7 +252,7 @@ async def get_domain_type(
     # Prelander domain — the admin's configured sequence wins over the type.
     in_chain_sequence = await _host_in_chain_sequence(db, h)
 
-    # ── Bypass detection (spec: Inter dwells 1.5s, then Campaign URL) ────────
+    # ── Bypass detection (spec: Inter dwells 0.75s, then Campaign URL) ────────
     # Applies to every host that is not the FINAL prelander: Inter, extra
     # chain hops, and prelander-typed domains positioned mid-chain.
     bypass_redirect_url = None
@@ -330,6 +330,9 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         if should_hop:
             # Bypass check first (spec): Bypass ON → straight to the Campaign
             # URL from the Inter/chain domain, never touching the Prelander.
+            # Bypass ON: Anchor → Inter (logs, 0.75s dwell) → Campaign URL —
+            # decode the slug and check the campaign/offer direct_redirect_mode.
+            # ON → 302 straight to the Campaign URL, never the Prelander domain.
             decoded_bypass = _decode_slug(slug)
             if decoded_bypass:
                 bypass_url = await _resolve_bypass_destination(
@@ -450,11 +453,13 @@ async def _get_prelander_data(
     # 1. Specific offer from slug — highest priority because TargetingEngine
     # resolved this specific offer as the winning destination.
     if offer_id:
+        logger.info(f"[PRELANDER] Looking up offer_id from slug: {offer_id}")
         try:
             offer = await db.offers.find_one({"_id": ObjectId(offer_id), "status": "active"})
             if not offer:
                 offer = await db.offers.find_one({"_id": offer_id, "status": "active"})
             if offer:
+                logger.info(f"[PRELANDER] Found offer: {offer.get('name')} (ID: {offer_id})")
                 offer_url = offer.get("offer_url")
                 password = offer.get("password") or None
                 if offer.get("campaign_id"):
@@ -462,12 +467,15 @@ async def _get_prelander_data(
                         camp = await db.campaigns.find_one({"_id": ObjectId(offer["campaign_id"])})
                         if camp:
                             campaign_name = camp.get("name")
+                            logger.info(f"[PRELANDER] Offer belongs to campaign: {campaign_name}")
                             if password is None and "password" not in offer:
                                 password = camp.get("password")
                     except Exception:
                         pass
-        except Exception:
-            pass
+            else:
+                logger.warning(f"[PRELANDER] Offer not found for ID: {offer_id}")
+        except Exception as e:
+            logger.warning(f"[PRELANDER] Error looking up offer: {e}")
 
     # 2. GEO rule — country-specific URL if no specific offer was matched
     if not offer_url and campaign_id and country_code:
@@ -479,22 +487,41 @@ async def _get_prelander_data(
             offer_url = geo_rule["offer_url"]
             password = geo_rule.get("password") or None
 
-    # 3. Campaign from slug
-    if not campaign_name and campaign_id:
+    # 3. Campaign from slug - extract URL when no specific offer/geo rule matched
+    if campaign_id:
+        logger.info(f"[PRELANDER] Looking up campaign_id from slug: {campaign_id}")
         try:
             camp = await db.campaigns.find_one({"_id": ObjectId(campaign_id)})
             if camp:
-                campaign_name = camp.get("name")
+                if not campaign_name:
+                    campaign_name = camp.get("name")
+                    logger.info(f"[PRELANDER] Found campaign: {campaign_name} (ID: {campaign_id})")
+                
+                # Extract campaign URL when no more specific offer URL was found
+                if not offer_url:
+                    offer_url = (
+                        camp.get("default_offer_url")
+                        or camp.get("offer_url")
+                        or camp.get("url")
+                    )
+                    if offer_url:
+                        logger.info(f"[PRELANDER] Using campaign URL from slug: {offer_url}")
+                    else:
+                        logger.warning(f"[PRELANDER] Campaign {campaign_name} has no URL configured")
+                
                 if password is None:
                     password = camp.get("password")
-        except Exception:
-            pass
+            else:
+                logger.warning(f"[PRELANDER] Campaign not found for ID: {campaign_id}")
+        except Exception as e:
+            logger.warning(f"[PRELANDER] Error looking up campaign: {e}")
 
     # 4. Fallback — match by domain, OS, or any active campaign
     if not offer_url:
         campaign = None
         req_host = request.headers.get("host", "").split(":")[0].lower()
 
+        # Try to find campaign by landing page domain first
         if req_host:
             lp = await db.landing_pages.find_one({
                 "status": "active",
@@ -502,38 +529,56 @@ async def _get_prelander_data(
             })
             if lp and lp.get("campaign_id"):
                 try:
-                    campaign = await db.campaigns.find_one({"_id": ObjectId(lp["campaign_id"])})
+                    campaign = await db.campaigns.find_one({"_id": ObjectId(lp["campaign_id"]), "status": "active"})
                 except Exception:
                     pass
 
+        # Try to find campaign by device OS (case-insensitive)
         if not campaign:
             device_os = "windows" if os_lower == "windows" else "mac"
             campaign = await db.campaigns.find_one({
                 "status": "active",
                 "device_os": {"$regex": f"^{device_os}$", "$options": "i"},
             })
+            logger.info(f"[PRELANDER] Campaign lookup by OS '{device_os}': {'found' if campaign else 'not found'}")
 
+        # Try to find global campaign
         if not campaign:
             campaign = await db.campaigns.find_one({
                 "status": "active",
                 "device_os": {"$regex": "^global$", "$options": "i"},
             })
+            logger.info(f"[PRELANDER] Campaign lookup by 'global': {'found' if campaign else 'not found'}")
 
+        # Last resort: any active campaign
         if not campaign:
             campaign = await db.campaigns.find_one({"status": "active"})
+            logger.info(f"[PRELANDER] Campaign lookup (any active): {'found' if campaign else 'not found'}")
 
         if campaign:
             campaign_name = campaign.get("name")
+            logger.info(f"[PRELANDER] Resolved campaign: {campaign_name} (ID: {campaign.get('_id')})")
+            
+            # Try multiple field names for the campaign URL (different schemas used different names)
             offer_url = (
                 campaign.get("default_offer_url")
                 or campaign.get("offer_url")
                 or campaign.get("url")
             )
+            
+            if offer_url:
+                logger.info(f"[PRELANDER] Campaign URL before cleaning: {offer_url}")
+            else:
+                logger.warning(f"[PRELANDER] Campaign {campaign_name} has no URL in any field (default_offer_url, offer_url, url)")
+            
             if not password:
                 password = campaign.get("password")
 
     if not offer_url:
-        offer_url = "https://example.com"
+        # No campaign found - return a fallback URL with clear message
+        # This should rarely happen in production (requires NO active campaigns)
+        logger.warning("[PRELANDER] No active campaign found or campaign has no URL, using fallback")
+        offer_url = "https://example.com/campaign-not-configured"
 
     # Spec (Bypass OFF): the visitor ALWAYS lands on the landing page — even
     # when no active template exists. The page falls back to the built-in
