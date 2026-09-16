@@ -61,6 +61,17 @@ class FakeRedis:
     async def expire(self, key, ttl):
         return key in self.store
 
+    async def incr(self, key):
+        """Atomic counter — the STEP 18 race-free consumption primitive."""
+        if key in self.store:
+            value, expires_at = self.store[key]
+            if time.time() <= expires_at:
+                self.store[key] = (str(int(value) + 1), expires_at)
+                return int(value) + 1
+            self.store.pop(key, None)
+        self.store[key] = ("1", time.time() + 3600)
+        return 1
+
 
 class FakePipeline:
     def __init__(self, redis):
@@ -779,3 +790,198 @@ async def test_access_middleware_denies_direct_visit(redis):
         slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(),
     )
     assert got is None
+
+
+# ── STEP 13-16 — headers, open-redirect, anti-abuse, logging ────────────────────
+
+# T7 (spec STEP 19): valid refresh is allowed and never counts as a click.
+# Clicks are born ONLY in stage_record_click (redirect_pipeline) — the single
+# insert_one on the clicks collection. The refresh path
+# (validate_prelander_session) never touches the database writes, so a refresh
+# cannot create a click by construction. This test pins the refresh half.
+@pytest.mark.asyncio
+async def test_t7_valid_refresh_allowed_and_never_a_click(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+    assert await pas.consume_handoff(
+        handoff, redis, requesting_host="prelander.example.com", ip=IP, user_agent=UA,
+    ) is not None
+
+    pl_id = await pas.establish_prelander_session(session, redis)
+    # Five refreshes — every one allowed, none re-consumes the handoff
+    for _ in range(5):
+        got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+        assert got is not None and got.click_id == "c1"
+    # The handoff is still dead — refresh rode the browsing session only
+    assert await redis.get(pas._handoff_key(handoff)) is None
+
+
+# T12: malformed / guessed tokens are denied safely, never raising.
+@pytest.mark.asyncio
+async def test_t12_malformed_and_guessed_tokens_denied_safely(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    assert session is not None
+
+    for guess in ("", "x", "a" * 43, "deadbeefdeadbeefdeadbeef", "-", "!@#$%^&*"):
+        # Guessed handoff exchange
+        assert await pas.consume_handoff(guess, redis, ip=IP, user_agent=UA) is None
+        # Guessed session token
+        assert await pas.get_session(guess, redis) is None
+        # Guessed browsing-session id
+        assert await pas.validate_prelander_session(guess, redis, slug=SLUG) is None
+        # Forged cookie reference
+        assert await pas.validate_authorization(SLUG, IP, UA, redis, cookie_reference=guess) is None
+
+
+# T13: expired token replay is denied (both the handoff TTL and the session TTL).
+@pytest.mark.asyncio
+async def test_t13_expired_token_replay_denied(redis, monkeypatch):
+    monkeypatch.setenv("PRELANDER_HANDOFF_TTL", "1")
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+
+    # Expire everything in the store
+    for key, (value, expires_at) in list(redis.store.items()):
+        redis.store[key] = (value, time.time() - 1)
+
+    assert await pas.consume_handoff(
+        handoff, redis, requesting_host="prelander.example.com", ip=IP, user_agent=UA,
+    ) is None
+
+
+# T14: invalid redirect destinations are rejected — no open redirect.
+@pytest.mark.asyncio
+async def test_t14_handoff_target_rejected_when_not_server_routed(redis):
+    session = await pas.create_authorization(
+        "c1", SLUG, IP, UA, redis, prelander_host="prelander-a.example.com",
+    )
+    # The click was routed to prelander-a; the browser asks for attacker.com → DENY
+    assert pas.resolve_handoff_target(session, "attacker.com") is None
+    assert pas.resolve_handoff_target(session, "prelander-b.example.com") is None
+    assert pas.resolve_handoff_target(session, "https://attacker.com/x") is None
+    # Matching / absent browser value → the server-recorded host wins
+    assert pas.resolve_handoff_target(session, "prelander-a.example.com") == "prelander-a.example.com"
+    assert pas.resolve_handoff_target(session, "") == "prelander-a.example.com"
+
+
+@pytest.mark.asyncio
+async def test_t14_minted_handoff_for_attacker_target_is_unusable(redis):
+    """Even a legacy (host-less) session mints only bare hostnames — never URLs."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)  # no prelander_host
+    target = pas.resolve_handoff_target(session, "https://attacker.com/path?x=1")
+    assert target == "attacker.com"          # reduced to a bare hostname
+    handoff = await pas.mint_handoff(session, redis, target_host=target)
+    raw = json.loads(await redis.get(pas._handoff_key(handoff)))
+    assert raw["th"] == "attacker.com"       # no scheme/path/query ever stored
+
+
+# T15: parallel token exchange — only one succeeds (GETDEL atomicity).
+@pytest.mark.asyncio
+async def test_t15_parallel_exchange_only_one_wins(redis):
+    import asyncio
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+
+    # Two concurrent exchanges of the same token
+    results = await asyncio.gather(
+        pas.consume_handoff(handoff, redis, requesting_host="prelander.example.com", ip=IP, user_agent=UA),
+        pas.consume_handoff(handoff, redis, requesting_host="prelander.example.com", ip=IP, user_agent=UA),
+    )
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1
+
+
+# STEP 15 — rate limiting on the token surfaces.
+@pytest.mark.asyncio
+async def test_auth_rate_limit_blocks_after_threshold(redis, monkeypatch):
+    # Tiny window for the test
+    import app.config as config
+    settings = config.get_settings()
+    monkeypatch.setattr(settings, "PRELANDER_AUTH_RATE_LIMIT", 3, raising=False)
+    monkeypatch.setattr(settings, "PRELANDER_AUTH_RATE_WINDOW", 60, raising=False)
+
+    for _ in range(3):
+        assert await pas.check_auth_rate_limit(IP, redis) is True
+    # 4th request in the window → blocked
+    assert await pas.check_auth_rate_limit(IP, redis) is False
+    # Different IP unaffected
+    assert await pas.check_auth_rate_limit("198.51.100.7", redis) is True
+
+
+@pytest.mark.asyncio
+async def test_auth_rate_limit_never_blocks_on_redis_failure():
+    class BrokenRedis:
+        async def incr(self, key):
+            raise RuntimeError("down")
+
+        async def expire(self, key, ttl):
+            raise RuntimeError("down")
+
+    assert await pas.check_auth_rate_limit(IP, BrokenRedis()) is True
+
+
+# STEP 16 — tokens never reach logs.
+def test_t16_redact_path_tokens():
+    secret = "A" * 43
+    assert pas.redact_path_tokens(f"/prelander/_auth/{secret}") == "/prelander/_auth/{token}"
+    # Non-token paths untouched
+    assert pas.redact_path_tokens("/prelander/resolve/abc123") == "/prelander/resolve/abc123"
+
+
+def test_t16_event_never_emits_raw_tokens(caplog):
+    import logging
+    with caplog.at_level(logging.INFO, logger="ppc_network.security"):
+        pas._event("replay_attempt_detected", token="S" * 43)
+        pas._event("redirect_session_created", click_id="c1")
+    joined = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "S" * 43 not in joined        # raw token never printed
+    assert "event=replay_attempt_detected" in joined
+    assert "event=redirect_session_created" in joined
+
+
+# STEP 18 — concurrent consume cannot lose uses (atomic INCR).
+@pytest.mark.asyncio
+async def test_concurrent_consume_does_not_lose_uses(redis):
+    import asyncio
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    # 5 concurrent validations — the counter must land on exactly 5
+    await asyncio.gather(*[
+        pas.validate_authorization(SLUG, IP, UA, redis) for _ in range(5)
+    ])
+    stored = json.loads(await redis.get(pas._session_key(session.token)))
+    assert stored["used"] == 5
+
+
+# STEP 13 — cookie flags come from config.
+def test_cookie_flags_default():
+    flags = pas.cookie_flags()
+    assert flags["httponly"] is True
+    assert flags["secure"] is True
+    assert flags["samesite"] == "lax"
+
+
+def test_cookie_flags_from_config(monkeypatch):
+    import app.config as config
+    settings = config.get_settings()
+    monkeypatch.setattr(settings, "PRELANDER_COOKIE_SECURE", False, raising=False)
+    monkeypatch.setattr(settings, "PRELANDER_COOKIE_SAMESITE", "strict", raising=False)
+    flags = pas.cookie_flags()
+    assert flags["secure"] is False and flags["samesite"] == "strict"
+
+
+# T16 (spec STEP 19): assets keep working — the asset paths nginx/Next.js
+# serve (/_next/*, static files) are exempt from the portal gate and carry
+# no authorization requirement by design; the browsing session is never
+# invalidated by asset requests (they never touch it). Pinned here:
+@pytest.mark.asyncio
+async def test_t16_asset_requests_do_not_touch_session_or_create_clicks(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+
+    # Simulate a page with many asset requests — the session is untouched
+    for _ in range(30):
+        got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+        assert got is not None
+    stored = json.loads(await redis.get(pas._session_key(session.token)))
+    # Browsing-session reads never consumed anything
+    assert stored["used"] == 0

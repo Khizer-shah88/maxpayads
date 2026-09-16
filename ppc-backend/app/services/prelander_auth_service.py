@@ -53,6 +53,79 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+
+# ── STEP 16 — structured security events ────────────────────────────────────────
+# One emitter, stable event names, no secrets: never the token, never the
+# cookie reference, never the handoff value. Internal ids (click/publisher/
+# campaign) appear in these SERVER-side security logs only — that is their
+# documented purpose (abuse analysis); the normal request logs carry
+# redacted paths instead (see redact_path_tokens).
+
+AUDIT = logging.getLogger("ppc_network.security")
+
+
+def _redact(secret: str, keep: int = 6) -> str:
+    """Truncate a secret-ish value for logs — first chars only, never enough to replay."""
+    s = (secret or "").strip()
+    return f"{s[:keep]}…" if len(s) > keep else "-"
+
+
+def _event(name: str, **fields) -> None:
+    """Emit a structured security event: `event=name key=value …` (flat, greppable)."""
+    parts = [f"event={name}"]
+    for key, value in fields.items():
+        if value is None or value == "":
+            continue
+        text = str(value)
+        # Defense in depth: token-shaped fields never print raw, whatever the caller passed
+        if key in ("token", "handoff", "reference", "cookie", "pl_session"):
+            text = _redact(text)
+        parts.append(f"{key}={text}")
+    AUDIT.info(" ".join(parts))
+
+
+def redact_path_tokens(path: str) -> str:
+    """
+    Redact one-time handoff tokens from logged URL paths (STEP 16).
+
+    /prelander/_auth/{43-char-secret} → /prelander/_auth/{token}
+    The request logger middleware calls this so handoff tokens never reach
+    normal application logs — only the security audit log sees (redacted)
+    authorization activity.
+    """
+    import re
+    return re.sub(
+        r"(/prelander/_auth/)[A-Za-z0-9_\-]{10,}",
+        r"\1{token}",
+        path or "",
+    )
+
+
+async def check_auth_rate_limit(ip: str, redis) -> bool:
+    """
+    STEP 15 — per-IP limiter for the token-guessing surfaces (handoff mint +
+    exchange). Returns True when the caller is WITHIN the limit.
+
+    Limit/window from config (PRELANDER_AUTH_RATE_LIMIT /
+    PRELANDER_AUTH_RATE_WINDOW). Best-effort: a Redis failure never blocks
+    legitimate visitors (fail-open on the limiter; the tokens themselves are
+    256-bit CSPRNG — guessing is not a viable attack even at unlimited rate).
+    """
+    if redis is None or not ip:
+        return True
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        limit = int(getattr(settings, "PRELANDER_AUTH_RATE_LIMIT", 30) or 30)
+        window = int(getattr(settings, "PRELANDER_AUTH_RATE_WINDOW", 60) or 60)
+        key = f"prelander_auth_rl:{ip}"
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, window)
+        return int(count) <= limit
+    except Exception:
+        return True
+
 # ── Configuration (environment-driven, never hardcoded at call sites) ────────
 
 # Session lifetime. Configurable via PRELANDER_SESSION_TTL (seconds).
@@ -101,6 +174,24 @@ PL_SESSION_COOKIE = "mpa_pls"
 
 def cookie_ttl_seconds() -> int:
     return _session_ttl() + SESSION_SKEW_SECONDS
+
+
+def cookie_flags() -> dict:
+    """
+    STEP 13 — the one canonical cookie attribute set for both prelander
+    cookies. HttpOnly is always on; Secure/SameSite come from config
+    (PRELANDER_COOKIE_SECURE / PRELANDER_COOKIE_SAMESITE) so deployments
+    behind plain HTTP (local testing) can relax them without code edits.
+    """
+    from app.config import get_settings
+    settings = get_settings()
+    secure = getattr(settings, "PRELANDER_COOKIE_SECURE", True)
+    if isinstance(secure, str):
+        secure = secure.strip().lower() not in ("false", "0", "no", "off")
+    samesite = (getattr(settings, "PRELANDER_COOKIE_SAMESITE", "lax") or "lax").strip().lower()
+    if samesite not in ("lax", "strict", "none"):
+        samesite = "lax"
+    return {"httponly": True, "secure": bool(secure), "samesite": samesite}
 
 
 # Secret for HMAC key derivation. Reuses REDIRECT_SECRET_KEY / SECRET_KEY via
@@ -410,9 +501,10 @@ async def create_authorization(
         pipe.setex(_fp_key(session.fingerprint), effective_ttl, session.token)
         pipe.setex(_sh_key(session.slug_hash), effective_ttl, session.token)
         await pipe.execute()
-        logger.info(
-            "[PRELANDER-AUTH] Authorization created for click=%s (host=%s ttl=%ss)",
-            click_id, prelander_host or "-", effective_ttl,
+        _event(
+            "redirect_session_created",
+            click_id=click_id, host=prelander_host or "-", ttl=effective_ttl,
+            publisher_id=publisher_id or "-", campaign_id=campaign_id or "-",
         )
         return session
     except Exception as e:
@@ -444,14 +536,24 @@ async def _consume(session: AuthorizationSession, redis) -> None:
     visitor (validation has already passed).
     """
     try:
-        session.consumed_count += 1
+        # Atomic progression (STEP 18 race fix): Redis INCR cannot lose a
+        # concurrent use — the old read-modify-write JSON update could. The
+        # counter rides the session TTL; only after the atomic read is the
+        # JSON rewritten with the fresh count (and the consumed status over
+        # the ceiling).
+        remaining = session.expires_at - int(time.time())
+        if remaining <= 0:
+            return
+        count_key = f"{_REDIS_PREFIX}uses:{session.token}"
+        count = await redis.incr(count_key)
+        if count == 1:
+            await redis.expire(count_key, remaining)
+        session.consumed_count = int(count)
         if session.consumed_count >= MAX_CONSUMPTIONS:
             session.status = STATUS_CONSUMED
-        remaining = session.expires_at - int(time.time())
-        if remaining > 0:
-            await redis.setex(
-                _session_key(session.token), remaining, json.dumps(session.to_json())
-            )
+        await redis.setex(
+            _session_key(session.token), remaining, json.dumps(session.to_json())
+        )
     except Exception as e:
         logger.debug("[PRELANDER-AUTH] Consume write failed (non-fatal): %s", e)
 
@@ -626,6 +728,7 @@ async def revoke_authorization(token: str, redis) -> bool:
         return False
     try:
         await redis.delete(_session_key(token))
+        _event("prelander_session_expired", token=token, reason="revoked")
         return True
     except Exception as e:
         logger.warning("[PRELANDER-AUTH] Revoke failed: %s", e)
@@ -673,6 +776,39 @@ def _handoff_ttl() -> int:
     return 60  # seconds — just long enough for one redirect hop
 
 
+def _bare_host(value: str) -> str:
+    """Reduce any browser-supplied string to a bare lowercase hostname — no scheme, port, path, or query."""
+    raw = (value or "").strip().lower()
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    # Drop path/query/fragment and any userinfo, then any port
+    raw = raw.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    raw = raw.rsplit("@", 1)[-1]
+    raw = raw.split(":", 1)[0]
+    return raw.strip()
+
+
+def resolve_handoff_target(session: AuthorizationSession, requested_host: str) -> Optional[str]:
+    """
+    STEP 14 — open-redirect protection for the handoff target.
+
+    The destination is decided SERVER-SIDE: the session recorded the selected
+    prelander host at click time (route_click's own pick). A browser-supplied
+    ?target_host= is only honored when it matches that recorded host exactly;
+    any other value (attacker.com, a different prelander, a URL with a path)
+    means DENY (return None). When the session carries no recorded host
+    (legacy pre-STEP-9 session) the browser value is reduced to a bare
+    hostname — it can never smuggle in an arbitrary redirect URL.
+    """
+    session_host = _bare_host(getattr(session, "prelander_host", "") or "")
+    requested = _bare_host(requested_host or "")
+    if session_host:
+        if requested and requested != session_host:
+            return None
+        return session_host
+    return requested or ""
+
+
 async def mint_handoff(
     session: AuthorizationSession,
     redis,
@@ -700,9 +836,9 @@ async def mint_handoff(
             "state": HANDOFF_ISSUED,
         })
         await redis.setex(_handoff_key(handoff_token), effective_ttl, value)
-        logger.info(
-            "[PRELANDER-AUTH] Handoff minted (state=issued ttl=%ss target=%s)",
-            effective_ttl, target_host or "-",
+        _event(
+            "handoff_token_created",
+            click_id=session.click_id, target=target_host or "-", ttl=effective_ttl,
         )
         return handoff_token
     except Exception as e:
@@ -734,6 +870,7 @@ async def consume_handoff(
         # double-click, back button, shared URL) sees nothing.
         raw = await redis.getdel(_handoff_key(handoff_token))
         if not raw:
+            _event("replay_attempt_detected", token=handoff_token)
             logger.info("[PRELANDER-AUTH] Handoff replay/unknown token denied")
             return None
         payload = json.loads(raw)
@@ -741,6 +878,7 @@ async def consume_handoff(
         target = payload.get("th", "")
 
         if target and requesting_host and target != requesting_host:
+            _event("invalid_domain_access", host=requesting_host, expected=target)
             logger.warning(
                 "[PRELANDER-AUTH] Handoff host mismatch (want=%s got=%s)", target, requesting_host,
             )
@@ -748,6 +886,7 @@ async def consume_handoff(
 
         session = await get_session(session_token, redis)
         if session is None or not session.is_usable():
+            _event("prelander_session_expired", click_id=getattr(session, "click_id", "") or "-", reason="expired_or_revoked")
             return None
         # STEP 12 — browser binding: the UA must match (IP is a signal, and
         # in relaxed mode a mid-flow IP rotation is legitimate). A different
@@ -755,10 +894,12 @@ async def consume_handoff(
         if ip:
             if session.fingerprint != _fingerprint(ip, user_agent):
                 if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
+                    _event("handoff_exchange_denied", reason="browser_mismatch", click_id=session.click_id)
                     logger.info("[PRELANDER-AUTH] Handoff exchanged from a different browser — denied")
                     return None
         # state trail: the handoff record is already deleted (atomic); the
         # exchange is logged so the lifecycle is auditable.
+        _event("handoff_token_exchanged", click_id=session.click_id, host=requesting_host or "-")
         logger.info(
             "[PRELANDER-AUTH] Handoff exchanged (state=%s click=%s)",
             HANDOFF_EXCHANGED, session.click_id,
@@ -789,6 +930,7 @@ async def establish_prelander_session(
         # derives from — no independent lifetime that could outlive it.
         remaining = max(session.expires_at - int(time.time()), 1)
         await redis.setex(_pl_session_key(pl_session_id), remaining, session.token)
+        _event("prelander_session_created", click_id=session.click_id, ttl=remaining)
         return pl_session_id
     except Exception as e:
         logger.warning("[PRELANDER-AUTH] Prelander session establish failed: %s", e)
@@ -890,6 +1032,7 @@ async def validate_prelander_access(
             source = "binding"
 
     if session is None:
+        _event("prelander_access_denied", slug=(slug or "")[:10] + "…")
         logger.info("[PRELANDER-AUTH] Check 1-4 failed: no usable session (slug=%s…)", (slug or "")[:10])
         return None
 
@@ -903,6 +1046,7 @@ async def validate_prelander_access(
         and session.prelander_host
         and expected_prelander_host != session.prelander_host
     ):
+        _event("invalid_domain_access", host=expected_prelander_host, expected=session.prelander_host)
         logger.info(
             "[PRELANDER-AUTH] Check 5 failed: host mismatch (session=%s request=%s)",
             session.prelander_host, expected_prelander_host,
@@ -911,6 +1055,7 @@ async def validate_prelander_access(
 
     # ── 6: the authorization must map to the campaign this request resolves.
     if expected_campaign_id and session.campaign_id and str(expected_campaign_id) != session.campaign_id:
+        _event("invalid_campaign_binding", campaign=expected_campaign_id, expected=session.campaign_id)
         logger.info(
             "[PRELANDER-AUTH] Check 6 failed: campaign mismatch (session=%s request=%s)",
             session.campaign_id, expected_campaign_id,
@@ -924,12 +1069,18 @@ async def validate_prelander_access(
             oid = ObjectId(session.click_id) if ObjectId.is_valid(session.click_id) else session.click_id
             click = await db.clicks.find_one({"_id": oid}, {"_id": 1})
             if not click:
+                _event("prelander_access_denied", click_id=session.click_id, reason="click_gone")
                 logger.info("[PRELANDER-AUTH] Check 10 failed: click %s gone", session.click_id)
                 return None
         except Exception as e:
             # A transient DB error must not deny a fully-authorized visitor.
             logger.debug("[PRELANDER-AUTH] Click existence check skipped: %s", e)
 
+    _event(
+        "prelander_access_allowed",
+        click_id=session.click_id or "-", host=expected_prelander_host or "-",
+        source=source,
+    )
     logger.info(
         "[PRELANDER-AUTH] Access granted via %s (click=%s host=%s)",
         source, session.click_id or "-", expected_prelander_host or "-",

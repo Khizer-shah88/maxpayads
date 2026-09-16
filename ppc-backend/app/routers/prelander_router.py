@@ -563,7 +563,21 @@ async def mint_handoff_token(
     if redis is None:
         return await _denied_response()
 
-    host = normalize_domain(target_host or "")
+    # STEP 15 — per-IP limiter on the token-minting surface.
+    from app.utils.ip_utils import get_client_ip
+    ip = get_client_ip(dict(request.headers), request.client.host if request.client else "0.0.0.0")
+    if not await pas.check_auth_rate_limit(ip, redis):
+        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+
+    # STEP 14 — open-redirect protection: the handoff target is resolved
+    # SERVER-SIDE from the click-time session (the host route_click selected).
+    # ?target_host=attacker.com can never mint a usable handoff — a mismatch
+    # with the recorded host denies. resolve_handoff_target returns None (deny)
+    # when the browser asks for anything the click was not routed to.
+    host = pas.resolve_handoff_target(session, normalize_domain(target_host or ""))
+    if host is None:
+        return await _denied_response()
+
     handoff = await pas.mint_handoff(session, redis, target_host=host)
     if not handoff:
         return await _denied_response()
@@ -606,6 +620,11 @@ async def prelander_bootstrap(
     user_agent = headers.get("user-agent", "")
     request_host = normalize_domain(headers.get("host", ""))
 
+    # STEP 15 — per-IP limiter on the token-exchange surface (brute-force
+    # guard; the 256-bit token is the real defense, this is defense in depth).
+    if not await pas.check_auth_rate_limit(ip, redis):
+        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+
     session = await pas.consume_handoff(
         handoff_token, redis,
         requesting_host=request_host,
@@ -628,9 +647,7 @@ async def prelander_bootstrap(
         key=pas.PL_SESSION_COOKIE,
         value=pl_session_id,
         max_age=max(session.expires_at - int(time.time()), 60),
-        httponly=True,
-        samesite="lax",
-        secure=True,
+        **pas.cookie_flags(),
     )
     logger.info("[PRELANDER-AUTH] Handoff exchanged → browsing session established (click=%s)", session.click_id)
     return response

@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     #   strict  - full (IP+UA) fingerprint must match; rotated IPs are denied
     PRELANDER_IP_MODE: str = "relaxed"
 
+    # STEP 13 — cookie attribute configuration (HttpOnly is always enforced;
+    # Secure/SameSite are deployment-relevant, hence configurable). Defaults
+    # match production reality: TLS everywhere + Lax so the /click redirect
+    # and the /_auth bootstrap keep carrying the cookies.
+    PRELANDER_COOKIE_SECURE: bool = True
+    PRELANDER_COOKIE_SAMESITE: str = "lax"
+
+    # STEP 15 — tighter rate limit on the prelander auth token surfaces
+    # (/prelander/handoff mint + /prelander/_auth exchange). These are the
+    # endpoints a token brute-forcer would hammer; the value applies per IP
+    # per window, on top of the global request limiter.
+    PRELANDER_AUTH_RATE_LIMIT: int = 30
+    PRELANDER_AUTH_RATE_WINDOW: int = 60
+
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
     # Turn off to keep click documents minimal on very high volume.

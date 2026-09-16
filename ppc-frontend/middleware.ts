@@ -207,7 +207,7 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.next();
       // Set the HttpOnly session cookie on the response
       response.headers.set('Set-Cookie', decision.setCookie);
-      return addSecurityHeaders(response);
+      return addSecurityHeaders(response, pathname);
     }
 
     // ALLOW_SESSION_EXISTS
@@ -265,7 +265,7 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/publisher/auth', request.url));
       }
     }
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), pathname);
   }
 
   // ── Protect /admin/* routes ────────────────────────────────────────────────
@@ -286,7 +286,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/auth', request.url));
     }
 
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), pathname);
   }
 
   // ── Protect /publisher/* routes ────────────────────────────────────────────
@@ -310,32 +310,64 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/publisher/auth', request.url));
     }
 
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), pathname);
   }
 
-  return addSecurityHeaders(NextResponse.next());
+  return addSecurityHeaders(NextResponse.next(), pathname);
 }
 
 // Helper to add security headers to any response
-function addSecurityHeaders(response: NextResponse): NextResponse {
-  // Set CSP header to allow Next.js functionality
-  // Content Security Policy
-  // - Allow stylesheet/font hosts used by Google Fonts so font loading isn't blocked
-  // - Remove 'unsafe-eval' to prevent string evaluation in scripts
-  const cspHeader = `
-    default-src 'self';
-    script-src 'self' 'unsafe-inline';
-    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-    img-src 'self' data: blob: https:;
-    font-src 'self' data: https://fonts.gstatic.com;
-    connect-src 'self' https:;
-    frame-src 'self';
-    base-uri 'self';
-    form-action 'self';
-  `.replace(/\s{2,}/g, ' ').trim();
+//
+// STEP 13 — two policies, built on what the pages actually load:
+//  - PORTAL pages (admin/publisher/marketing): strict CSP (self + Google
+//    Fonts only). Nothing on the portal needs external scripts.
+//  - PRELANDER pages (/d/[slug]): the page document.writes admin-authored
+//    full-HTML templates, which legitimately embed external ad scripts,
+//    styles, images and videos (video_url template feature). Their CSP keeps
+//    object-src 'none' + frame-ancestors 'none' (nothing may frame us) but
+//    allows https: resources so required lander functionality never breaks.
+function addSecurityHeaders(response: NextResponse, pathname?: string): NextResponse {
+  const isPrelander = !!pathname && pathname.startsWith('/d/');
+
+  const cspHeader = isPrelander
+    ? `
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' https:;
+      style-src 'self' 'unsafe-inline' https:;
+      img-src 'self' data: blob: https:;
+      font-src 'self' data: https:;
+      connect-src 'self' https:;
+      frame-src 'self' https:;
+      media-src 'self' https:;
+      object-src 'none';
+      base-uri 'self';
+      form-action 'self';
+      frame-ancestors 'none';
+    `.replace(/\s{2,}/g, ' ').trim()
+    : `
+      default-src 'self';
+      script-src 'self' 'unsafe-inline';
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      img-src 'self' data: blob: https:;
+      font-src 'self' data: https://fonts.gstatic.com;
+      connect-src 'self' https:;
+      frame-src 'self';
+      base-uri 'self';
+      form-action 'self';
+      frame-ancestors 'none';
+    `.replace(/\s{2,}/g, ' ').trim();
 
   response.headers.set('Content-Security-Policy', cspHeader);
-  
+
+  // Anti-framing + hardening on every middleware-served response (STEP 13).
+  // X-Frame-Options covers legacy browsers; frame-ancestors 'none' above is
+  // the modern guarantee.
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  // Explicit (spec): never leak the anchor/inter/prelander chain referrer.
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=(), usb=()');
+
   return response;
 }
 

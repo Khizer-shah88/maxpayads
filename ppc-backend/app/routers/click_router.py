@@ -61,9 +61,7 @@ async def track_click(
                     key=pas.COOKIE_NAME,
                     value=reference,
                     max_age=pas.cookie_ttl_seconds(),
-                    httponly=True,
-                    samesite="lax",
-                    secure=True,
+                    **pas.cookie_flags(),
                 )
     except Exception:
         # The cookie is an optional factor — never let it break the redirect.
