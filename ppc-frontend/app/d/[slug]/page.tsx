@@ -60,10 +60,16 @@ export default function PrelanderSlugPage() {
           }
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
-          if (dt.domain_type !== 'prelander' && prelanderDomain) {
-            // Not on the Prelander domain — hop to it. Show a clear loader for
-            // a fixed 1.5s so the domain switch reads as intentional, then
-            // navigate. Raw slug chars are base64url-safe, no encoding needed.
+          // The backend resolves the NEXT managed hop (chain-aware): the next
+          // chain hop, the weighted Prelander pool pick, or the legacy
+          // publisher/global Prelander domain. It only returns a URL when this
+          // host is NOT the final prelander — so trust the returned hop over
+          // the domain_type (a prelander-typed domain positioned mid-chain must
+          // keep hopping).
+          if (prelanderDomain) {
+            // Not on the final prelander — hop to the next domain. Show a clear
+            // loader for a fixed 1.5s so the domain switch reads as
+            // intentional, then navigate. Raw slug chars are base64url-safe.
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 1500))
             window.location.replace(`${prelanderDomain}/d/${slug}`)

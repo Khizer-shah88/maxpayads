@@ -118,6 +118,100 @@ async def _resolve_bypass_destination(
     return None
 
 
+async def _host_in_chain_sequence(db, host: str) -> bool:
+    """
+    True when `host` is positioned inside an active chain's managed sequence
+    (its Inter domain or any extra hop) — meaning the chain still has a hop
+    after it (or a Prelander pool to draw from).
+    """
+    from app.services.domain_service import normalize_domain
+    from app.models.redirect_chain import chain_inter_domain
+
+    host = normalize_domain(host)
+    if not host:
+        return False
+
+    chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
+    for chain in chains:
+        sequence: list = []
+        inter = chain_inter_domain(chain)
+        if inter:
+            sequence.append(inter)
+        sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
+        if host in [normalize_domain(d) for d in sequence if d]:
+            return True
+    return False
+
+
+async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
+    """
+    Next managed hop for a visitor currently on `current_host` (Bypass OFF).
+
+    The admin-built Redirection Chain defines the full ordered sequence:
+        Anchor → Inter → C → D → … → N → Prelander Pool
+    The visitor is somewhere inside that sequence. The next hop is the entry
+    AFTER the current host:
+
+      1. Chain whose Inter domain (or any extra hop) IS the current host wins
+         (chain applies to ALL publishers — global rule).
+      2. The next hop is the next extra domain after `current_host`; after the
+         last extra hop it is a weighted pick from the chain's Prelander pool.
+      3. No chain position (host not part of any chain) → legacy behaviour:
+         publisher/global Prelander domain via resolve_domain_url.
+
+    Returns a URL (https://host) or None when there is nothing to hop to —
+    the caller then serves prelander data on the current host.
+    """
+    from app.services.domain_service import (
+        domain_to_url, normalize_domain, resolve_domain_url, select_active_prelander,
+    )
+    from app.models.redirect_chain import chain_inter_domain, chain_prelander_pool
+
+    host = normalize_domain(current_host)
+    if not host:
+        return None
+
+    # Chains whose sequence contains this host (Inter + extra hops). Chains are
+    # global — first active chain that positions the host wins.
+    chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
+    for chain in chains:
+        sequence: list = []
+        inter = chain_inter_domain(chain)
+        if inter:
+            sequence.append(inter)
+        sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
+
+        normalized_seq = [normalize_domain(d) for d in sequence if d]
+        if host not in normalized_seq:
+            continue
+
+        idx = normalized_seq.index(host)
+        # Next extra hop after the current position
+        if idx + 1 < len(normalized_seq):
+            next_url = domain_to_url(normalized_seq[idx + 1])
+            # Never hop to ourselves — that would loop the visitor forever.
+            if next_url and normalize_domain(next_url) != host:
+                return next_url
+        # Current host is the last hop → weighted pick from the Prelander pool
+        pool = [normalize_domain(d) for d in chain_prelander_pool(chain) if d]
+        if pool:
+            pick = await select_active_prelander(db, pool)
+            if pick and normalize_domain(pick) != host:
+                return domain_to_url(pick)
+            # No ACTIVE prelander in the pool (or the pick IS this host) →
+            # caller serves data here
+            return None
+
+    # Host is not part of any chain sequence → legacy prelander resolution
+    publisher_ids_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+    publisher_ids = (publisher_ids_doc or {}).get("publisher_ids") or []
+    publisher_id = publisher_ids[0] if publisher_ids else None
+    prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
+    if prelander_base and normalize_domain(prelander_base) != host:
+        return prelander_base
+    return None
+
+
 @router.get("/domain-type")
 async def get_domain_type(
     host: str,
@@ -125,21 +219,26 @@ async def get_domain_type(
     db=Depends(get_db),
 ):
     """
-    Returns the configured domain_type for a hostname.
-    Called by /d/[slug] page on load to decide whether to redirect.
+    Returns the configured domain_type for a hostname, plus the next hop for a
+    visitor currently on that host. Called by the /d/[slug] page on load to
+    decide where to go next.
+
     Response: { "domain_type": "anchor" | "inter" | "prelander" | "unknown",
-                "prelander_domain": "https://prelander.com" | null,
+                "prelander_domain": "https://…" | null,      # next hop (legacy name)
+                "last_domain": mirrored for pre-glossary bundles,
                 "bypass_redirect_url": "https://campaign.com" | null }
+
+    The next hop is chain-aware: a host positioned inside a chain's sequence
+    (Inter or an extra hop) gets the NEXT hop — the following extra domain or
+    the weighted Prelander pool pick after the last hop. Hosts not in any
+    chain get the legacy publisher/global Prelander domain.
 
     When slug is supplied and the host is NOT the Prelander domain, the slug is
     decoded and the campaign/offer bypass checked: bypass ON returns the
     Campaign URL in bypass_redirect_url so the /d page (after its 1.5s dwell on
     the Inter domain) sends the visitor straight to the campaign.
-
-    `last_domain` mirrors `prelander_domain` for browser sessions still running
-    a pre-glossary bundle; drop it once those have cycled out.
     """
-    from app.services.domain_service import normalize_domain, resolve_domain_url
+    from app.services.domain_service import normalize_domain
 
     h = normalize_domain(host)
     if not h:
@@ -148,9 +247,16 @@ async def get_domain_type(
     doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
     domain_type = normalize_domain_type(doc.get("domain_type"), default="unknown") if doc else "unknown"
 
+    # Is this host positioned INSIDE a chain sequence (Inter or an extra hop)?
+    # A mid-chain host keeps hopping even when it is also registered as a
+    # Prelander domain — the admin's configured sequence wins over the type.
+    in_chain_sequence = await _host_in_chain_sequence(db, h)
+
     # ── Bypass detection (spec: Inter dwells 1.5s, then Campaign URL) ────────
+    # Applies to every host that is not the FINAL prelander: Inter, extra
+    # chain hops, and prelander-typed domains positioned mid-chain.
     bypass_redirect_url = None
-    if domain_type != DOMAIN_TYPE_PRELANDER and slug:
+    if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and slug:
         decoded = _decode_slug(slug)
         if decoded:
             target = await _resolve_bypass_destination(
@@ -160,13 +266,12 @@ async def get_domain_type(
                 from app.services.traffic_router import _clean_campaign_url
                 bypass_redirect_url = _clean_campaign_url(target)
 
+    # ── Next hop (chain-aware) ───────────────────────────────────────────────
     prelander_domain = None
-    if domain_type != DOMAIN_TYPE_PRELANDER and not bypass_redirect_url:
-        publisher_ids = (doc or {}).get("publisher_ids") or []
-        publisher_id = publisher_ids[0] if publisher_ids else None
-        prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
-        if prelander_base and normalize_domain(prelander_base) != h:
-            prelander_domain = prelander_base.rstrip("/")
+    if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and not bypass_redirect_url:
+        next_hop = await _resolve_next_hop(db, h)
+        if next_hop and normalize_domain(next_hop) != h:
+            prelander_domain = next_hop.rstrip("/")
 
     return {
         "domain_type": domain_type,
@@ -187,7 +292,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     When the requesting host is a Prelander domain or any other host:
       → Returns prelander data JSON (offer_url, password, os, etc.)
     """
-    from app.services.domain_service import normalize_domain, resolve_domain_url
+    from app.services.domain_service import normalize_domain
 
     # Use X-Prelander-Host (sent by browser JS) OR Host header (sent by nginx).
     # X-Prelander-Host is the real browser domain even through the Next.js proxy.
@@ -204,35 +309,27 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         prelander_host = normalize_domain(host_header)
 
     # ── Domain-type detection & hop ───────────────────────────────────────────
-    # Always try to redirect to the Prelander domain unless the current host IS
-    # already the Prelander domain. This handles four cases:
-    #   1. Host is registered as Inter      → redirect to Prelander
-    #   2. Host is registered as Anchor     → redirect to Prelander
-    #   3. Host is NOT in DB at all         → redirect to Prelander (if one exists)
-    #   4. Host IS the Prelander domain     → serve prelander data directly
+    # The visitor is somewhere in the redirect chain sequence:
+    #   Anchor → Inter → [extra hops] → Prelander Pool (Bypass OFF)
+    # Decide whether this host serves the prelander data or forwards to the
+    # next hop:
+    #   - A Prelander-typed domain serves the data, UNLESS the admin positioned
+    #     it mid-chain (as an extra hop) — the configured sequence wins.
+    #   - Any other host (Inter, extra hop, unknown) hops to the next managed
+    #     domain: the next chain hop, the weighted Prelander pool pick after
+    #     the last hop, or the legacy publisher/global Prelander domain.
     if prelander_host:
-        # Is this host already the Prelander domain?
         prelander_doc = await db.redirection_domains.find_one({
             "domain": prelander_host,
             "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
             "status": "active",
         })
+        in_chain_sequence = await _host_in_chain_sequence(db, prelander_host)
+        should_hop = (prelander_doc is None) or in_chain_sequence
 
-        if not prelander_doc:
-            # Not a Prelander domain — find the Prelander domain and hop to it
-            inter_doc = await db.redirection_domains.find_one({
-                "domain": prelander_host,
-                "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
-                "status": "active",
-            })
-            publisher_ids = (inter_doc or {}).get("publisher_ids") or []
-            publisher_id = publisher_ids[0] if publisher_ids else None
-
-            # ── Bypass check (spec) ──────────────────────────────────────────
-            # Bypass ON: Anchor → Inter (logs, 1.5s dwell) → Campaign URL.
-            # The visitor is on the Inter domain now, so decode the slug and
-            # check the campaign/offer direct_redirect_mode. ON → 302 straight
-            # to the Campaign URL, never touching the Prelander domain.
+        if should_hop:
+            # Bypass check first (spec): Bypass ON → straight to the Campaign
+            # URL from the Inter/chain domain, never touching the Prelander.
             decoded_bypass = _decode_slug(slug)
             if decoded_bypass:
                 bypass_url = await _resolve_bypass_destination(
@@ -242,7 +339,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                     from app.services.traffic_router import _clean_campaign_url
                     clean = _clean_campaign_url(bypass_url)
                     logger.info(
-                        "[PRELANDER] Bypass ON on inter host %s → direct campaign %s",
+                        "[PRELANDER] Bypass ON on host %s → direct campaign %s",
                         prelander_host, clean,
                     )
                     return RedirectResponse(
@@ -251,9 +348,10 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                         headers={"Referrer-Policy": "no-referrer"},
                     )
 
-            prelander_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id)
-            if prelander_base and normalize_domain(prelander_base) != prelander_host:
-                dest = f"{prelander_base.rstrip('/')}/d/{slug}"
+            # Bypass OFF → chain-aware next hop (extra hops, then prelander pool)
+            next_hop = await _resolve_next_hop(db, prelander_host)
+            if next_hop:
+                dest = f"{next_hop.rstrip('/')}/d/{slug}"
                 logger.info("[PRELANDER] Hopping %s → %s", prelander_host, dest)
                 return RedirectResponse(
                     url=dest,
