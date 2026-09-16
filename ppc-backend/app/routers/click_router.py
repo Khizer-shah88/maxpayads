@@ -38,8 +38,17 @@ async def track_click(
     ?pub=PUB_XXXXXXXX&site=SITE_XXXXXXXX.
     """
     ctx = context_from_request(request, pub, site)
-    await resolve_redirect(ctx, db, redis)
-    response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
+    try:
+        await resolve_redirect(ctx, db, redis)
+        response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
+    except Exception:
+        # The visitor must ALWAYS leave with a URL — a bare JSON 500 on the
+        # publisher's page is a dead flow. Log the real cause server-side and
+        # send the visitor to the global fallback instead.
+        logger.exception("[/click] Pipeline failed — serving fallback redirect")
+        from app.services.redirect_pipeline import FALLBACK_URL as _pipeline_fallback
+        from fastapi.responses import RedirectResponse
+        response = RedirectResponse(url=_pipeline_fallback, status_code=302)
 
     # Authorization cookie — a signed reference to this click's prelander
     # session (created by stage_authorize_prelander during resolve_redirect).

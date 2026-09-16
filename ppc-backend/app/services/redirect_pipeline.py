@@ -282,19 +282,28 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db) -> bool:
 
 async def stage_detect_visitor(ctx: RedirectResolutionContext) -> None:
     """IP + User-Agent → OS, device, browser, country. Existing detection logic."""
-    from app.utils.ua_parser import parse_user_agent
-    from app.utils.geo_utils import lookup_ip
-    from app.core.glossary import normalize_os
+    try:
+        from app.utils.ua_parser import parse_user_agent
+        from app.utils.geo_utils import lookup_ip
+        from app.core.glossary import normalize_os
 
-    device_info = parse_user_agent(ctx.user_agent)
-    ctx.device_type = device_info["device_type"]
-    ctx.os_name = device_info["os"]
-    ctx.browser = device_info["browser"]
-    # `os_name` stays exactly as detected — it is what gets stored on the click.
-    # `os_enum` is the same value resolved onto the fixed OS enum, for targeting
-    # and for reading the trace.
-    ctx.os_enum = normalize_os(ctx.os_name)
-    ctx.country_code, ctx.country_name = lookup_ip(ctx.ip)
+        device_info = parse_user_agent(ctx.user_agent)
+        ctx.device_type = device_info["device_type"]
+        ctx.os_name = device_info["os"]
+        ctx.browser = device_info["browser"]
+        # `os_name` stays exactly as detected — it is what gets stored on the click.
+        # `os_enum` is the same value resolved onto the fixed OS enum, for targeting
+        # and for reading the trace.
+        ctx.os_enum = normalize_os(ctx.os_name)
+        ctx.country_code, ctx.country_name = lookup_ip(ctx.ip)
+    except Exception as e:
+        # Detection is best-effort — defaults keep the click valid (a desktop
+        # windows click) instead of killing the whole flow with a 500.
+        logger.warning(f"Visitor detection failed (using defaults): {e}")
+        ctx.device_type = ctx.device_type or "desktop"
+        ctx.os_name = ctx.os_name or "windows"
+        ctx.os_enum = ctx.os_enum or "windows"
+        ctx.browser = ctx.browser or "unknown"
 
     ctx.record(
         STAGE_DETECT, "detected",

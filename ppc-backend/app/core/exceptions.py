@@ -63,6 +63,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Always log the full traceback — an unlogged 500 is undebuggable in
+    # production (the visitor only sees the generic JSON).
+    import logging
+    logging.getLogger(__name__).exception(
+        "Unhandled exception on %s %s", request.method, request.url.path,
+    )
     return JSONResponse(
         status_code=500,
         content={"success": False, "error": "Internal server error"},
