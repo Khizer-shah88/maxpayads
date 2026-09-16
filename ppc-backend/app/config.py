@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # Prelander signed redirect tokens (HMAC-SHA256 in prelander_service)
     REDIRECT_SECRET_KEY: str = ""
 
+    # Prelander authorization session lifetime (seconds). The click-time
+    # authorization that grants access to protected prelander content lives
+    # this long — default 300s (5 minutes) per the security spec. Overridable
+    # per deployment via env: PRELANDER_SESSION_TTL=300
+    PRELANDER_SESSION_TTL: int = 300
+
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
     # Turn off to keep click documents minimal on very high volume.

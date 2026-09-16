@@ -137,6 +137,12 @@ class RedirectResolutionContext:
     inter_url: Optional[str] = None
     prelander_url: Optional[str] = None
 
+    # ── stage_authorize_prelander ─────────────────────────────────────────────
+    # High-entropy authorization token for this click's prelander session.
+    # Server-side secret — only its signed reference may reach the visitor's
+    # cookie (click_router); the raw token never appears in any URL.
+    prelander_auth_token: Optional[str] = None
+
     # ── resolve_campaign / evaluate_offer ─────────────────────────────────────
     campaign_id: Optional[str] = None
     offer_id: Optional[str] = None
@@ -544,9 +550,12 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
     domain).
 
     Reuses the existing Redis and the click already recorded by
-    stage_record_click. Bound to (client IP, User-Agent) — the same identity
-    the fraud fingerprint uses — and to the slug hash so the authorization
-    only ever covers THIS click's prelander route.
+    stage_record_click. The session carries the full internal context —
+    publisher, site, campaign, offer, prelander host, chain, OS/device,
+    country, referrer — all server-side; only the high-entropy token ever
+    leaves the server (as the optional cookie reference). Bound to
+    (client IP, User-Agent) and to the slug hash so the authorization only
+    ever covers THIS click's prelander route.
 
     Fail-open by design at creation time: if the session cannot be written the
     click still redirects normally (the prelander side then shows its neutral
@@ -575,16 +584,42 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
     except Exception:
         pass
 
-    created = await pas.create_authorization(
+    # Chain context — the id of the admin-built chain that drove this click,
+    # when one matched (resolved by route_click via resolve_active_chain).
+    chain_id = ""
+    try:
+        from app.services.traffic_router import resolve_active_chain
+        chain = await resolve_active_chain(
+            db, ctx.publisher_id, getattr(ctx, "request_host", None),
+        )
+        if chain and chain.get("_id") is not None:
+            chain_id = str(chain["_id"])
+    except Exception:
+        chain_id = ""
+
+    session = await pas.create_authorization(
         click_id=ctx.click_id or "",
         slug=slug,
         ip=ip,
         user_agent=ctx.user_agent or "",
         redis=redis,
         prelander_host=prelander_host,
+        # ── full internal context (server-side only) ──
+        publisher_id=ctx.publisher_id or "",
+        website_id=ctx.website_id or "",
+        campaign_id=str(ctx.campaign_id or ""),
+        offer_id=str(ctx.offer_id or ""),
+        chain_id=chain_id,
+        os=ctx.os_name or "",
+        device_type=ctx.device_type or "",
+        country_code=ctx.country_code or "",
+        referrer=ctx.referrer or "",
     )
+    # Keep the token on the context so the /click handler can mint the signed
+    # cookie reference from it (click_router).
+    ctx.prelander_auth_token = session.token if session else ""
     ctx.record(
-        STAGE_PRELANDER, "authorized" if created else "authorization_skipped",
+        STAGE_PRELANDER, "authorized" if session else "authorization_skipped",
         click_id=ctx.click_id or None, host=prelander_host or None,
     )
 

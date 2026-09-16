@@ -43,23 +43,24 @@ async def track_click(
 
     # Authorization cookie — a signed reference to this click's prelander
     # session (created by stage_authorize_prelander during resolve_redirect).
-    # HttpOnly + SameSite=Lax: readable by no script, never sent on
-    # cross-site subresource requests. Cross-domain hops rely on the
-    # server-side fingerprint/slug binding instead (see
-    # prelander_auth_service.validate_authorization) — the cookie is the
-    # convenient factor when the prelander runs on this same domain.
+    # The reference names the high-entropy random session token; internal
+    # ids (click/campaign/offer/publisher) never leave the server. HttpOnly +
+    # SameSite=Lax: readable by no script, never sent on cross-site requests.
+    # Cross-domain hops rely on the server-side fingerprint/slug binding
+    # instead (prelander_auth_service.validate_authorization) — the cookie is
+    # the convenient factor when the prelander runs on this same domain.
     try:
         from app.services import prelander_auth_service as pas
         from app.utils.ip_utils import get_client_ip
 
-        if ctx.click_id and "/d/" in (ctx.destination_url or ""):
+        if ctx.prelander_auth_token:
             ip = get_client_ip(ctx.headers, ctx.ip or "0.0.0.0")
-            reference = pas.session_reference(ctx.click_id, ip, ctx.user_agent or "")
+            reference = pas.session_reference(ctx.prelander_auth_token, ip, ctx.user_agent or "")
             if reference:
                 response.set_cookie(
                     key=pas.COOKIE_NAME,
                     value=reference,
-                    max_age=pas.COOKIE_TTL_SECONDS,
+                    max_age=pas.cookie_ttl_seconds(),
                     httponly=True,
                     samesite="lax",
                     secure=True,

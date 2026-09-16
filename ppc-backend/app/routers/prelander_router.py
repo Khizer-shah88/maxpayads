@@ -135,13 +135,31 @@ async def _request_is_authorized(
     """
     Server-side prelander authorization decision (DOMAIN != AUTHORIZATION).
 
-    Valid when the visitor carries an authorization session created at
-    Smartlink click time (stage_authorize_prelander) that matches this exact
-    browser (client IP + User-Agent fingerprint) and this exact slug.
+    Valid when the visitor carries an ACTIVE, unexpired authorization session
+    created at Smartlink click time (stage_authorize_prelander) that matches
+    this exact browser (client IP + User-Agent fingerprint) and this exact
+    slug. The session's internal context (campaign/offer/prelander) stays
+    server-side; only the high-entropy token's signed reference ever travels,
+    and never in the URL.
 
     A PRELANDER_AUTH_REQUIRED=False setting (env) disables the gate — a safety
     valve so a misconfiguration can never lock the whole prelander flow.
     Default: enabled.
+    """
+    session = await get_authorized_session(request, slug)
+    return session is not None
+
+
+async def get_authorized_session(
+    request: Request,
+    slug: str,
+):
+    """
+    Validate the request's authorization and return the session record (or None).
+
+    The returned session carries the click-time routing context — campaign,
+    offer, prelander host, OS, country — which the resolver can use directly
+    instead of trusting anything from the request.
     """
     import os
     from app.utils.ip_utils import get_client_ip
@@ -149,7 +167,7 @@ async def _request_is_authorized(
 
     # Kill switch — off only when explicitly disabled in the environment.
     if os.getenv("PRELANDER_AUTH_REQUIRED", "true").strip().lower() in ("false", "0", "no", "off"):
-        return True
+        return True  # gate disabled: callers treat truthy as authorized
 
     try:
         redis = get_redis_safe()
@@ -157,30 +175,30 @@ async def _request_is_authorized(
             # Redis unavailable at validation time — fail CLOSED for protected
             # content (the neutral page), never open. Log loudly so ops sees it.
             logger.error("[PRELANDER-AUTH] Redis unavailable at validation — denying")
-            return False
+            return None
 
         headers = dict(request.headers)
         ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
         user_agent = headers.get("user-agent", "")
         cookie_reference = request.cookies.get(pas.COOKIE_NAME)
 
-        authorized = await pas.validate_authorization(
+        session = await pas.validate_authorization(
             slug=slug,
             ip=ip,
             user_agent=user_agent,
             redis=redis,
             cookie_reference=cookie_reference,
         )
-        if not authorized:
+        if session is None:
             logger.info(
                 "[PRELANDER-AUTH] Denied prelander access for slug=%s… ip=%s",
                 slug[:10], ip,
             )
-        return authorized
+        return session
     except Exception as e:
         # Validation itself failed — deny, but never leak why to the client.
         logger.error("[PRELANDER-AUTH] Validation error (denying): %s", e)
-        return False
+        return None
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
