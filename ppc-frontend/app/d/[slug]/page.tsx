@@ -27,6 +27,7 @@ export default function PrelanderSlugPage() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
+  const [errorDetails, setErrorDetails] = useState<string>('')
   // True while the browser is transitioning from an Anchor/Inter domain to the
   // Prelander domain. We hold a loader on screen for a short fixed delay so the
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
@@ -34,25 +35,47 @@ export default function PrelanderSlugPage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!slug) { setBlocked(true); setLoading(false); return }
+      console.log('[PRELANDER DEBUG] useEffect triggered')
+      
+      if (!slug) { 
+        console.log('[PRELANDER ERROR] No slug provided')
+        setBlocked(true)
+        setErrorDetails('No slug provided')
+        setLoading(false)
+        return 
+      }
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+      const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
+
+      console.log('[PRELANDER DEBUG] Starting fetch')
+      console.log('[PRELANDER DEBUG] - slug:', slug)
+      console.log('[PRELANDER DEBUG] - hostname:', hostname)
+      console.log('[PRELANDER DEBUG] - full URL:', fullUrl)
+      console.log('[PRELANDER DEBUG] - pathname:', typeof window !== 'undefined' ? window.location.pathname : '')
 
       try {
+        console.log('[PRELANDER DEBUG] Step 1: Fetching domain-type')
         // Step 1: check if this hostname is the Prelander domain.
         // If not, redirect the browser to the Prelander domain with the same
         // slug. This avoids fetch() swallowing the 302 from the backend.
         // The slug is passed so the backend can also detect bypass mode and
         // return the Campaign URL directly (bypass ON spec).
-        const dtRes = await fetch(
-          `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}&slug=${encodeURIComponent(slug)}`
-        )
+        const dtUrl = `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}&slug=${encodeURIComponent(slug)}`
+        console.log('[PRELANDER DEBUG] Calling domain-type API:', dtUrl)
+        
+        const dtRes = await fetch(dtUrl)
+        console.log('[PRELANDER DEBUG] domain-type response status:', dtRes.status, dtRes.ok)
+        
         if (dtRes.ok) {
           const dt = await dtRes.json()
+          console.log('[PRELANDER DEBUG] domain-type data:', JSON.stringify(dt, null, 2))
+          
           // Bypass ON (spec): Anchor → Inter (0.75s dwell) → Campaign URL.
           // We're on the Inter domain — hold the 0.75s loader, then go straight
           // to the Campaign URL. The landing page is never shown.
           if (dt.bypass_redirect_url) {
+            console.log('[PRELANDER DEBUG] Bypass mode detected, redirecting to:', dt.bypass_redirect_url)
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
             window.location.replace(dt.bypass_redirect_url)
@@ -60,6 +83,8 @@ export default function PrelanderSlugPage() {
           }
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
+          console.log('[PRELANDER DEBUG] Prelander domain from API:', prelanderDomain)
+          
           // The backend resolves the NEXT managed hop (chain-aware): the next
           // chain hop, the weighted Prelander pool pick, or the legacy
           // publisher/global Prelander domain. It only returns a URL when this
@@ -67,6 +92,7 @@ export default function PrelanderSlugPage() {
           // the domain_type (a prelander-typed domain positioned mid-chain must
           // keep hopping).
           if (prelanderDomain) {
+            console.log('[PRELANDER DEBUG] Need to hop to prelander domain:', prelanderDomain)
             // Cross-domain handoff (STEP 4): when leaving the Inter domain for
             // the prelander, mint a one-time handoff and exchange it at
             // /_auth/{handoff} on the prelander domain — the bootstrap consumes
@@ -75,56 +101,86 @@ export default function PrelanderSlugPage() {
             // address bar). Refreshes then ride the session cookie, never the
             // handoff.
             try {
+              console.log('[PRELANDER DEBUG] Requesting handoff token')
               const hRes = await fetch(
                 `/api/prelander/handoff?slug=${encodeURIComponent(slug)}&target_host=${encodeURIComponent(new URL(prelanderDomain).hostname)}`,
                 { headers: { 'X-Prelander-Host': hostname } }
               )
+              console.log('[PRELANDER DEBUG] Handoff response status:', hRes.status, hRes.ok)
+              
               if (hRes.ok) {
                 const h = await hRes.json()
+                console.log('[PRELANDER DEBUG] Handoff data:', h)
+                
                 if (h?.handoff) {
                   // Hold the 0.75s dwell so the loader reads as intentional.
+                  console.log('[PRELANDER DEBUG] Got handoff token, redirecting after 0.75s')
                   setTransitioning(true)
                   await new Promise(r => setTimeout(r, 750))
-                  window.location.replace(
-                    `${prelanderDomain}/_auth/${h.handoff}?slug=${encodeURIComponent(slug)}`
-                  )
+                  const authUrl = `${prelanderDomain}/_auth/${h.handoff}?slug=${encodeURIComponent(slug)}`
+                  console.log('[PRELANDER DEBUG] Redirecting to:', authUrl)
+                  window.location.replace(authUrl)
                   return
                 }
               }
-            } catch {
+            } catch (handoffError) {
+              console.log('[PRELANDER DEBUG] Handoff request failed:', handoffError)
               // Handoff unavailable — fall through to the direct hop (the
               // server-side fingerprint/slug binding still authorizes).
             }
             // Not on the final prelander — hop to the next domain. Show a clear
             // loader for a fixed 0.75s so the domain switch reads as
             // intentional, then navigate. Raw slug chars are base64url-safe.
+            console.log('[PRELANDER DEBUG] Direct hop (no handoff), redirecting after 0.75s')
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
-            window.location.replace(`${prelanderDomain}/d/${slug}`)
+            const directUrl = `${prelanderDomain}/d/${slug}`
+            console.log('[PRELANDER DEBUG] Direct hop to:', directUrl)
+            window.location.replace(directUrl)
             return
           }
+          
+          console.log('[PRELANDER DEBUG] No prelander domain, staying on current host')
+        } else {
+          console.log('[PRELANDER DEBUG] domain-type API failed with status:', dtRes.status)
         }
 
         // Step 2: on the Prelander domain (or type unknown) — fetch prelander data
-        const res = await fetch(`/api/prelander/resolve/${slug}`, {
+        console.log('[PRELANDER DEBUG] Step 2: Fetching prelander data')
+        const resolveUrl = `/api/prelander/resolve/${slug}`
+        console.log('[PRELANDER DEBUG] Calling resolve API:', resolveUrl)
+        
+        const res = await fetch(resolveUrl, {
           headers: { 'X-Prelander-Host': hostname },
         })
+        
+        console.log('[PRELANDER DEBUG] Resolve response status:', res.status, res.ok)
 
         if (!res.ok) {
+          console.log('[PRELANDER ERROR] Resolve API failed, showing blocked state')
           setBlocked(true)
+          setErrorDetails(`API returned status ${res.status}`)
           setLoading(false)
           return
         }
 
         const json = await res.json()
+        console.log('[PRELANDER DEBUG] Resolve data:', JSON.stringify(json, null, 2))
+        
         if (!json?.success) {
+          console.log('[PRELANDER ERROR] Resolve returned success=false')
           setBlocked(true)
+          setErrorDetails('API returned success=false')
         } else {
+          console.log('[PRELANDER SUCCESS] Setting prelander data')
           setData(json)
         }
-      } catch {
+      } catch (error) {
+        console.error('[PRELANDER ERROR] Exception in fetchData:', error)
         setBlocked(true)
+        setErrorDetails(error instanceof Error ? error.message : 'Unknown error')
       } finally {
+        console.log('[PRELANDER DEBUG] Fetch complete, loading=false')
         setLoading(false)
       }
     }
@@ -153,11 +209,17 @@ export default function PrelanderSlugPage() {
   if (blocked || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
-        <div className="text-center">
+        <div className="text-center max-w-md px-4">
           <div className="w-16 h-16 rounded-full bg-gray-200 mx-auto mb-4 flex items-center justify-center">
             <FileDown size={24} className="text-gray-400" />
           </div>
           <p className="text-gray-500 text-sm">This link is no longer available.</p>
+          {errorDetails && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-xs text-red-600 font-mono">{errorDetails}</p>
+              <p className="text-xs text-gray-500 mt-1">Check browser console for details</p>
+            </div>
+          )}
         </div>
       </div>
     )
