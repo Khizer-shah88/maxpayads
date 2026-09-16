@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import {
   Eye, Target, Percent, BarChart2, TrendingUp, Trophy,
-  CalendarDays, Monitor, Smartphone, AlertCircle, ChevronDown,
+  CalendarDays, Monitor, Smartphone, AlertCircle, ChevronDown, Apple,
 } from 'lucide-react'
 import { publicStatsApi } from '@/lib/api'
 
@@ -166,9 +166,9 @@ export default function PublisherStatsPage() {
   // ─── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-[#0b0d15] flex items-center justify-center">
-      <div className="text-center">
-        <div className="w-10 h-10 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-gray-500 text-sm">Stats</p>
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-8 h-8 border-2 border-white/10 border-t-indigo-400 rounded-full animate-spin" />
+        <p className="text-gray-500 text-sm">Loading stats…</p>
       </div>
     </div>
   )
@@ -263,19 +263,24 @@ export default function PublisherStatsPage() {
   return (
     <div className="min-h-screen bg-[#0b0d15] text-white font-sans">
       {/* ── Header — title only, fully white-labeled ─────────────────────── */}
-      <div className="bg-[#10131f] border-b border-white/5 px-6 py-5">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-white">Stats</h1>
-          <div className="text-xs text-gray-500">{stats.date_range}</div>
+      <header className="sticky top-0 z-20 bg-[#0b0d15]/90 backdrop-blur border-b border-white/5">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.9)]" />
+            <h1 className="text-base font-semibold text-white tracking-tight">Stats</h1>
+          </div>
+          <span className="text-xs text-gray-400 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/5">
+            {stats.date_range}
+          </span>
         </div>
-      </div>
+      </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
         {/* ── Platform click filters ───────────────────────────────────── */}
         {showFilters && (
-          <div className="bg-[#10131f] rounded-2xl p-4 border border-white/5 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide mr-1">Platform</span>
+          <div className="bg-[#10131f] rounded-2xl px-4 py-3 border border-white/5 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mr-2">Platform</span>
             {platformChips.map(chip => {
               const active = platformFilters.has(chip.key)
               return (
@@ -284,8 +289,8 @@ export default function PublisherStatsPage() {
                   onClick={() => togglePlatform(chip.key)}
                   className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all ${
                     active
-                      ? 'bg-indigo-500/20 border-indigo-400/50 text-indigo-200'
-                      : 'bg-white/[0.03] border-white/10 text-gray-400 hover:border-white/25 hover:text-gray-300'
+                      ? 'bg-indigo-500/15 border-indigo-400/40 text-indigo-200'
+                      : 'bg-white/[0.03] border-white/10 text-gray-400 hover:border-white/20 hover:text-gray-300'
                   }`}
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-indigo-400' : 'bg-gray-600'}`} />
@@ -310,58 +315,66 @@ export default function PublisherStatsPage() {
 
           {/* Total Impressions */}
           {prefs.show_impressions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-indigo-300 mb-2">
-                <Eye size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Total Impressions</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-400/10 flex items-center justify-center flex-shrink-0">
+                  <Eye size={16} className="text-indigo-300" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Total Impressions</span>
               </div>
-              <p className="text-3xl font-bold text-white">
+              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
                 {(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
               </p>
-              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
               <Sparkline data={chartData.map(r => r.clicks)} color="#818cf8" />
             </div>
           )}
 
           {/* Total Conversions */}
           {prefs.show_conversions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-purple-300 mb-2">
-                <Target size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Conversions</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-400/10 flex items-center justify-center flex-shrink-0">
+                  <Target size={16} className="text-purple-300" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Conversions</span>
               </div>
-              <p className="text-3xl font-bold text-white">
+              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
                 {(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
               </p>
-              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
               <Sparkline data={chartData.map(r => r.conversions)} color="#a78bfa" />
             </div>
           )}
 
           {/* Conversion Rate */}
           {prefs.show_cr !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-emerald-400 mb-2">
-                <Percent size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Conversion Rate</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-400/10 flex items-center justify-center flex-shrink-0">
+                  <Percent size={16} className="text-emerald-400" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Conversion Rate</span>
               </div>
-              <p className="text-3xl font-bold text-white">
+              <p className="text-[28px] leading-none font-bold text-white tracking-tight">
                 {(filterActive ? filteredCr : stats.conversion_rate).toFixed(2)}%
               </p>
-              <p className="text-xs text-gray-500 mt-0.5">{filterActive ? 'Filtered' : stats.date_range}</p>
+              <p className="text-xs text-gray-500 mt-2">{filterActive ? 'Filtered' : stats.date_range}</p>
               <div className="mt-2"><Trend pct={stats.trend_conversions_pct} /></div>
             </div>
           )}
 
           {/* Avg Daily Impressions */}
           {prefs.show_impressions !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-sky-400 mb-2">
-                <BarChart2 size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Avg Daily</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-sky-500/10 border border-sky-400/10 flex items-center justify-center flex-shrink-0">
+                  <BarChart2 size={16} className="text-sky-400" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Avg Daily</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.avg_daily_impressions.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">per day</p>
+              <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.avg_daily_impressions.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 mt-2">per day</p>
               <div className="mt-2"><Trend pct={stats.trend_avg_pct} /></div>
             </div>
           )}
@@ -371,50 +384,58 @@ export default function PublisherStatsPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 
           {/* Peak Day */}
-          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-            <div className="flex items-center gap-2 text-emerald-400 mb-2">
-              <TrendingUp size={15} />
-              <span className="text-xs font-semibold uppercase tracking-wide">Peak Day</span>
+          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-400/10 flex items-center justify-center flex-shrink-0">
+                <TrendingUp size={16} className="text-emerald-400" />
+              </div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Peak Day</span>
             </div>
-            <p className="text-3xl font-bold text-white">{stats.peak_day_value.toLocaleString()}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{stats.peak_day_date ? fmtDate(stats.peak_day_date) : '—'}</p>
+            <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.peak_day_value.toLocaleString()}</p>
+            <p className="text-xs text-gray-500 mt-2">{stats.peak_day_date ? fmtDate(stats.peak_day_date) : '—'}</p>
           </div>
 
           {/* Unique Wins */}
           {prefs.show_valid_clicks !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-amber-400 mb-2">
-                <Trophy size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Unique Wins</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-400/10 flex items-center justify-center flex-shrink-0">
+                  <Trophy size={16} className="text-amber-400" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Unique Wins</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.unique_wins.toLocaleString()}</p>
-              <p className="text-xs text-gray-500 mt-0.5">validated clicks</p>
+              <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.unique_wins.toLocaleString()}</p>
+              <p className="text-xs text-gray-500 mt-2">validated clicks</p>
               <div className="mt-2"><Trend pct={stats.trend_wins_pct} /></div>
             </div>
           )}
 
           {/* Days Tracked */}
-          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-            <div className="flex items-center gap-2 text-indigo-300 mb-2">
-              <CalendarDays size={15} />
-              <span className="text-xs font-semibold uppercase tracking-wide">Days Tracked</span>
+          <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-400/10 flex items-center justify-center flex-shrink-0">
+                <CalendarDays size={16} className="text-indigo-300" />
+              </div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Days Tracked</span>
             </div>
-            <p className="text-3xl font-bold text-white">{stats.days_tracked}</p>
-            <p className="text-xs text-gray-500 mt-0.5">in this period</p>
+            <p className="text-[28px] leading-none font-bold text-white tracking-tight">{stats.days_tracked}</p>
+            <p className="text-xs text-gray-500 mt-2">in this period</p>
           </div>
 
           {/* Platforms */}
           {prefs.show_device !== false && (
-            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-              <div className="flex items-center gap-2 text-purple-300 mb-2">
-                <Monitor size={15} />
-                <span className="text-xs font-semibold uppercase tracking-wide">Platforms</span>
+            <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5 hover:border-white/10 transition-colors">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-400/10 flex items-center justify-center flex-shrink-0">
+                  <Monitor size={16} className="text-purple-300" />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Platforms</span>
               </div>
-              <div className="mt-1 space-y-2">
+              <div className="space-y-2.5">
                 {platformChips.map(c => (
                   <div key={c.key} className="flex items-center justify-between text-xs">
-                    <span className="text-gray-400 flex items-center gap-1.5">
-                      {c.key === 'windows' ? <Monitor size={11} /> : <Smartphone size={11} />}
+                    <span className="text-gray-400 flex items-center gap-2">
+                      {c.key === 'windows' ? <Monitor size={12} /> : c.key === 'mac' ? <Apple size={12} /> : <Smartphone size={12} />}
                       {c.label}
                     </span>
                     <span className={`font-mono font-semibold ${c.color}`}>{c.value.toLocaleString()}</span>
@@ -427,13 +448,16 @@ export default function PublisherStatsPage() {
 
         {/* ── Chart ───────────────────────────────────────────────────────── */}
         <div className="bg-[#10131f] rounded-2xl p-5 border border-white/5">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm font-semibold text-white">Impressions &amp; Conversions Over Time</p>
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <p className="text-sm font-semibold text-white">Impressions &amp; Conversions Over Time</p>
+              <p className="text-xs text-gray-500 mt-0.5">Daily performance across the selected range</p>
+            </div>
             <div className="relative">
               <select
                 value={chartRange}
                 onChange={e => setChartRange(e.target.value as any)}
-                className="appearance-none bg-[#181c2c] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none"
+                className="appearance-none bg-[#181c2c] text-gray-300 text-xs border border-white/10 rounded-lg pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none focus:border-indigo-400/40"
               >
                 <option value="7">Last 7 days</option>
                 <option value="14">Last 14 days</option>
@@ -525,8 +549,8 @@ export default function PublisherStatsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/5">
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Date</th>
+                  <tr className="border-b border-white/5 bg-white/[0.02]">
+                    <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Date</th>
                     {prefs.show_impressions !== false && (
                       <th className="px-4 py-3 text-left text-xs font-medium text-indigo-300 uppercase tracking-wide">Impressions</th>
                     )}

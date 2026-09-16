@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Calendar, Edit3, CheckCircle, Copy, RefreshCw,
-  Plus, Trash2, Link, ExternalLink, Share2, X,
+  Edit3, CheckCircle, Copy, RefreshCw,
+  Plus, Trash2, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -469,17 +469,22 @@ export default function DirectLinkStatsPage() {
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pt-12 lg:pt-0">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Direct Link Stats</h1>
-            <p className="text-gray-400 text-sm mt-0.5">
-              Create links per publisher — track clicks, conversions and share white-label stats
-            </p>
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-primary/10 border border-primary/15 flex items-center justify-center flex-shrink-0">
+              <Link2 size={20} className="text-primary" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Direct Link Stats</h1>
+              <p className="text-gray-400 text-sm mt-0.5">
+                Create links per publisher — track clicks, conversions and share white-label stats
+              </p>
+            </div>
           </div>
           <div className="flex gap-2 self-start">
             <button
               onClick={handleCleanupDuplicates}
               disabled={cleaningUp}
-              className="border border-amber-300 text-amber-700 hover:bg-amber-50 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+              className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
               title="Archive old links — keeps only the newest link per publisher"
             >
               {cleaningUp ? <Spinner size={16} /> : <RefreshCw size={16} />}
@@ -490,7 +495,7 @@ export default function DirectLinkStatsPage() {
                 setLinkForm({ ...EMPTY_LINK_FORM })
                 setShowCreateModal(true)
               }}
-              className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2"
+              className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm"
             >
               <Plus size={18} /> Create Link
             </button>
@@ -498,16 +503,23 @@ export default function DirectLinkStatsPage() {
         </div>
 
         {/* Stats domain config — white-label domain for share links */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-5 mb-6">
-          <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
+          <div className="flex items-start gap-3.5 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center flex-shrink-0">
+              <Globe2 size={16} className="text-blue-600" />
+            </div>
             <div className="flex-1">
-              <label className="block text-sm font-semibold text-gray-700 mb-1">
+              <label className="block text-sm font-semibold text-gray-800">
                 White-Label Stats Domain
               </label>
-              <p className="text-xs text-gray-400 mb-2">
+              <p className="text-xs text-gray-400 mt-0.5">
                 When set, publisher share links use this domain instead of the admin panel domain.
                 Point this domain&apos;s DNS to the same server, then enter it here.
               </p>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-end gap-4 sm:pl-[52px]">
+            <div className="flex-1">
               <input
                 value={statsDomain}
                 onChange={e => setStatsDomain(e.target.value)}
@@ -515,9 +527,9 @@ export default function DirectLinkStatsPage() {
                 className={inp}
               />
               {statsDomain && (
-                <p className="text-[11px] text-gray-400 mt-1">
+                <p className="text-[11px] text-gray-400 mt-1.5">
                   Share links will look like:{' '}
-                  <code className="bg-gray-100 px-1 rounded">
+                  <code className="bg-gray-100 px-1.5 py-0.5 rounded">
                     https://{statsDomain}/public-stats/…
                   </code>
                 </p>
@@ -534,29 +546,34 @@ export default function DirectLinkStatsPage() {
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {[
-            { label: 'Total Links', value: links.length },
-            { label: 'Publishers with Links', value: publisherStats.length },
-            { label: 'Total Clicks', value: links.reduce((s, l) => s + l.total_clicks, 0).toLocaleString() },
-            { label: 'Total Conversions', value: links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString() },
+            { label: 'Total Links', value: links.length.toLocaleString(), icon: Link2, tone: 'text-primary', bg: 'bg-primary/10 border-primary/15' },
+            { label: 'Publishers with Links', value: publisherStats.length.toLocaleString(), icon: Globe2, tone: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
+            { label: 'Total Clicks', value: links.reduce((s, l) => s + l.total_clicks, 0).toLocaleString(), icon: MousePointerClick, tone: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
+            { label: 'Total Conversions', value: links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString(), icon: Target, tone: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
           ].map((s, i) => (
-            <div key={i} className="bg-white rounded-2xl border border-gray-100 p-4">
-              <p className="text-xs text-gray-400 font-medium">{s.label}</p>
-              <p className="text-xl font-bold text-gray-900 mt-1">{s.value}</p>
+            <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 ${s.bg}`}>
+                  <s.icon size={16} className={s.tone} />
+                </div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{s.label}</span>
+              </div>
+              <p className="text-2xl font-bold text-gray-900 tracking-tight">{s.value}</p>
             </div>
           ))}
         </div>
 
         {/* Date filter */}
-        <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6 flex gap-3 items-center flex-wrap">
-          <Calendar size={16} className="text-gray-400" />
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 mb-6 flex gap-3 items-center flex-wrap">
+          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mr-1">Period</span>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="px-3 py-2 border border-gray-200 rounded-xl text-sm" />
-          <span className="text-gray-400">to</span>
+            className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" />
+          <span className="text-gray-300">→</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="px-3 py-2 border border-gray-200 rounded-xl text-sm" />
-          <button onClick={loadData} className="px-3 py-2 border border-gray-200 rounded-xl text-sm hover:bg-gray-50 flex items-center gap-1.5">
+            className="px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" />
+          <button onClick={loadData} className="px-3.5 py-2 border border-gray-200 rounded-xl text-sm hover:bg-gray-50 flex items-center gap-1.5 text-gray-600 font-medium">
             <RefreshCw size={14} /> Refresh
           </button>
         </div>
@@ -598,11 +615,11 @@ export default function DirectLinkStatsPage() {
 
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Active Links</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider">Active Links</p>
                     <p className="text-base font-bold text-gray-900">{pub.linkCount}</p>
                   </div>
                   <div className="bg-gray-50 rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Today Conv.</p>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold tracking-wider">Today Conv.</p>
                     <p className={`text-base font-bold ${pub.todayConversions > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                       {pub.todayConversions}
                     </p>
@@ -800,27 +817,32 @@ export default function DirectLinkStatsPage() {
         {/* Stats share section */}
         {selectedPublisher && (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-6">
-            <div className="p-5 border-t border-gray-100 bg-blue-50/50">
+            <div className="p-5 border-t border-gray-100 bg-blue-50/60">
               <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-blue-900">White-Label Stats Link</p>
-                  <p className="text-xs text-blue-600 mt-0.5">
-                    Share a stats-only page with {selectedPublisher.name} — no internal data exposed.
-                    Regenerating expires the previous URL immediately while keeping all settings and data.
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-100 border border-blue-200 flex items-center justify-center flex-shrink-0">
+                    <Share2 size={16} className="text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">White-Label Stats Link</p>
+                    <p className="text-xs text-blue-600/80 mt-0.5">
+                      Share a stats-only page with {selectedPublisher.name} — no internal data exposed.
+                      Regenerating expires the previous URL immediately while keeping all settings and data.
+                    </p>
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => generateStatsUrl(selectedPublisher.id, selectedPublisher.name)}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap"
                   >
-                    <Copy size={13} /> Generate & Copy
+                    <Copy size={13} /> Generate &amp; Copy
                   </button>
                   <button
                     onClick={() => regenerateStatsUrl(selectedPublisher.id, selectedPublisher.name)}
                     disabled={regenerating === selectedPublisher.id}
                     title="Expire the current link and generate a new one"
-                    className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-60"
+                    className="border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-60"
                   >
                     {regenerating === selectedPublisher.id ? <Spinner size={13} /> : <RefreshCw size={13} />} Regenerate
                   </button>
