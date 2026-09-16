@@ -126,6 +126,9 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/d/') ||
     pathname.startsWith('/api/') ||
     pathname.startsWith('/_next/') ||
+    // One-time prelander authorization bootstrap (exchanges the cross-domain
+    // handoff for the prelander-domain session cookie — backend route).
+    pathname.startsWith('/_auth/') ||
     // White-label public stats share links work on any configured domain
     // (including the optional dedicated stats share domain)
     pathname.startsWith('/public-stats/') ||

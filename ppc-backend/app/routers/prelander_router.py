@@ -22,6 +22,7 @@ Bypass ON (direct_redirect_mode):
   1. /click  →  campaign URL directly (no prelander at all)
 """
 import logging
+import time
 from fastapi import APIRouter, Query, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from typing import Optional
@@ -131,6 +132,7 @@ async def _request_is_authorized(
     request: Request,
     slug: str,
     db,
+    expected_campaign_id: Optional[str] = None,
 ) -> bool:
     """
     Server-side prelander authorization decision (DOMAIN != AUTHORIZATION).
@@ -146,24 +148,29 @@ async def _request_is_authorized(
     valve so a misconfiguration can never lock the whole prelander flow.
     Default: enabled.
     """
-    session = await get_authorized_session(request, slug)
+    session = await get_authorized_session(request, slug, db, expected_campaign_id=expected_campaign_id)
     return session is not None
 
 
 async def get_authorized_session(
     request: Request,
     slug: str,
-):
+    db,
+    expected_campaign_id: Optional[str] = None,
+) -> "Optional[object]":
     """
-    Validate the request's authorization and return the session record (or None).
+    Validate the request's prelander access through the full STEP 5 checklist
+    (prelander_auth_service.validate_prelander_access) and return the session
+    record — or None, in which case the caller serves the STEP 6 denied
+    fallback, revealing nothing.
 
-    The returned session carries the click-time routing context — campaign,
-    offer, prelander host, OS, country — which the resolver can use directly
-    instead of trusting anything from the request.
+    The returned session carries the click-time routing context (campaign,
+    offer, prelander host, OS, country) which the resolver uses directly.
     """
     import os
     from app.utils.ip_utils import get_client_ip
     from app.services import prelander_auth_service as pas
+    from app.services.domain_service import normalize_domain
 
     # Kill switch — off only when explicitly disabled in the environment.
     if os.getenv("PRELANDER_AUTH_REQUIRED", "true").strip().lower() in ("false", "0", "no", "off"):
@@ -173,21 +180,25 @@ async def get_authorized_session(
         redis = get_redis_safe()
         if redis is None:
             # Redis unavailable at validation time — fail CLOSED for protected
-            # content (the neutral page), never open. Log loudly so ops sees it.
+            # content (the denied fallback), never open. Loud log for ops.
             logger.error("[PRELANDER-AUTH] Redis unavailable at validation — denying")
             return None
 
         headers = dict(request.headers)
         ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
         user_agent = headers.get("user-agent", "")
-        cookie_reference = request.cookies.get(pas.COOKIE_NAME)
+        request_host = normalize_domain(headers.get("host", ""))
 
-        session = await pas.validate_authorization(
+        session = await pas.validate_prelander_access(
             slug=slug,
             ip=ip,
             user_agent=user_agent,
             redis=redis,
-            cookie_reference=cookie_reference,
+            db=db,
+            request_host=request_host,
+            cookie_reference=request.cookies.get(pas.COOKIE_NAME),
+            pl_session_cookie=request.cookies.get(pas.PL_SESSION_COOKIE),
+            expected_campaign_id=expected_campaign_id,
         )
         if session is None:
             logger.info(
@@ -199,6 +210,12 @@ async def get_authorized_session(
         # Validation itself failed — deny, but never leak why to the client.
         logger.error("[PRELANDER-AUTH] Validation error (denying): %s", e)
         return None
+
+
+async def _denied_response():
+    """STEP 6 configurable safe fallback (never leaks protected info)."""
+    from app.services.prelander_auth_service import build_denied_response
+    return build_denied_response()
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
@@ -427,7 +444,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             decoded_bypass = _decode_slug(slug)
             if decoded_bypass:
                 if not await _request_is_authorized(request, slug, db):
-                    return JSONResponse(status_code=404, content={"detail": "Not found"})
+                    return await _denied_response()
                 bypass_url = await _resolve_bypass_destination(
                     db, decoded_bypass.get("campaign_id"), decoded_bypass.get("offer_id")
                 )
@@ -456,17 +473,21 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                 )
         # Either on the Prelander domain already, or none configured → serve data
 
-    # ── SERVER-SIDE AUTHORIZATION GATE ────────────────────────────────────────
+    # ── SERVER-SIDE AUTHORIZATION GATE (STEP 5 middleware) ─────────────────────
     # DOMAIN != AUTHORIZATION: knowing the prelander URL is not sufficient.
-    # Before any protected prelander data (offer URL, password, template HTML)
-    # is built, the visitor must hold an authorization session created at
-    # Smartlink click time (redirect_pipeline.stage_authorize_prelander) and
-    # bound to this exact browser fingerprint and slug. Direct visits, shared
-    # links, scrapers and replayed slugs without a session get the same neutral
-    # 404 the page shows for invalid slugs — revealing nothing about the
-    # prelander's existence or contents.
-    if not await _request_is_authorized(request, slug, db):
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    # validate_prelander_access runs the full checklist (session exists /
+    # signature valid / unexpired / this browser / this domain / this campaign
+    # / this prelander / not revoked / not replayed / click alive / handoff
+    # single-use) BEFORE any protected prelander data is built. The campaign
+    # the slug resolves to must match the campaign the click authorized.
+    # Direct visits, shared links, scrapers and replayed slugs get the STEP 6
+    # configurable denied fallback — revealing nothing about the prelander's
+    # existence or contents.
+    decoded_pre = _decode_slug(slug)
+    if not await _request_is_authorized(
+        request, slug, db, expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
+    ):
+        return await _denied_response()
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
@@ -494,12 +515,115 @@ async def get_prelander_data_legacy(
     Gated by the same server-side authorization as the slug route: without a
     slug there is no route binding, so only the cookie/fingerprint path can
     validate. An empty slug never matches any session, so unauthenticated
-    direct calls get the neutral 404 — exactly like the frontend's invalid-
-    slug page, revealing nothing.
+    direct calls get the STEP 6 denied fallback — revealing nothing.
     """
     if not await _request_is_authorized(request, "", db):
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return await _denied_response()
     return await _get_prelander_data(request, os, db)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP 4 — CROSS-DOMAIN ONE-TIME HANDOFF ENDPOINTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+@router.get("/handoff")
+async def mint_handoff_token(
+    request: Request,
+    slug: str = Query(..., description="Prelander slug the visitor is hopping with"),
+    target_host: Optional[str] = Query(None, description="Prelander host the handoff is for"),
+    db=Depends(get_db),
+):
+    """
+    Inter-side: mint a one-time handoff for an already-authorized visitor.
+
+    Called by the /d/[slug] page while still on the Inter domain (authorized
+    there by the fingerprint/slug binding). Returns an opaque, high-entropy,
+    short-lived token carrying NO campaign/publisher/internal ids — the
+    prelander /_auth/{token} exchange consumes it once and mints the
+    prelander-domain HttpOnly browsing-session cookie.
+    """
+    from app.services import prelander_auth_service as pas
+    from app.services.domain_service import normalize_domain
+
+    session = await get_authorized_session(request, slug, db)
+    if not session or session is True:
+        return await _denied_response()
+
+    redis = get_redis_safe()
+    if redis is None:
+        return await _denied_response()
+
+    host = normalize_domain(target_host or "")
+    handoff = await pas.mint_handoff(session, redis, target_host=host)
+    if not handoff:
+        return await _denied_response()
+
+    return {"success": True, "handoff": handoff}
+
+
+@router.get("/_auth/{handoff_token}")
+async def prelander_bootstrap(
+    handoff_token: str,
+    request: Request,
+    slug: Optional[str] = Query(None, description="Slug to return to after the exchange"),
+    db=Depends(get_db),
+):
+    """
+    Prelander-side bootstrap (STEP 4): exchange the ONE-TIME handoff for a
+    prelander-domain browsing-session cookie, then redirect to the clean
+    prelander URL so no token stays in the address bar.
+
+      GET /_auth/{opaque-token}
+        → validate + CONSUME the handoff (getdel — replay impossible)
+        → establish the server-side browsing session
+        → set the HttpOnly SameSite=Lax prelander-domain cookie
+        → 302 → clean /d/{slug} (token gone from the visible URL)
+
+    A second use of the same handoff (back button, shared link, retry) finds
+    nothing and gets the STEP 6 denied fallback.
+    """
+    from app.services import prelander_auth_service as pas
+    from app.services.domain_service import normalize_domain
+    from fastapi.responses import RedirectResponse
+
+    redis = get_redis_safe()
+    if redis is None:
+        return await _denied_response()
+
+    headers = dict(request.headers)
+    from app.utils.ip_utils import get_client_ip
+    ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+    user_agent = headers.get("user-agent", "")
+    request_host = normalize_domain(headers.get("host", ""))
+
+    session = await pas.consume_handoff(
+        handoff_token, redis,
+        requesting_host=request_host,
+        ip=ip, user_agent=user_agent,
+    )
+    if session is None:
+        logger.info("[PRELANDER-AUTH] Handoff exchange rejected (token consumed or invalid)")
+        return await _denied_response()
+
+    # Establish the prelander-domain browsing session (STEP 7 part B).
+    pl_session_id = await pas.establish_prelander_session(session, redis)
+    if not pl_session_id:
+        return await _denied_response()
+
+    # Clean destination: back to the /d/{slug} page — the visible URL carries
+    # only the opaque route, never the handoff or any internal id.
+    dest = f"/d/{slug}" if slug else "/d/"
+    response = RedirectResponse(url=dest, status_code=302)
+    response.set_cookie(
+        key=pas.PL_SESSION_COOKIE,
+        value=pl_session_id,
+        max_age=max(session.expires_at - int(time.time()), 60),
+        httponly=True,
+        samesite="lax",
+        secure=True,
+    )
+    logger.info("[PRELANDER-AUTH] Handoff exchanged → browsing session established (click=%s)", session.click_id)
+    return response
 
 
 async def _get_prelander_data(

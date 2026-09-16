@@ -62,6 +62,19 @@ class Settings(BaseSettings):
     # per deployment via env: PRELANDER_SESSION_TTL=300
     PRELANDER_SESSION_TTL: int = 300
 
+    # One-time cross-domain handoff validity (seconds) — the token exchanged
+    # on the prelander domain for a browsing-session cookie. Short by design.
+    PRELANDER_HANDOFF_TTL: int = 60
+
+    # Denied prelander access fallback (STEP 6). Modes:
+    #   generic_page - neutral "not available" HTML (default)
+    #   not_found    - controlled 404
+    #   forbidden    - controlled 403
+    #   redirect     - 302 to PRELANDER_DENIED_FALLBACK_URL
+    PRELANDER_DENIED_MODE: str = "generic_page"
+    # Target for redirect mode (a safe, public entry URL — never the campaign).
+    PRELANDER_DENIED_FALLBACK_URL: str = ""
+
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
     # Turn off to keep click documents minimal on very high volume.

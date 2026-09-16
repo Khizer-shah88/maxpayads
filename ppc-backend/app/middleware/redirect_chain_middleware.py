@@ -562,12 +562,10 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
         # SERVER-SIDE AUTHORIZATION GATE — DOMAIN != AUTHORIZATION. Before any
         # protected prelander HTML is resolved, the visitor must hold the
         # click-time authorization session (same gate as the /prelander/resolve
-        # API). Direct visits get the same neutral fallback page.
+        # API). Direct visits get the STEP 6 configurable denied fallback.
         if not await _request_is_authorized(request, slug, db):
-            return HTMLResponse(
-                content=generate_fallback_html("Not Found"),
-                status_code=404,
-            )
+            from app.services.prelander_auth_service import build_denied_response
+            return build_denied_response()
 
         decoded = _decode_slug(slug)
         if not decoded:

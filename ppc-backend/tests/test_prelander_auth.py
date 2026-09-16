@@ -45,6 +45,16 @@ class FakeRedis:
                 removed += 1
         return removed
 
+    async def getdel(self, key):
+        """Atomic GET+DELETE — the single-use handoff guarantee."""
+        entry = self.store.pop(key, None)
+        if not entry:
+            return None
+        value, expires_at = entry
+        if time.time() > expires_at:
+            return None
+        return value
+
     def pipeline(self):
         return FakePipeline(self)
 
@@ -319,3 +329,235 @@ def test_slug_hash_is_non_reversible_short():
     h = pas._slug_hash(SLUG)
     assert len(h) == 24
     assert SLUG not in h
+
+
+# ── STEP 4: one-time cross-domain handoff ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handoff_is_opaque_and_carries_no_internal_ids(redis):
+    session = await pas.create_authorization(
+        "click-42", SLUG, IP, UA, redis,
+        publisher_id="pub-9", campaign_id="camp-9", prelander_host="prelander.example.com",
+    )
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+    assert handoff and len(handoff) >= 40
+    # Opaque: no campaign/publisher/db id inside the token
+    for internal in ("pub-9", "camp-9", "click-42", "prelander.example.com"):
+        assert internal not in handoff
+
+
+@pytest.mark.asyncio
+async def test_handoff_exchange_returns_session(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+    got = await pas.consume_handoff(
+        handoff, redis, requesting_host="prelander.example.com", ip=IP, user_agent=UA,
+    )
+    assert got is not None and got.token == session.token
+
+
+@pytest.mark.asyncio
+async def test_handoff_is_single_use(redis):
+    """Second use (replay, back button, shared link) finds nothing."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis)
+    first = await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA)
+    assert first is not None
+    second = await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA)
+    assert second is None
+
+
+@pytest.mark.asyncio
+async def test_handoff_target_host_binding(redis):
+    """A handoff minted for one prelander domain cannot be exchanged on another."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
+    got = await pas.consume_handoff(
+        handoff, redis, requesting_host="other.example.com", ip=IP, user_agent=UA,
+    )
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_handoff_from_other_browser_denied(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis)
+    other_ua = "Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0"
+    got = await pas.consume_handoff(handoff, redis, ip=IP, user_agent=other_ua)
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_handoff_dies_with_ttl(redis, monkeypatch):
+    monkeypatch.setenv("PRELANDER_HANDOFF_TTL", "1")
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    handoff = await pas.mint_handoff(session, redis)
+    for key, (value, expires_at) in list(redis.store.items()):
+        redis.store[key] = (value, time.time() - 1)
+    assert await pas.consume_handoff(handoff, redis, ip=IP, user_agent=UA) is None
+
+
+# ── STEP 5/7: prelander-domain browsing session ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_browsing_session_survives_refreshes(redis):
+    """STEP 7: after the exchange, refreshes ride the browsing session."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    assert pl_id
+    # Many "refreshes" — the id keeps resolving, no consume, no new session
+    for _ in range(5):
+        got = await pas.validate_prelander_session(pl_id, redis, slug=SLUG)
+        assert got is not None and got.token == session.token
+
+
+@pytest.mark.asyncio
+async def test_browsing_session_is_slug_bound(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    assert await pas.validate_prelander_session(pl_id, redis, slug="other-slug") is None
+
+
+@pytest.mark.asyncio
+async def test_browsing_session_dies_with_authorization(redis):
+    """Revoking the click authorization kills the browsing session too."""
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    await pas.revoke_authorization(session.token, redis)
+    assert await pas.validate_prelander_session(pl_id, redis, slug=SLUG) is None
+
+
+# ── STEP 6: configurable denied fallback ─────────────────────────────────────
+
+@pytest.fixture
+def denied_settings(monkeypatch):
+    """Patch the cached settings object's denied-fallback fields per test."""
+    settings = pas.get_settings()
+    original = {
+        "PRELANDER_DENIED_MODE": getattr(settings, "PRELANDER_DENIED_MODE", "generic_page"),
+        "PRELANDER_DENIED_FALLBACK_URL": getattr(settings, "PRELANDER_DENIED_FALLBACK_URL", ""),
+    }
+
+    def set_mode(mode, url=""):
+        monkeypatch.setattr(settings, "PRELANDER_DENIED_MODE", mode, raising=False)
+        monkeypatch.setattr(settings, "PRELANDER_DENIED_FALLBACK_URL", url, raising=False)
+
+    yield set_mode
+    # monkeypatch auto-restores on teardown
+
+
+def test_denied_response_default_is_generic_page(denied_settings):
+    denied_settings("generic_page")
+    response = pas.build_denied_response()
+    assert response.status_code == 404
+    body = response.body.decode()
+    # Neutral — leaks nothing about campaigns, publishers, or internals
+    for leak in ("campaign", "offer", "stack", "Traceback"):
+        assert leak not in body
+    assert "no longer available" in body
+
+
+def test_denied_response_not_found_mode(denied_settings):
+    denied_settings("not_found")
+    response = pas.build_denied_response()
+    assert response.status_code == 404
+
+
+def test_denied_response_forbidden_mode(denied_settings):
+    denied_settings("forbidden")
+    response = pas.build_denied_response()
+    assert response.status_code == 403
+
+
+def test_denied_response_redirect_mode(denied_settings):
+    denied_settings("redirect", "https://example.com/safe")
+    response = pas.build_denied_response()
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://example.com/safe"
+
+
+def test_denied_response_redirect_mode_falls_back_on_bad_url(denied_settings):
+    """Misconfigured redirect target → the generic page, never an unsafe 302."""
+    denied_settings("redirect", "javascript:alert(1)")
+    response = pas.build_denied_response()
+    assert response.status_code == 404
+
+
+# ── STEP 5: access-middleware orchestrator ─────────────────────────────────────
+
+class FakeClicks:
+    """Async clicks collection stub for the click-existence check."""
+    def __init__(self, existing=True):
+        self.existing = existing
+
+    async def find_one(self, query, projection=None, **kwargs):
+        return {"_id": query.get("_id")} if self.existing else None
+
+
+class FakeDB:
+    def __init__(self, existing=True):
+        self.clicks = FakeClicks(existing)
+
+
+@pytest.mark.asyncio
+async def test_access_middleware_grants_authorized_browsing_session(redis):
+    """Refresh via the browsing session passes the full STEP 5 checklist."""
+    session = await pas.create_authorization(
+        "c1", SLUG, IP, UA, redis, prelander_host="prelander.example.com",
+    )
+    pl_id = await pas.establish_prelander_session(session, redis)
+    got = await pas.validate_prelander_access(
+        slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(),
+        pl_session_cookie=pl_id,
+        expected_prelander_host="prelander.example.com",
+    )
+    assert got is not None and got.token == session.token
+
+
+@pytest.mark.asyncio
+async def test_access_middleware_denies_wrong_domain(redis):
+    """Check 5: an authorization for one prelander host cannot serve another."""
+    session = await pas.create_authorization(
+        "c1", SLUG, IP, UA, redis, prelander_host="prelander.example.com",
+    )
+    pl_id = await pas.establish_prelander_session(session, redis)
+    got = await pas.validate_prelander_access(
+        slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(),
+        pl_session_cookie=pl_id,
+        expected_prelander_host="evil.example.com",
+    )
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_access_middleware_denies_wrong_campaign(redis):
+    """Check 6: the resolved campaign must match the session's campaign."""
+    session = await pas.create_authorization(
+        "c1", SLUG, IP, UA, redis, campaign_id="camp-42",
+    )
+    got = await pas.validate_prelander_access(
+        slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(),
+        expected_campaign_id="camp-999",
+    )
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_access_middleware_denies_when_click_gone(redis):
+    """Check 10: authorization referencing a deleted click is dead."""
+    session = await pas.create_authorization("gone-click", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    got = await pas.validate_prelander_access(
+        slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(existing=False),
+        pl_session_cookie=pl_id,
+    )
+    assert got is None
+
+
+@pytest.mark.asyncio
+async def test_access_middleware_denies_direct_visit(redis):
+    """STEP 6 core: no session, no cookie, no host — nothing is returned."""
+    got = await pas.validate_prelander_access(
+        slug=SLUG, ip=IP, user_agent=UA, redis=redis, db=FakeDB(),
+    )
+    assert got is None

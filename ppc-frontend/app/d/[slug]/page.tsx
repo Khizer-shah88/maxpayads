@@ -67,6 +67,34 @@ export default function PrelanderSlugPage() {
           // the domain_type (a prelander-typed domain positioned mid-chain must
           // keep hopping).
           if (prelanderDomain) {
+            // Cross-domain handoff (STEP 4): when leaving the Inter domain for
+            // the prelander, mint a one-time handoff and exchange it at
+            // /_auth/{handoff} on the prelander domain — the bootstrap consumes
+            // it once, sets the prelander-domain HttpOnly session cookie, and
+            // lands the visitor on the clean /d/{slug} URL (no token in the
+            // address bar). Refreshes then ride the session cookie, never the
+            // handoff.
+            try {
+              const hRes = await fetch(
+                `/api/prelander/handoff?slug=${encodeURIComponent(slug)}&target_host=${encodeURIComponent(new URL(prelanderDomain).hostname)}`,
+                { headers: { 'X-Prelander-Host': hostname } }
+              )
+              if (hRes.ok) {
+                const h = await hRes.json()
+                if (h?.handoff) {
+                  // Hold the 0.75s dwell so the loader reads as intentional.
+                  setTransitioning(true)
+                  await new Promise(r => setTimeout(r, 750))
+                  window.location.replace(
+                    `${prelanderDomain}/_auth/${h.handoff}?slug=${encodeURIComponent(slug)}`
+                  )
+                  return
+                }
+              }
+            } catch {
+              // Handoff unavailable — fall through to the direct hop (the
+              // server-side fingerprint/slug binding still authorizes).
+            }
             // Not on the final prelander — hop to the next domain. Show a clear
             // loader for a fixed 0.75s so the domain switch reads as
             // intentional, then navigate. Raw slug chars are base64url-safe.

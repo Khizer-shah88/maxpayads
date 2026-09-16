@@ -87,12 +87,16 @@ SESSION_SKEW_SECONDS = 60
 # Redis key namespaces. Session keyed by the random TOKEN (never a DB id) +
 # two O(1) lookup indexes so validation never needs a KEYS scan (KEYS blocks
 # Redis; banned in production).
-_REDIS_PREFIX = "prelander_auth:"    # token -> session JSON
-_FP_PREFIX = "prelander_auth_fp:"   # fingerprint -> token (string)
-_SH_PREFIX = "prelander_auth_sh:"   # slug-hash  -> token (string)
+_REDIS_PREFIX = "prelander_auth:"     # token -> session JSON
+_FP_PREFIX = "prelander_auth_fp:"    # fingerprint -> token (string)
+_SH_PREFIX = "prelander_auth_sh:"    # slug-hash  -> token (string)
+_HANDOFF_PREFIX = "prelander_handoff:"   # one-time handoff token -> session token
+_PL_SESSION_PREFIX = "prelander_plsess:"  # prelander-domain browsing session id -> session token
 
 # Cookie carrying the authorization reference. HttpOnly + SameSite=Lax.
 COOKIE_NAME = "mpa_pla"
+# Prelander-domain browsing-session cookie (set by the handoff exchange).
+PL_SESSION_COOKIE = "mpa_pls"
 
 
 def cookie_ttl_seconds() -> int:
@@ -149,6 +153,14 @@ def _fp_key(fingerprint: str) -> str:
 
 def _sh_key(slug_hash: str) -> str:
     return f"{_SH_PREFIX}{slug_hash}"
+
+
+def _handoff_key(handoff_token: str) -> str:
+    return f"{_HANDOFF_PREFIX}{handoff_token}"
+
+
+def _pl_session_key(pl_session_id: str) -> str:
+    return f"{_PL_SESSION_PREFIX}{pl_session_id}"
 
 
 # ── Session record ─────────────────────────────────────────────────────────────
@@ -565,3 +577,348 @@ async def revoke_authorization(token: str, redis) -> bool:
     except Exception as e:
         logger.warning("[PRELANDER-AUTH] Revoke failed: %s", e)
         return False
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP 4 — CROSS-DOMAIN ONE-TIME HANDOFF + PRELANDER-DOMAIN BROWSING SESSION
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Domain reality (audited): Anchor, Inter and Prelander are UNRELATED
+# registrar domains. A cookie set on one is NEVER readable by another —
+# that is a browser security guarantee, not a configuration option. The
+# cross-domain authorization therefore travels in the SERVER-SIDE session
+# (fingerprint + slug binding from STEPS 1-3) and, when the architecture
+# wants a real prelander-domain cookie, via this ONE-TIME handoff:
+#
+#   Inter /d/{slug} page
+#     → requests a handoff token (still on the Inter domain, authorized by
+#       the fingerprint/slug binding)
+#     → navigates to prelander/_auth/{handoff}
+#     → bootstrap endpoint validates the handoff server-side, CONSUMES it
+#       (single use — replay impossible), mints the prelander-domain
+#       HttpOnly browsing-session cookie
+#     → 302 to the clean prelander URL (token removed from the visible URL)
+#
+# Handoff token properties (spec): high-entropy, short-lived, single-use,
+# opaque, unrelated to db ids, carries no campaign/publisher info, replay-
+# protected by atomic consume. The browsing session it mints is deliberately
+# SEPARATE (STEP 7): refreshes and back/forward ride the browsing session,
+# never re-consume the handoff, and never create a new ad click.
+
+
+def _handoff_ttl() -> int:
+    """Handoff validity — short by design (env-overridable)."""
+    import os
+    raw = os.getenv("PRELANDER_HANDOFF_TTL", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return 60  # seconds — just long enough for one redirect hop
+
+
+async def mint_handoff(
+    session: AuthorizationSession,
+    redis,
+    target_host: str = "",
+    ttl: Optional[int] = None,
+) -> Optional[str]:
+    """
+    Mint a one-time handoff token for an already-authorized session.
+
+    The token is pure CSPRNG output — it carries no campaign, publisher, or
+    any internal id. It maps (in Redis) to the session token + the target
+    prelander host, and dies with the atomic consume below.
+    """
+    if redis is None or session is None or not session.is_usable():
+        return None
+    try:
+        effective_ttl = int(ttl) if ttl and int(ttl) > 0 else _handoff_ttl()
+        handoff_token = secrets.token_urlsafe(32)
+        value = json.dumps({"st": session.token, "th": (target_host or "")})
+        await redis.setex(_handoff_key(handoff_token), effective_ttl, value)
+        logger.info(
+            "[PRELANDER-AUTH] Handoff minted (ttl=%ss target=%s)", effective_ttl, target_host or "-",
+        )
+        return handoff_token
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Handoff mint failed: %s", e)
+        return None
+
+
+async def consume_handoff(
+    handoff_token: str,
+    redis,
+    requesting_host: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> Optional[AuthorizationSession]:
+    """
+    Atomically exchange a one-time handoff for its authorization session.
+
+    Single-use: the GET+DELETE race is closed by deleting FIRST — only one
+    concurrent caller ever wins the value; every other attempt (replay,
+    double-click, shared URL) sees nothing. Returns the bound session only
+    when it is still usable and the exchange happens on the expected target
+    host (when the handoff was minted with one) from the expected browser.
+    """
+    if not handoff_token or redis is None:
+        return None
+    try:
+        # Consume FIRST — the atomic single-use guarantee.
+        raw = await redis.getdel(_handoff_key(handoff_token))
+        if not raw:
+            return None
+        payload = json.loads(raw)
+        session_token = payload.get("st", "")
+        target = payload.get("th", "")
+
+        if target and requesting_host and target != requesting_host:
+            logger.warning(
+                "[PRELANDER-AUTH] Handoff host mismatch (want=%s got=%s)", target, requesting_host,
+            )
+            return None
+
+        session = await get_session(session_token, redis)
+        if session is None or not session.is_usable():
+            return None
+        # Browser binding survives the handoff: same UA required (IP may rotate).
+        if ip and session.fingerprint != _fingerprint(ip, user_agent):
+            if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
+                return None
+        return session
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Handoff consume failed: %s", e)
+        return None
+
+
+async def establish_prelander_session(
+    session: AuthorizationSession,
+    redis,
+) -> Optional[str]:
+    """
+    Establish the prelander-domain BROWSING session (STEP 7 part B).
+
+    Separate from the one-time handoff on purpose: after this exchange the
+    visitor's refreshes, back/forward and asset loads ride this id. Refresh
+    never re-consumes the handoff, never creates a click, never mints a new
+    authorization — the browsing session just gets looked up again.
+    """
+    if redis is None or session is None:
+        return None
+    try:
+        pl_session_id = secrets.token_urlsafe(32)
+        # The browsing session lives as long as the click authorization it
+        # derives from — no independent lifetime that could outlive it.
+        remaining = max(session.expires_at - int(time.time()), 1)
+        await redis.setex(_pl_session_key(pl_session_id), remaining, session.token)
+        return pl_session_id
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Prelander session establish failed: %s", e)
+        return None
+
+
+async def validate_prelander_session(
+    pl_session_id: str,
+    redis,
+    slug: str = "",
+) -> Optional[AuthorizationSession]:
+    """
+    Resolve a prelander-domain browsing-session id back to its authorization.
+
+    Returns None when the id is unknown/expired, when the underlying click
+    authorization died (revoked/consumed/expired), or — when a slug is given —
+    when the authorization is not bound to that slug (route pinning).
+    """
+    if not pl_session_id or redis is None:
+        return None
+    try:
+        session_token = await redis.get(_pl_session_key(pl_session_id))
+        if not session_token:
+            return None
+        session = await get_session(session_token, redis)
+        if session is None or not session.is_usable():
+            return None
+        if slug and session.slug_hash != _slug_hash(slug):
+            return None
+        return session
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Prelander session validation failed: %s", e)
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP 5 — PRELANDER ACCESS MIDDLEWARE (validation orchestrator)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def validate_prelander_access(
+    *,
+    slug: str,
+    ip: str,
+    user_agent: str,
+    redis,
+    db,
+    request_host: str = "",
+    cookie_reference: Optional[str] = None,
+    pl_session_cookie: Optional[str] = None,
+    expected_campaign_id: Optional[str] = None,
+    expected_prelander_host: Optional[str] = None,
+    consume: bool = True,
+) -> Optional[AuthorizationSession]:
+    """
+    The single place every protected-prelander request must pass through
+    (STEP 5). Implements the full checklist BEFORE any protected HTML/data:
+
+      1.  session exists          — some binding names a stored session
+      2.  cryptographically valid — cookie reference signature verifies
+      3.  not expired            — expires_at honored (+ small skew)
+      4.  belongs to this browser— fingerprint (IP+UA) / UA match
+      5.  matches this domain     — session.prelander_host == request host
+      6.  maps to the campaign    — resolved campaign id == session.campaign_id
+      7.  maps to the prelander   — slug binding == THIS route's slug
+      8.  not revoked             — status must be active
+      9.  not replayed            — consumption ceiling intact
+      10. click/session exists    — session.click_id still resolvable
+      11. handoff single-use      — handled by consume_handoff (getdel);
+                                     the browsing session here is the
+                                     post-exchange artifact, so replays of the
+                                     handoff token are already impossible
+
+    Returns the session on success (the caller renders), None on any failure
+    (the caller serves the STEP 6 denied fallback — never more, never less).
+    Every failure logs the check that failed, never the protected contents.
+    """
+    if redis is None:
+        logger.error("[PRELANDER-AUTH] No Redis for validation — denying")
+        return None
+
+    now = int(time.time())
+    session: Optional[AuthorizationSession] = None
+    source = ""
+
+    # ── 1/2/3/8/9: obtain a stored, signature-valid, usable session ───────
+    # Prelander-domain browsing session first (STEP 7 part B): refreshes and
+    # back/forward land here and must NOT re-consume anything.
+    if pl_session_cookie:
+        session = await validate_prelander_session(pl_session_cookie, redis, slug=slug)
+        if session:
+            source = "pl_session"
+
+    if session is None:
+        session = await validate_authorization(
+            slug=slug, ip=ip, user_agent=user_agent, redis=redis,
+            cookie_reference=cookie_reference, consume=consume,
+        )
+        if session:
+            source = "binding"
+
+    if session is None:
+        logger.info("[PRELANDER-AUTH] Check 1-4 failed: no usable session (slug=%s…)", (slug or "")[:10])
+        return None
+
+    # ── 4 (browser ownership) is enforced by validate_authorization's
+    #    fingerprint match; the browsing session id is itself HttpOnly and
+    #    was minted server-side, so possession proves the exchange happened.
+
+    # ── 5: the authorization must match the prelander domain being asked for.
+    if (
+        expected_prelander_host
+        and session.prelander_host
+        and expected_prelander_host != session.prelander_host
+    ):
+        logger.info(
+            "[PRELANDER-AUTH] Check 5 failed: host mismatch (session=%s request=%s)",
+            session.prelander_host, expected_prelander_host,
+        )
+        return None
+
+    # ── 6: the authorization must map to the campaign this request resolves.
+    if expected_campaign_id and session.campaign_id and str(expected_campaign_id) != session.campaign_id:
+        logger.info(
+            "[PRELANDER-AUTH] Check 6 failed: campaign mismatch (session=%s request=%s)",
+            session.campaign_id, expected_campaign_id,
+        )
+        return None
+
+    # ── 10: the click the authorization references must still exist.
+    if session.click_id and db is not None:
+        try:
+            from bson import ObjectId
+            oid = ObjectId(session.click_id) if ObjectId.is_valid(session.click_id) else session.click_id
+            click = await db.clicks.find_one({"_id": oid}, {"_id": 1})
+            if not click:
+                logger.info("[PRELANDER-AUTH] Check 10 failed: click %s gone", session.click_id)
+                return None
+        except Exception as e:
+            # A transient DB error must not deny a fully-authorized visitor.
+            logger.debug("[PRELANDER-AUTH] Click existence check skipped: %s", e)
+
+    logger.info(
+        "[PRELANDER-AUTH] Access granted via %s (click=%s host=%s)",
+        source, session.click_id or "-", expected_prelander_host or "-",
+    )
+    return session
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STEP 6 — CONFIGURABLE SAFE FALLBACK FOR DENIED ACCESS
+# ═════════════════════════════════════════════════════════════════════════════
+
+_DENIED_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Page Not Found</title>
+<style>
+  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#f0f2f5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
+  .box {{ text-align:center; }}
+  .icon {{ width:64px; height:64px; border-radius:50%; background:#e5e7eb; margin:0 auto 16px;
+           display:flex; align-items:center; justify-content:center; }}
+  p {{ color:#6b7280; font-size:14px; }}
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2">
+        <path d="M12 15V9m0 0v6m-6-6h12" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
+        <path d="M12 15V9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12 15V9.5" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
+        <path d="M15 9h-6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <p>This link is no longer available.</p>
+  </div>
+</body>
+</html>"""
+
+
+def build_denied_response(redis=None):
+    """
+    The configurable safe fallback for denied prelander access (STEP 6).
+
+    Mode (PRELANDER_DENIED_MODE): generic_page (default) | not_found |
+    forbidden | redirect. Never leaks campaign/publisher/internal info, never
+    a stack trace — the same neutral response whatever the failure was.
+    """
+    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+    from app.config import get_settings
+
+    mode = (getattr(get_settings(), "PRELANDER_DENIED_MODE", "generic_page") or "generic_page").strip().lower()
+
+    if mode == "not_found":
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    if mode == "forbidden":
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    if mode == "redirect":
+        target = (getattr(get_settings(), "PRELANDER_DENIED_FALLBACK_URL", "") or "").strip()
+        if target.startswith(("http://", "https://")):
+            return RedirectResponse(url=target, status_code=302)
+        # Misconfigured redirect target — fall through to the generic page
+        # rather than 302-ing somewhere unsafe.
+    return HTMLResponse(content=_DENIED_PAGE, status_code=404)
