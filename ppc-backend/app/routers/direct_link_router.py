@@ -93,6 +93,7 @@ def _serialize(doc: dict, today_conversions: int = 0, manual_conversions: int = 
         "daily_conversion_cap": doc.get("daily_conversion_cap", 0),
         "preferences": doc.get("preferences") or {},
         "stats_share_id": doc.get("stats_share_id"),
+        "stats_domain": doc.get("stats_domain") or "",
         "total_clicks": doc.get("total_clicks", 0),
         # Accurate total = tracked conversions on the link + any admin-entered
         # manual conversions for that link, so adding a conversion updates the
@@ -732,7 +733,7 @@ async def delete_conversion_override(
 
 # ─── White-Label Stats Link (share ID based) ─────────────────────────────────
 
-async def _build_stats_url(request: Request, db, share_id: str) -> str:
+async def _build_stats_url(request: Request, db, share_id: str, link: Optional[dict] = None) -> str:
     """Build the public stats URL for a share ID using the configured domain."""
     # Default: current admin panel origin — always works regardless of hosting.
     forwarded_proto = request.headers.get("x-forwarded-proto", "https")
@@ -742,7 +743,15 @@ async def _build_stats_url(request: Request, db, share_id: str) -> str:
     else:
         base_url = str(request.base_url).rstrip("/")
 
-    # Optional custom white-label stats domain (Admin → Settings → stats_domain).
+    # PER-PUBLISHER white-label domain wins (Admin → Direct Link Stats →
+    # per-publisher domain assignment, e.g. fisherhub.com for one pub only).
+    link_domain = ((link or {}).get("stats_domain") or "").strip().rstrip("/")
+    if link_domain:
+        if not link_domain.startswith("http"):
+            link_domain = f"https://{link_domain}"
+        return f"{link_domain}/public-stats/{share_id}"
+
+    # Optional GLOBAL custom white-label stats domain (Admin → Settings).
     stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
     if stats_domain_doc and stats_domain_doc.get("value", "").strip():
         custom_domain = stats_domain_doc["value"].strip().rstrip("/")
@@ -777,7 +786,7 @@ async def share_stats_link(
             {"$set": {"stats_share_id": share_id, "updated_at": datetime.utcnow()}},
         )
 
-    stats_url = await _build_stats_url(request, db, share_id)
+    stats_url = await _build_stats_url(request, db, share_id, link=doc)
     return {
         "success": True,
         "stats_url": stats_url,
@@ -822,7 +831,7 @@ async def regenerate_stats_link(
         }},
     )
 
-    stats_url = await _build_stats_url(request, db, new_share_id)
+    stats_url = await _build_stats_url(request, db, new_share_id, link=doc)
     return {
         "success": True,
         "stats_url": stats_url,
@@ -872,7 +881,7 @@ async def generate_stats_token(
             {"$set": {"stats_share_id": share_id, "updated_at": datetime.utcnow()}},
         )
 
-    stats_url = await _build_stats_url(request, db, share_id)
+    stats_url = await _build_stats_url(request, db, share_id, link=link)
 
     return {
         "success": True,

@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
 import { useParams } from 'next/navigation'
-import { AlertCircle, RefreshCw } from 'lucide-react'
+import { AlertCircle, RefreshCw, Eye, Download, BarChart3, TrendingUp, CalendarDays } from 'lucide-react'
 import { publicStatsApi } from '@/lib/api'
 
 // â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -81,23 +81,28 @@ function Delta({ pct }: { pct: number }) {
   )
 }
 
-// â”€â”€â”€ KPI card (label + delta, big value, sub, corner spark) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function Kpi({ label, value, sub, delta, spark }: {
+// ─── KPI card — example style: label + icon tile, big value, sub row ─────
+function Kpi({ label, value, sub, subValue, icon, iconBg, spark }: {
   label: string
   value: string
   sub: string
-  delta?: ReactNode
+  subValue?: string
+  icon: ReactNode
+  iconBg: string
   spark?: ReactNode
 }) {
   return (
     <div className="relative overflow-hidden bg-[#111721] border border-[#1D2634] rounded-[10px] px-4 pt-3.5 pb-3">
       {spark}
-      <div className="relative flex items-center justify-between gap-2">
-        <span className="text-xs text-[#8695A8]">{label}</span>
-        {delta}
+      <div className="relative flex items-start justify-between gap-2">
+        <span className="text-[11px] uppercase tracking-[0.08em] text-[#8695A8] font-medium pt-0.5">{label}</span>
+        <span className={`w-9 h-9 rounded-[9px] grid place-items-center flex-none ${iconBg}`}>{icon}</span>
       </div>
-      <p className="text-[26px] font-semibold leading-[1.1] tracking-[-0.02em] text-[#E8EEF6] mt-1.5 tabular-nums">{value}</p>
-      <p className="text-[11.5px] text-[#5C6B7E] mt-1">{sub}</p>
+      <p className="text-[28px] font-bold leading-[1.1] tracking-[-0.02em] text-[#E8EEF6] mt-1.5 tabular-nums">{value}</p>
+      <div className="relative flex items-center justify-between gap-2 mt-2.5 pt-2 border-t border-[#1D2634]">
+        <span className="text-[11.5px] text-[#5C6B7E]">{sub}</span>
+        {subValue && <b className="text-[12px] text-[#C7D2E0] tabular-nums">{subValue}</b>}
+      </div>
     </div>
   )
 }
@@ -183,6 +188,16 @@ export default function PublisherStatsPage() {
   }, [shareId])
 
   useEffect(() => { loadStats() }, [loadStats])
+
+  // ── Auto refresh every 20s (spec) — pauses while a manual refresh runs ──
+  const AUTO_REFRESH_MS = 20_000
+  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => {
+    refreshTimer.current = setInterval(() => {
+      loadStats()
+    }, AUTO_REFRESH_MS)
+    return () => { if (refreshTimer.current) clearInterval(refreshTimer.current) }
+  }, [loadStats])
 
   // â”€â”€â”€ Platform filter toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const togglePlatform = (key: 'windows' | 'mac' | 'android') => {
@@ -372,47 +387,53 @@ export default function PublisherStatsPage() {
       </header>
 
       <main className="max-w-[1280px] mx-auto px-5 py-5 flex flex-col gap-4">
-        {/* â”€â”€ KPI grid — 5 cards with corner sparks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-        <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+        {/* KPI grid — example layout: 5 cards w/ icon tiles + sub rows */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
           {prefs.show_impressions !== false && (
             <Kpi
-              label="Impressions"
+              label="Total Impressions"
               value={(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
-              sub={filterActive ? 'Filtered by platform' : stats.date_range}
-              delta={<Delta pct={stats.trend_impressions_pct} />}
+              sub={filterActive ? 'Filtered view' : 'Lifetime views'}
+              subValue={(filterActive ? filteredClicks : stats.total_impressions).toLocaleString()}
+              icon={<Eye size={17} className="text-emerald-400" />}
+              iconBg="bg-emerald-400/10"
               spark={<CornerSpark data={impSpark} color="#3B82F6" />}
-            />
-          )}
-          {prefs.show_valid_clicks !== false && (
-            <Kpi
-              label="Unique wins"
-              value={(stats.unique_wins).toLocaleString()}
-              sub={`validated clicks · ${stats.days_tracked} days`}
-              delta={<Delta pct={stats.trend_wins_pct} />}
-              spark={<CornerSpark data={uniSpark} color="#8B5CF6" />}
             />
           )}
           {prefs.show_conversions !== false && (
             <Kpi
-              label="Conversions"
+              label="Total Conversions"
               value={(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
-              sub={filterActive ? 'Filtered by platform' : stats.date_range}
+              sub="Lifetime conversions"
+              subValue={(filterActive ? filteredConversions : stats.total_conversions).toLocaleString()}
+              icon={<Download size={17} className="text-violet-400" />}
+              iconBg="bg-violet-400/10"
               spark={<CornerSpark data={convSpark} color="#F59E0B" />}
             />
           )}
-          {prefs.show_cr !== false && (
-            <Kpi
-              label="Conversion rate"
-              value={`${(stats.conversion_rate).toFixed(2)}%`}
-              sub="conversions / impressions"
-            />
-          )}
           <Kpi
-            label="Daily average"
+            label="Daily Average"
             value={avgDaily.toLocaleString()}
-            sub={peak ? `Peak ${fmtShort(peak.date)} · ${peak.clicks.toLocaleString()}` : 'impressions per day'}
-            delta={<Delta pct={stats.trend_avg_pct} />}
+            sub="Mean impressions per day"
+            icon={<BarChart3 size={17} className="text-sky-400" />}
+            iconBg="bg-sky-400/10"
             spark={<CornerSpark data={impSpark} color="#22C55E" />}
+          />
+          <Kpi
+            label="Peak Day"
+            value={(peak?.clicks || 0).toLocaleString()}
+            sub="Best day"
+            subValue={peak?.date ? fmtShort(peak.date) : '\u2014'}
+            icon={<TrendingUp size={17} className="text-emerald-400" />}
+            iconBg="bg-emerald-400/10"
+            spark={<CornerSpark data={impSpark} color="#F59E0B" />}
+          />
+          <Kpi
+            label="Days Tracked"
+            value={String(stats.days_tracked)}
+            sub="Days with recorded data"
+            icon={<CalendarDays size={17} className="text-amber-400" />}
+            iconBg="bg-amber-400/10"
           />
         </section>
 
@@ -604,7 +625,7 @@ export default function PublisherStatsPage() {
             <div className="px-4 py-3.5 border-b border-[#1D2634]">
               <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
               <p className="text-xs text-[#8695A8] mt-0.5">
-                {filterActive ? 'Filtered by selected platforms' : 'Impressions, unique wins and conversions per day'}
+                {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS, conversions and CVR per day'}
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -615,8 +636,14 @@ export default function PublisherStatsPage() {
                     {prefs.show_impressions !== false && (
                       <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Impressions</th>
                     )}
-                    {prefs.show_valid_clicks !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Unique</th>
+                    {prefs.show_windows_clicks !== false && (
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Windows</th>
+                    )}
+                    {prefs.show_mac_clicks !== false && (
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Mac</th>
+                    )}
+                    {prefs.show_android_clicks !== false && (
+                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Android</th>
                     )}
                     {prefs.show_conversions !== false && (
                       <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
@@ -646,8 +673,15 @@ export default function PublisherStatsPage() {
                             />
                           </td>
                         )}
-                        {prefs.show_valid_clicks !== false && (
-                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.unique_wins.toLocaleString()}</td>
+                        {/* OS valid-click columns — admin picks which OSes to expose */}
+                        {prefs.show_windows_clicks !== false && (
+                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.windows_clicks.toLocaleString()}</td>
+                        )}
+                        {prefs.show_mac_clicks !== false && (
+                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.mac_clicks.toLocaleString()}</td>
+                        )}
+                        {prefs.show_android_clicks !== false && (
+                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
                           <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>

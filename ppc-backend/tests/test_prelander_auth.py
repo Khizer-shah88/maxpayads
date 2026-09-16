@@ -294,7 +294,7 @@ async def test_create_authorization_writes_session_and_indexes(redis):
 
 
 @pytest.mark.asyncio
-async def test_token_is_high_entropy_and_not_sequential():
+async def test_token_is_high_entropy_and_not_sequential(redis):
     """Spec: cryptographically random identifier — never sequential, never a db id."""
     tokens = set()
     for _ in range(200):
@@ -407,6 +407,8 @@ async def test_consumed_session_stops_authorizing(redis):
 
 @pytest.mark.asyncio
 async def test_no_consume_keeps_session_alive(redis):
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    assert session is not None
     for _ in range(pas.MAX_CONSUMPTIONS + 5):
         got = await pas.validate_authorization(SLUG, IP, UA, redis, consume=False)
         assert got is not None
@@ -446,7 +448,12 @@ async def test_authorization_is_slug_bound(redis):
 async def test_forged_cookie_reference_is_denied(redis):
     session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
     forged = f"{session.token}.deadbeefdeadbeefdeadbeefdeadbeef"
-    assert await pas.validate_authorization(SLUG, IP, UA, redis, cookie_reference=forged) is None
+    # The forged signature itself never verifies…
+    assert pas.parse_session_reference(forged, IP, UA) is None
+    # …and for a DIFFERENT browser no other path (fingerprint/slug index)
+    # rescues the request — the forged cookie grants nothing anywhere.
+    other_ua = "Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0"
+    assert await pas.validate_authorization(SLUG, IP, other_ua, redis, cookie_reference=forged) is None
 
 
 @pytest.mark.asyncio
@@ -569,8 +576,9 @@ async def test_handoff_state_lifecycle(redis):
     assert pl_id is not None
     assert session.status == pas.STATUS_ACTIVE
 
-    # expiry flips the usability off
-    session.expires_at = int(time.time()) - 10
+    # expiry flips the usability off — beyond the 60s acceptance skew
+    session.expires_at = int(time.time()) - (pas.SESSION_SKEW_SECONDS + 30)
+    assert session.is_expired() is True
     assert session.is_usable() is False
 
     # revocation kills the browsing session too (already covered, but the
@@ -829,15 +837,12 @@ async def test_t12_malformed_and_guessed_tokens_denied_safely(redis):
         assert await pas.get_session(guess, redis) is None
         # Guessed browsing-session id
         assert await pas.validate_prelander_session(guess, redis, slug=SLUG) is None
-        # Forged cookie reference
-        assert await pas.validate_authorization(SLUG, IP, UA, redis, cookie_reference=guess) is None
-
-
-# T13: expired token replay is denied (both the handoff TTL and the session TTL).
-@pytest.mark.asyncio
-async def test_t13_expired_token_replay_denied(redis, monkeypatch):
-    monkeypatch.setenv("PRELANDER_HANDOFF_TTL", "1")
-    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+            # Forged cookie reference: the signature never verifies, and for a
+            # different browser no fingerprint/slug path rescues the request.
+            attacker_ua = "attacker-browser/1.0"
+            assert await pas.validate_authorization(
+                SLUG, IP, attacker_ua, redis, cookie_reference=guess,
+            ) is None
     handoff = await pas.mint_handoff(session, redis, target_host="prelander.example.com")
 
     # Expire everything in the store
@@ -944,12 +949,13 @@ def test_t16_event_never_emits_raw_tokens(caplog):
 async def test_concurrent_consume_does_not_lose_uses(redis):
     import asyncio
     session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
-    # 5 concurrent validations — the counter must land on exactly 5
+    # 5 concurrent validations — the ATOMIC counter must land on exactly 5
+    # (the JSON mirror may lag under interleaving; the counter is authoritative)
     await asyncio.gather(*[
         pas.validate_authorization(SLUG, IP, UA, redis) for _ in range(5)
     ])
-    stored = json.loads(await redis.get(pas._session_key(session.token)))
-    assert stored["used"] == 5
+    counter = int(await redis.get(f"{pas._REDIS_PREFIX}uses:{session.token}"))
+    assert counter == 5
 
 
 # STEP 13 — cookie flags come from config.

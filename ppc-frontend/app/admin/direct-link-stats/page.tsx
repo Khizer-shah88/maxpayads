@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Edit3, CheckCircle, Copy, RefreshCw,
-  Plus, Trash2, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2,
+  Plus, Trash2, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2, Settings2, History,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
@@ -28,6 +28,8 @@ interface DirectLink {
   total_clicks: number
   total_conversions: number
   today_conversions: number
+  stats_domain?: string
+  preferences?: Partial<StatsPreferences>
   created_at?: string | null
 }
 
@@ -45,6 +47,19 @@ interface ManualOverride {
   link_id?: string
   manual_conversions: number
   reason: string
+}
+
+// One row of the admin-entered conversion history (editable / deletable)
+interface ManualConversionRow {
+  id: string
+  date: string
+  publisher_id: string
+  publisher_name?: string
+  link_id?: string | null
+  link_name?: string
+  conversions: number
+  reason: string
+  updated_at?: string | null
 }
 
 interface StatsPreferences {
@@ -181,6 +196,23 @@ export default function DirectLinkStatsPage() {
   const [savingDomain, setSavingDomain] = useState(false)
   const [cleaningUp, setCleaningUp] = useState(false)
 
+  // Per-publisher stats-domain editor (fisherhub-style dedicated domain)
+  const [pubDomainModal, setPubDomainModal] = useState<{ pubId: string; pubName: string; value: string } | null>(null)
+  const [savingPubDomain, setSavingPubDomain] = useState(false)
+
+  // Per-publisher stats-page preferences editor (what the pub sees on /public-stats)
+  const [prefsModal, setPrefsModal] = useState<{ pubId: string; pubName: string; linkId: string; prefs: StatsPreferences } | null>(null)
+  const [savingPrefs, setSavingPrefs] = useState(false)
+
+  // Conversion history browser/editor (old conversions editable + deletable)
+  const [historyModal, setHistoryModal] = useState<{ pubId: string; pubName: string } | null>(null)
+  const [historyRows, setHistoryRows] = useState<ManualConversionRow[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [editingConversion, setEditingConversion] = useState<ManualConversionRow | null>(null)
+  const [editConvValue, setEditConvValue] = useState(0)
+  const [editConvReason, setEditConvReason] = useState('')
+  const [savingConversion, setSavingConversion] = useState(false)
+
   // Date filter
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
@@ -284,6 +316,107 @@ export default function DirectLinkStatsPage() {
       toast.error('Failed to save stats domain')
     } finally {
       setSavingDomain(false)
+    }
+  }
+
+  // ── Per-publisher dedicated stats domain (e.g. fisherhub.com) ─────────────
+  const openPubDomain = (pub: { id: string; name: string }) => {
+    const link = links.find(l => l.publisher_id === pub.id && l.status !== 'archived')
+    setPubDomainModal({ pubId: pub.id, pubName: pub.name, value: link?.stats_domain || '' })
+  }
+
+  const savePubDomain = async () => {
+    if (!pubDomainModal) return
+    setSavingPubDomain(true)
+    try {
+      const link = links.find(l => l.publisher_id === pubDomainModal.pubId && l.status !== 'archived')
+      if (!link) { toast.error('No active link for this publisher'); return }
+      await directLinkApi.update(link.id, { stats_domain: pubDomainModal.value.trim() })
+      toast.success(pubDomainModal.value.trim()
+        ? `Dedicated stats domain saved for ${pubDomainModal.pubName}`
+        : 'Dedicated domain cleared — publisher falls back to the global stats domain')
+      setPubDomainModal(null)
+      loadData()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to save the stats domain')
+    } finally {
+      setSavingPubDomain(false)
+    }
+  }
+
+  // ── Per-publisher stats preferences (what the pub sees on /public-stats) ──
+  const openPrefs = (pub: { id: string; name: string }) => {
+    const link = links.find(l => l.publisher_id === pub.id && l.status !== 'archived')
+    if (!link) { toast.error('No active link for this publisher'); return }
+    const current = link.preferences || {}
+    setPrefsModal({
+      pubId: pub.id,
+      pubName: pub.name,
+      linkId: link.id,
+      prefs: { ...DEFAULT_PREFS, ...current },
+    })
+  }
+
+  const savePrefs = async () => {
+    if (!prefsModal) return
+    setSavingPrefs(true)
+    try {
+      await directLinkApi.update(prefsModal.linkId, { preferences: prefsModal.prefs })
+      toast.success(`Stats preferences saved for ${prefsModal.pubName}`)
+      setPrefsModal(null)
+      loadData()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to save preferences')
+    } finally {
+      setSavingPrefs(false)
+    }
+  }
+
+  // ── Conversion history (old entries editable + deletable) ─────────────────
+  const openHistory = async (pub: { id: string; name: string }) => {
+    setHistoryModal({ pubId: pub.id, pubName: pub.name })
+    setHistoryLoading(true)
+    setEditingConversion(null)
+    try {
+      const res = await statsProfileApi.listManualConversions({ publisher_id: pub.id })
+      setHistoryRows(res.data?.conversions || [])
+    } catch {
+      toast.error('Failed to load conversion history')
+      setHistoryRows([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const saveConversionEdit = async () => {
+    if (!editingConversion) return
+    if (editConvValue < 0) { toast.error('Conversions must be ≥ 0'); return }
+    if (!editConvReason.trim()) { toast.error('Reason is required'); return }
+    setSavingConversion(true)
+    try {
+      await statsProfileApi.updateManualConversion(editingConversion.id, {
+        conversions: editConvValue,
+        reason: editConvReason.trim(),
+      })
+      toast.success('Conversion entry updated')
+      setEditingConversion(null)
+      // Refresh the open history list
+      const res = await statsProfileApi.listManualConversions({ publisher_id: editingConversion.publisher_id })
+      setHistoryRows(res.data?.conversions || [])
+    } catch {
+      toast.error('Failed to update the conversion entry')
+    } finally {
+      setSavingConversion(false)
+    }
+  }
+
+  const deleteConversion = async (row: ManualConversionRow) => {
+    try {
+      await statsProfileApi.deleteManualConversion(row.id)
+      toast.success(`Conversion entry for ${row.date} deleted`)
+      setHistoryRows(prev => prev.filter(r => r.id !== row.id))
+    } catch {
+      toast.error('Failed to delete the conversion entry')
     }
   }
 
@@ -643,7 +776,7 @@ export default function DirectLinkStatsPage() {
                   </div>
                 </div>
 
-                <div className="flex gap-2 pt-2 border-t border-gray-100">
+                <div className="flex gap-2 pt-2 border-t border-gray-100 flex-wrap">
                   <button
                     onClick={e => { e.stopPropagation(); generateStatsUrl(pub.id, pub.name) }}
                     disabled={generatingShare === pub.id}
@@ -655,6 +788,29 @@ export default function DirectLinkStatsPage() {
                     }
                   </button>
                   <button
+                    onClick={e => { e.stopPropagation(); openPrefs(pub) }}
+                    disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                    title="Choose what this publisher sees on their stats page (OS columns, conversions, CR…)"
+                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/5 border border-gray-200 transition-colors disabled:opacity-40"
+                  >
+                    <Settings2 size={13} />
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); openPubDomain(pub) }}
+                    disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                    title="Assign a dedicated white-label stats domain for this publisher"
+                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 border border-gray-200 transition-colors disabled:opacity-40"
+                  >
+                    <Globe2 size={13} />
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); openHistory(pub) }}
+                    title="View / edit / delete entered conversions (including old dates)"
+                    className="flex items-center justify-center p-1.5 rounded-lg text-gray-500 hover:text-amber-600 hover:bg-amber-50 border border-gray-200 transition-colors"
+                  >
+                    <History size={13} />
+                  </button>
+                  <button
                     onClick={e => { e.stopPropagation(); regenerateStatsUrl(pub.id, pub.name) }}
                     disabled={regenerating === pub.id}
                     title="Generate a new stats URL — the old link expires immediately; settings and data are kept"
@@ -662,17 +818,6 @@ export default function DirectLinkStatsPage() {
                   >
                     {regenerating === pub.id ? <Spinner size={13} /> : <RefreshCw size={13} />}
                   </button>
-                  <button
-                    onClick={e => {
-                      e.stopPropagation()
-                      setLinkForm({ ...EMPTY_LINK_FORM, publisher_id: pub.id })
-                      setShowCreateModal(true)
-                    }}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 border border-gray-200 transition-colors"
-                  >
-                    <Plus size={12} /> Add Link
-                  </button>
-                  {/* Delete all links for this publisher */}
                   <button
                     onClick={e => {
                       e.stopPropagation()
@@ -1150,6 +1295,219 @@ export default function DirectLinkStatsPage() {
               <p className="text-xs text-gray-400 text-center mt-4">
                 Anyone opening an expired link sees only “This statistics link has expired.”
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Per-Publisher Stats Domain Modal ─────────────────────────────── */}
+        {pubDomainModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-bold text-gray-900">Dedicated Stats Domain</h3>
+                <button onClick={() => setPubDomainModal(null)}
+                  className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 mb-5">
+                Assign a unique white-label domain for <strong className="text-gray-800">{pubDomainModal.pubName}</strong>&apos;s
+                public stats page. Leave empty to use the global stats domain.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Stats Domain</label>
+                  <input
+                    value={pubDomainModal.value}
+                    onChange={e => setPubDomainModal(p => p ? { ...p, value: e.target.value } : p)}
+                    placeholder="e.g. fisherhub.com  (no https://)"
+                    className={inp}
+                  />
+                  {pubDomainModal.value.trim() && (
+                    <p className="text-[11px] text-gray-400 mt-1.5">
+                      Share links will look like:{' '}
+                      <code className="bg-gray-100 px-1.5 py-0.5 rounded">
+                        https://{pubDomainModal.value.trim()}/public-stats/…
+                      </code>
+                    </p>
+                  )}
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    Point this domain&apos;s DNS to the same server and make sure it is listed in
+                    the portal/infra exemptions (public-stats paths are already exempt from the portal gate).
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button onClick={savePubDomain} disabled={savingPubDomain}
+                  className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300">
+                  {savingPubDomain ? <Spinner size={16} /> : 'Save Domain'}
+                </button>
+                <button onClick={() => setPubDomainModal(null)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Per-Publisher Stats Preferences Modal ────────────────────────── */}
+        {prefsModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-bold text-gray-900">Stats Page Preferences</h3>
+                <button onClick={() => setPrefsModal(null)}
+                  className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 mb-5">
+                Choose exactly what <strong className="text-gray-800">{prefsModal.pubName}</strong> sees on their shared
+                stats page. OS toggles control the Valid Windows / Valid Mac / Valid Android columns.
+              </p>
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+                <div className="grid grid-cols-1 gap-1">
+                  {(
+                    [
+                      { key: 'show_impressions', label: 'Show Impressions' },
+                      { key: 'show_clicks', label: 'Show Clicks' },
+                      { key: 'show_windows_clicks', label: 'Show Windows Valid Clicks column' },
+                      { key: 'show_mac_clicks', label: 'Show Mac Valid Clicks column' },
+                      { key: 'show_android_clicks', label: 'Show Android Valid Clicks column' },
+                      { key: 'show_valid_clicks', label: 'Show Valid Clicks (Unique Wins)' },
+                      { key: 'show_invalid_clicks', label: 'Show Invalid Clicks' },
+                      { key: 'show_conversions', label: 'Show Conversions' },
+                      { key: 'show_cr', label: 'Show Conversion Rate' },
+                      { key: 'show_os', label: 'Show OS Statistics / filters' },
+                      { key: 'show_country', label: 'Show Country Statistics' },
+                      { key: 'show_device', label: 'Show Device Statistics' },
+                      { key: 'show_daily_breakdown', label: 'Show Daily Breakdown Table' },
+                    ] as { key: keyof StatsPreferences; label: string }[]
+                  ).map(({ key, label }) => (
+                    <label key={key} className="flex items-center justify-between gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-white transition-colors">
+                      <span className="text-sm text-gray-700">{label}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPrefsModal(p => p ? ({ ...p, prefs: { ...p.prefs, [key]: !p.prefs[key] } }) : p)}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                          prefsModal.prefs[key] ? 'bg-primary' : 'bg-gray-200'
+                        }`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                          prefsModal.prefs[key] ? 'translate-x-4' : 'translate-x-0'
+                        }`} />
+                      </button>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button onClick={savePrefs} disabled={savingPrefs}
+                  className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300">
+                  {savingPrefs ? <Spinner size={16} /> : 'Save Preferences'}
+                </button>
+                <button onClick={() => setPrefsModal(null)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Conversion History Modal (old entries editable) ──────────────── */}
+        {historyModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl border border-gray-100 max-h-[92vh] flex flex-col">
+              <div className="flex items-center justify-between p-5 border-b border-gray-100">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Conversion History</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">{historyModal.pubName} — entered conversions, newest first</p>
+                </div>
+                <button onClick={() => setHistoryModal(null)}
+                  className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto flex-1">
+                {historyLoading ? (
+                  <div className="flex justify-center py-16"><Spinner size={28} /></div>
+                ) : historyRows.length === 0 ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <History size={36} className="mx-auto mb-3 opacity-20" />
+                    <p className="text-sm">No conversion entries yet for this publisher</p>
+                    <p className="text-xs mt-1">Use the ✏️ button on a link row to add conversions for any date.</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
+                      <tr>
+                        {['Date', 'Link', 'Conversions', 'Reason', ''].map(h => (
+                          <th key={h} className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {historyRows.map(row => (
+                        <tr key={row.id} className="hover:bg-gray-50/50">
+                          {editingConversion?.id === row.id ? (
+                            <>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(row.date)}</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs">{row.link_name || 'All Links'}</td>
+                              <td className="px-4 py-3">
+                                <input type="number" min={0} value={editConvValue}
+                                  onChange={e => setEditConvValue(parseInt(e.target.value) || 0)}
+                                  className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input value={editConvReason}
+                                  onChange={e => setEditConvReason(e.target.value)}
+                                  placeholder="Reason…"
+                                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <button onClick={saveConversionEdit} disabled={savingConversion}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-primary hover:bg-primary-dark disabled:opacity-60 mr-1.5">
+                                  {savingConversion ? 'Saving…' : 'Save'}
+                                </button>
+                                <button onClick={() => setEditingConversion(null)}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 border border-gray-200 hover:bg-gray-50">
+                                  Cancel
+                                </button>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(row.date)}</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs max-w-[120px] truncate">{row.link_name || 'All Links'}</td>
+                              <td className="px-4 py-3 font-mono font-bold text-gray-900">{row.conversions.toLocaleString()}</td>
+                              <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate" title={row.reason}>{row.reason || '—'}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <button
+                                  onClick={() => { setEditingConversion(row); setEditConvValue(row.conversions); setEditConvReason(row.reason || '') }}
+                                  title="Edit this conversion entry"
+                                  className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 mr-1"
+                                >
+                                  <Edit3 size={13} />
+                                </button>
+                                <button
+                                  onClick={() => deleteConversion(row)}
+                                  title="Delete this conversion entry"
+                                  className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
         )}

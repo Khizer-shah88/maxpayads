@@ -29,6 +29,9 @@ class DirectLinkCreate(BaseModel):
     daily_conversion_cap: int = Field(default=0, ge=0)
     # Stats page preferences (what to show/hide to the publisher)
     preferences: Optional[dict] = None
+    # Optional PER-PUBLISHER white-label stats domain for this link's share URL
+    # (overrides the global stats domain). Bare hostname, no protocol.
+    stats_domain: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -72,6 +75,12 @@ class DirectLinkUpdate(BaseModel):
     status: Optional[DirectLinkStatus] = None
     notes: Optional[str] = None
     daily_conversion_cap: Optional[int] = Field(default=None, ge=0)
+    # Stats page preferences (what to show/hide to the publisher) — editable
+    # after creation from the admin Direct Link Stats page.
+    preferences: Optional[dict] = None
+    # Optional PER-PUBLISHER white-label stats domain (e.g. fisherhub.com).
+    # When set it overrides the global stats domain for this link's share URL.
+    stats_domain: Optional[str] = None
 
     @field_validator("destination_url")
     @classmethod
