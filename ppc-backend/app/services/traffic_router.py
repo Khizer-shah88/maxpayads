@@ -422,21 +422,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         if ctx is not None:
             ctx.skip_prelander = True
         
-        # When a chain is configured, use its Anchor as the entry point even in
-        # bypass mode: the chain middleware drives the hops (session cookie at
-        # the Anchor, validation at Inter/extra hops), while the prelander is
-        # skipped — the /d page on the Anchor's next hop reads the slug and
-        # 302s straight to the Campaign URL.
-        anchor_base = chain.get("anchor_domain") if chain else None
+        # Spec flow (Bypass ON): Anchor (Smartlink host) → Inter /d/{slug}
+        # (0.75s loader) → Campaign URL. The /d page on the Inter domain reads
+        # bypass_redirect_url from /domain-type and goes straight to the
+        # Campaign URL — the landing page is never shown. The first hop built
+        # here is the INTER domain; the anchor is the domain /click already ran
+        # on, so sending the visitor back there loops on the same domain.
         inter_base = chain_inter_domain(chain) if chain else None
         hops = chain_hop_sequence(chain)
         
         entry_base = None
-        if anchor_base:
-            # Chain configured → Anchor domain is the entry (middleware flow)
-            entry_base = f"https://{anchor_base}"
-        elif inter_base:
-            # Chain Inter hop
+        if inter_base:
+            # Chain Inter hop (or classic inter resolution below when no chain)
             entry_base = inter_base.rstrip("/")
         elif hops:
             # Chain defines extra hops but no Inter — first hop is the entry
@@ -458,7 +455,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             offer_id_b = metadata.get("source_id", "") if metadata.get("rule_type") == "offer" else ""
             slug_b = build_prelander_slug(os_param_b, str(campaign_id), offer_id_b, country_code)
             dest = f"{entry_base}/d/{slug_b}"
-            logger.info("[ROUTE] BYPASS ON: via %s → campaign %s", dest, clean_url)
+            logger.info("[ROUTE] BYPASS ON: via Inter %s → campaign %s", dest, clean_url)
             if ctx is not None:
                 ctx.inter_url = entry_base
             _record(
@@ -468,7 +465,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             )
             _record(ctx, STAGE_PRELANDER, "skipped_bypass_via_inter", source=bypass_source, url=clean_url, inter=entry_base)
             return dest, referrer_suppression
-        logger.info(f"[ROUTE] BYPASS ON, no chain/inter domain: direct to campaign URL: {clean_url}")
+        logger.info(f"[ROUTE] BYPASS ON, no inter domain: direct to campaign URL: {clean_url}")
         _record(ctx, STAGE_CHAIN, "not_needed_bypass")
         _record(ctx, STAGE_PRELANDER, "skipped_bypass", source=bypass_source, url=clean_url)
         return clean_url, referrer_suppression
@@ -562,21 +559,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             _record(ctx, STAGE_PRELANDER, "skipped_no_lander_url", url=resolved_offer_url)
             return resolved_offer_url, referrer_suppression
 
-        # Entry point for the prelander hop. Per the documented redirection
-        # architecture (Bypass OFF):
-        #   Publisher Smartlink → Anchor → Inter → [extra hops] → Prelander → Campaign URL
-        # The Anchor domain is the entry point when a chain is configured: the
-        # chain middleware generates the session cookie there and drives the
-        # hops through Inter → extra domains → Prelander pool. Without a chain,
-        # the visitor lands on the Inter domain (classic flow); with neither,
-        # on the first chain hop or the Prelander domain directly.
+        # Entry point for the prelander hop. Spec flow (Bypass OFF):
+        #   Anchor (Smartlink host, /click runs here) → Inter /d/{slug} (0.75s
+        #   loader) → Landing Page (or Campaign URL when bypass is ON).
+        # The visitor is ALREADY on the Anchor domain — /click executes there —
+        # so the first hop this router builds must be the INTER domain, never
+        # the anchor again (sending them to anchor/d/{slug} loops on the same
+        # domain). Chain extra hops come after Inter, traversed by the
+        # prelander API; the Prelander pool provides the final landing page.
         hops = chain_hop_sequence(chain)
-        if anchor_base:
-            entry_domain = f"https://{anchor_base}".rstrip("/")
-            logger.info("[ROUTE] Chain anchor domain (entry): %s", entry_domain)
-        elif intermediate_base:
+        if intermediate_base:
             entry_domain = intermediate_base.rstrip("/")
-            logger.info("[ROUTE] Inter domain (entry, no chain): %s", entry_domain)
+            logger.info("[ROUTE] Inter domain (entry): %s", entry_domain)
         elif hops:
             from app.services.domain_service import domain_to_url as _dtu
             hop_url = _dtu(hops[0])
@@ -588,7 +582,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
                 logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
         elif last_base:
             entry_domain = last_base.rstrip("/")
-            logger.info("[ROUTE] No chain/inter, entering on prelander: %s", entry_domain)
+            logger.info("[ROUTE] No inter domain configured, entering on prelander: %s", entry_domain)
         else:
             entry_domain = lander_url.rstrip("/")
             logger.info("[ROUTE] Using legacy lander URL: %s", entry_domain)
@@ -604,8 +598,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             ctx, STAGE_PRELANDER, "prelander",
             entry_domain=entry_domain,
             entry_type=(
-                "anchor" if anchor_base
-                else "inter" if intermediate_base
+                "inter" if intermediate_base
                 else "chain_hop" if (hops and not last_base)
                 else "prelander" if last_base
                 else "legacy_lander"

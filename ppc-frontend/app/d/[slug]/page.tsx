@@ -49,9 +49,9 @@ export default function PrelanderSlugPage() {
         )
         if (dtRes.ok) {
           const dt = await dtRes.json()
-          // Bypass ON (spec): Anchor → Inter (1.5s dwell) → Campaign URL.
-          // We're on the Inter domain — hold the 1.5s loader, then go straight
-          // to the Campaign URL. The Prelander page is never shown.
+          // Bypass ON (spec): Anchor → Inter (0.75s dwell) → Campaign URL.
+          // We're on the Inter domain — hold the 0.75s loader, then go straight
+          // to the Campaign URL. The landing page is never shown.
           if (dt.bypass_redirect_url) {
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
@@ -107,40 +107,16 @@ export default function PrelanderSlugPage() {
     document.title = 'Download Ready'
   }, [])
 
-  // Shown during initial data fetch OR when transitioning between domains
-  // Unified loader design - clean, professional, consistent
+  // Simple professional loader — shown during the data fetch and during the
+  // 0.75s Inter-domain dwell. Nothing extra: one spinner, one line of text.
   if (loading || transitioning) {
-    const message = transitioning 
-      ? { title: "Redirecting", subtitle: "Preparing your secure connection..." }
-      : { title: "Loading", subtitle: "Please wait..." }
-    
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
-        <div className="flex flex-col items-center gap-8">
-          {/* Modern animated loader */}
-          <div className="relative">
-            {/* Outer rotating ring */}
-            <div className="w-20 h-20 rounded-full border-[3px] border-slate-200/50 absolute inset-0"></div>
-            {/* Inner rotating segment */}
-            <div className="w-20 h-20 rounded-full border-[3px] border-transparent border-t-blue-500 border-r-blue-500 animate-spin absolute inset-0"></div>
-            {/* Center dot */}
-            <div className="w-20 h-20 flex items-center justify-center">
-              <div className="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></div>
-            </div>
-          </div>
-          
-          {/* Loading text */}
-          <div className="text-center space-y-2">
-            <h2 className="text-slate-800 text-xl font-semibold tracking-tight">{message.title}</h2>
-            <p className="text-slate-500 text-sm">{message.subtitle}</p>
-          </div>
-          
-          {/* Subtle loading dots animation */}
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0ms' }}></span>
-            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '150ms' }}></span>
-            <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '300ms' }}></span>
-          </div>
+      <div className="min-h-screen flex items-center justify-center bg-[#f7f8fa]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">
+            {transitioning ? 'Redirecting…' : 'Loading…'}
+          </p>
         </div>
       </div>
     )
