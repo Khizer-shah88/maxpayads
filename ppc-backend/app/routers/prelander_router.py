@@ -532,6 +532,28 @@ async def get_prelander_data_legacy(
     return await _get_prelander_data(request, os, db)
 
 
+@router.get("/preview")
+async def preview_prelander(
+    request: Request,
+    os: str = Query("windows", description="OS type: windows or mac"),
+    db=Depends(get_db),
+):
+    """
+    Preview endpoint for testing prelander templates WITHOUT authorization.
+    
+    This endpoint bypasses the click-based authorization system to allow
+    direct testing of template assignments on prelander domains.
+    
+    Usage: Visit any prelander domain at /api/prelander/preview?os=windows
+    """
+    return await _get_prelander_data(
+        request, 
+        os, 
+        db,
+        skip_auth=True
+    )
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # STEP 4 — CROSS-DOMAIN ONE-TIME HANDOFF ENDPOINTS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -660,8 +682,13 @@ async def _get_prelander_data(
     offer_id: Optional[str] = None,
     campaign_id: Optional[str] = None,
     country_code: Optional[str] = None,
+    skip_auth: bool = False,
 ):
-    """Core prelander data resolution logic."""
+    """Core prelander data resolution logic.
+    
+    Args:
+        skip_auth: If True, bypasses authorization for testing/preview purposes
+    """
     os_lower = os.lower()
 
     # Prelander template override — if the host IS a Prelander domain, use its
