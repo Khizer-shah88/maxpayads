@@ -614,7 +614,9 @@ export default function RedirectChainsPage() {
                     Pre-populated with every active Prelander domain — remove the ones this chain should not use.
                   </p>
                   
-                  {/* Add Domain Selector */}
+                  {/* Add Domain Selector — lists ALL active Prelander domains
+                      (pool entries are pre-populated; picking an already-added
+                      domain is a no-op) */}
                   <div className="flex gap-2 mb-3">
                     <select
                       className={`${inputClass} flex-1`}
@@ -626,25 +628,12 @@ export default function RedirectChainsPage() {
                       }}
                     >
                       <option value="">Add domain to pool...</option>
-                      {prelanderDomains
-                        .filter(d => !form.prelander_pool.includes(d.domain))
-                        .map(domain => (
-                          <option key={domain.id} value={domain.domain}>
-                            {domain.domain}
-                          </option>
-                        ))}
+                      {prelanderDomains.map(domain => (
+                        <option key={domain.id} value={domain.domain}>
+                          {domain.domain}{form.prelander_pool.includes(domain.domain) ? '  ✓ (in pool)' : ''}
+                        </option>
+                      ))}
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => setForm(prev => ({
-                        ...prev,
-                        prelander_pool: Array.from(new Set([...prev.prelander_pool, ...prelanderDomainNames]))
-                      }))}
-                      title="Add every active Prelander domain to the pool"
-                      className="px-4 py-2.5 rounded-xl text-sm font-medium text-primary border border-primary/20 hover:bg-primary/5 whitespace-nowrap"
-                    >
-                      Add All
-                    </button>
                   </div>
 
                   {/* Pool Display */}
