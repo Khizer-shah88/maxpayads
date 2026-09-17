@@ -80,25 +80,40 @@ export default function PrelanderSlugPage() {
         return 
       }
 
+      // ═══════════════════════════════════════════════════════════════════
+      // SECURITY: Strict new tab blocking
+      // ═══════════════════════════════════════════════════════════════════
+      const MARKER = 'pldr_ok'
+      const hasMarker = sessionStorage.getItem(MARKER)
+      
+      // Simple rule: If no marker, BLOCK (except will be set immediately below for first load)
+      // If marker exists, ALLOW (this is a reload)
+      if (hasMarker) {
+        console.log('[PRELANDER SECURITY] Marker found - reload allowed')
+      } else {
+        // No marker - this is either first load OR new tab paste
+        // Set marker NOW (will exist for reloads but NOT in new tabs)
+        sessionStorage.setItem(MARKER, '1')
+        console.log('[PRELANDER SECURITY] First load - marker set')
+        
+        // Additional check: If we're NOT coming from a redirect, block
+        // New tab paste will have document.referrer empty or same domain
+        const ref = document.referrer
+        const sameOrigin = ref && new URL(ref).hostname === window.location.hostname
+        
+        // If opening directly (no referrer or same domain) on FIRST load without marker
+        // This is a pasted URL - BLOCK IT
+        if (!ref || sameOrigin) {
+          console.log('[PRELANDER SECURITY] BLOCKED - Direct access or same-domain (pasted URL)')
+          console.log('[PRELANDER SECURITY] Referrer:', ref)
+          setDenied(true)
+          setLoading(false)
+          return
+        }
+      }
+
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
-      
-      // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: Check if this tab has authorization
-      // ═══════════════════════════════════════════════════════════════════
-      // SessionStorage is per-tab: set on first successful load, checked on all loads
-      const AUTH_KEY = 'prelander_authorized'
-      const isAuthorized = sessionStorage.getItem(AUTH_KEY) === 'yes'
-      
-      if (!isAuthorized) {
-        // This is either:
-        // 1. First legitimate load (will set marker after backend auth succeeds)
-        // 2. New tab paste (backend will deny, we'll never set marker)
-        console.log('[PRELANDER SECURITY] No auth marker - will validate with backend')
-      } else {
-        // Has marker - this tab loaded content before (reload)
-        console.log('[PRELANDER SECURITY] Auth marker present - reload allowed')
-      }
 
       // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
       // slug == "session": mounted at the bare prelander root. No hop
@@ -321,13 +336,6 @@ export default function PrelanderSlugPage() {
 
         console.log('[PRELANDER SUCCESS] Setting prelander data')
         setData(json)
-        // SECURITY: Mark this tab as authorized after successful backend validation
-        // SessionStorage is per-tab: survives reload but NOT in new tabs
-        // New tab paste will have no marker and backend will deny access
-        try { 
-          sessionStorage.setItem('prelander_authorized', 'yes')
-          console.log('[PRELANDER SECURITY] Authorization marker set for this tab')
-        } catch { /* storage blocked */ }
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
         // IMMEDIATELY (before this render paints the data) so the slug is
