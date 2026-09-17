@@ -212,10 +212,22 @@ async def get_authorized_session(
         return None
 
 
-async def _denied_response():
-    """STEP 6 configurable safe fallback (never leaks protected info)."""
+async def _denied_response(request: Optional[Request] = None):
+    """
+    STEP 6 configurable safe fallback (never leaks protected info).
+
+    SOURCE FALLBACK (spec §4): with the request available, an unauthorized
+    visit that arrived from a SAFE external source is 302'd back to that
+    source page — no preview, no app error page, no loop. Without a safe
+    source the least-revealing configured response is served.
+    """
     from app.services.prelander_auth_service import build_denied_response
-    return build_denied_response()
+    from app.services.domain_service import normalize_domain
+
+    own_host = ""
+    if request is not None:
+        own_host = normalize_domain(request.headers.get("host", "") or "")
+    return build_denied_response(request=request, own_host=own_host)
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
@@ -458,13 +470,13 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
 
         redis = get_redis_safe()
         if redis is None:
-            return await _denied_response()
+            return await _denied_response(request)
 
         pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
         session = await pas.validate_prelander_session(pl_session_cookie, redis)
         if session is None:
             logger.info("[PRELANDER] Clean-URL resolve denied (no valid session cookie)")
-            return await _denied_response()
+            return await _denied_response(request)
 
         # The session IS the authorization — content follows the session
         # context (same hostname, different campaigns per visitor, STEP 10).
@@ -507,7 +519,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             decoded_bypass = _decode_slug(slug)
             if decoded_bypass:
                 if not await _request_is_authorized(request, slug, db):
-                    return await _denied_response()
+                    return await _denied_response(request)
                 bypass_url = await _resolve_bypass_destination(
                     db, decoded_bypass.get("campaign_id"), decoded_bypass.get("offer_id")
                 )
@@ -555,12 +567,12 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
     )
     if not auth_session or auth_session is True:
-        return await _denied_response()
+        return await _denied_response(request)
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
     if not decoded:
-        return await _denied_response()
+        return await _denied_response(request)
 
     # STEP 10 — same hostname, different campaigns: the CONTENT comes from
     # the VALIDATED server-side session, never from the hostname. Two visitors
@@ -633,7 +645,7 @@ async def get_prelander_data_legacy(
     direct calls get the STEP 6 denied fallback — revealing nothing.
     """
     if not await _request_is_authorized(request, "", db):
-        return await _denied_response()
+        return await _denied_response(request)
     return await _get_prelander_data(request, os, db)
 
 
@@ -684,11 +696,11 @@ async def mint_handoff_token(
 
     session = await get_authorized_session(request, slug, db)
     if not session or session is True:
-        return await _denied_response()
+        return await _denied_response(request)
 
     redis = get_redis_safe()
     if redis is None:
-        return await _denied_response()
+        return await _denied_response(request)
 
     # STEP 15 — per-IP limiter on the token-minting surface.
     from app.utils.ip_utils import get_client_ip
@@ -703,11 +715,11 @@ async def mint_handoff_token(
     # when the browser asks for anything the click was not routed to.
     host = pas.resolve_handoff_target(session, normalize_domain(target_host or ""))
     if host is None:
-        return await _denied_response()
+        return await _denied_response(request)
 
     handoff = await pas.mint_handoff(session, redis, target_host=host)
     if not handoff:
-        return await _denied_response()
+        return await _denied_response(request)
 
     return {"success": True, "handoff": handoff}
 
@@ -739,7 +751,7 @@ async def prelander_bootstrap(
 
     redis = get_redis_safe()
     if redis is None:
-        return await _denied_response()
+        return await _denied_response(request)
 
     headers = dict(request.headers)
     from app.utils.ip_utils import get_client_ip
@@ -759,19 +771,19 @@ async def prelander_bootstrap(
     )
     if session is None:
         logger.info("[PRELANDER-AUTH] Handoff exchange rejected (token consumed or invalid)")
-        return await _denied_response()
+        return await _denied_response(request)
 
     # Establish the prelander-domain browsing session (STEP 7 part B).
     pl_session_id = await pas.establish_prelander_session(session, redis)
     if not pl_session_id:
-        return await _denied_response()
+        return await _denied_response(request)
 
     # CLEAN FINAL URL (spec): the visible prelander URL must be
-    # https://prelander-domain.com/ — no slug, no ids, no routing info.
-    # The browsing-session cookie now carries everything server-side; the
-    # root page resolves its content from that session ("session" sentinel).
-    # If the exchange arrived without a slug the /d fallback still applies.
-    dest = "/" if slug else "/d/"
+    # https://prelander-domain.com/ — no slug, no ids, no routing info, at
+    # every stage including this redirect. The slug param is legacy and
+    # IGNORED: the session's slug binding already pins the route server-side,
+    # so the clean root is the destination whether or not a slug was passed.
+    dest = "/"
     response = RedirectResponse(url=dest, status_code=302)
     response.set_cookie(
         key=pas.PL_SESSION_COOKIE,

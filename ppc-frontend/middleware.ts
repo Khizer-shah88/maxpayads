@@ -116,23 +116,17 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // /_auth/{handoff} is a FastAPI route (nginx rewrites it to
   // /prelander/_auth/…). If the request arrives HERE, the domain's nginx block
-  // is missing the /_auth/ location — without this recovery the visitor would
-  // hit Next.js's own 404 and the whole redirect flow dies at the prelander
-  // hop. Recover by redirecting to the clean /d/{slug}: the server-side
-  // fingerprint/slug binding still authorizes the visitor there, so the
-  // prelander renders normally (without the prelander-domain cookie, which
-  // only the real bootstrap could mint).
+  // is missing the /_auth/ location. Recover WITHOUT ever exposing the slug:
+  // redirect to the clean ROOT — the browsing-session cookie was already minted
+  // by the backend resolve (fingerprint-bound), and the /d/session sentinel
+  // resolves content from it. No slug, token, or path ever hits the address
+  // bar (spec Tests C/I: zero visible slug leakage at any stage).
   if (pathname.startsWith('/_auth/')) {
-    const slug = request.nextUrl.searchParams.get('slug');
-    const handoff = pathname.slice('/_auth/'.length);
     console.log(
       `[_AUTH_RECOVERY] handoff arrived at Next.js (nginx /_auth/ location missing?) — ` +
-        `redirecting slug=${slug ?? '(none)'} handoff=${handoff.slice(0, 6)}… to /d/{slug}`,
+        `redirecting to the clean root (session cookie resolves content)`,
     );
-    return NextResponse.redirect(
-      new URL(slug ? `/d/${slug}` : '/d/', request.nextUrl.origin),
-      302,
-    );
+    return NextResponse.redirect(new URL('/', request.nextUrl.origin), 302);
   }
 
   // ════════════════════════════════════════════════════════════════════════════

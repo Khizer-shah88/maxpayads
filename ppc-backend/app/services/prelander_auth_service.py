@@ -1127,16 +1127,65 @@ _DENIED_PAGE = """<!DOCTYPE html>
 </html>"""
 
 
-def build_denied_response(redis=None):
+def _safe_source_fallback(request, own_host: str) -> Optional[str]:
+    """
+    SAFE SOURCE FALLBACK (spec §4): when an unauthorized request arrives, send
+    the visitor back to the page the request was initiated from — when that
+    source is safely available and valid.
+
+    Open-redirect and loop prevention:
+      - ONLY the Referer header is used (never a query parameter — those are
+        attacker-controlled).
+      - The source must be a well-formed absolute http(s) URL.
+      - The source host must NOT be the protected domain itself (no loops).
+      - The path is preserved (https://source.com/page → back to that page).
+    Returns None when no safe source exists (the caller then serves the least
+    revealing response — no protected content, no app error page).
+    """
+    try:
+        referer = (request.headers.get("referer", "") or "").strip()
+        if not referer:
+            return None
+        if not referer.startswith(("http://", "https://")):
+            return None
+        from urllib.parse import urlparse
+        parsed = urlparse(referer)
+        source_host = (parsed.hostname or "").lower()
+        if not source_host or source_host == (own_host or "").lower():
+            return None  # loop guard: source IS the protected domain
+        if parsed.scheme not in ("http", "https"):
+            return None
+        # Rebuild from parsed components only — never echo the raw string.
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    except Exception:
+        return None
+
+
+def build_denied_response(redis=None, request=None, own_host: str = ""):
     """
     The configurable safe fallback for denied prelander access (STEP 6).
 
     Mode (PRELANDER_DENIED_MODE): generic_page (default) | not_found |
     forbidden | redirect. Never leaks campaign/publisher/internal info, never
     a stack trace — the same neutral response whatever the failure was.
+
+    SOURCE FALLBACK (spec §4): when a request object is provided, a request
+    that arrived with a SAFE external Referer is 302'd back to that source
+    page instead of seeing anything from us — no preview, no error page, no
+    loop. Requests without a safe source (direct open, new tab, no referer,
+    source is the protected domain itself) get the least-revealing response.
     """
     from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
     from app.config import get_settings
+
+    # ── Safe source return (spec §4) — checked before anything renders ──────
+    if request is not None:
+        fallback = _safe_source_fallback(request, own_host)
+        if fallback:
+            return RedirectResponse(url=fallback, status_code=302)
 
     mode = (getattr(get_settings(), "PRELANDER_DENIED_MODE", "generic_page") or "generic_page").strip().lower()
 

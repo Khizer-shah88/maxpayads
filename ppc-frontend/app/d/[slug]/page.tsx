@@ -36,11 +36,25 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 const TAB_MARKER = 'mpa_prelander_tab'
 
 // Deny an out-of-flow visit: NO preview of any kind — not even a "page not
-// found" — and land on a blank page. Per spec, a URL pasted into a NEW TAB
-// shows about:blank (never the prelander, never a fallback site): the paste
-// source's history belongs to a different page, so going "back" there would
-// just reveal an unrelated page instead of denying the request.
-function denyWithBlankPage(): boolean {
+// found". Spec §4 (safe source fallback): when the visit was initiated from
+// a safe external source page (link click / paste from another site), return
+// the visitor THERE instead of rendering anything of ours. Validation mirrors
+// the backend: absolute http(s) URL only, source must not be the protected
+// domain itself (no loops), components rebuilt from parsing — never the raw
+// string echoed. No safe source (new tab, no referrer, source is us) →
+// about:blank + close attempt (spec §3/§8 E,F,H: least revealing response).
+function denyWithNoPreview(): boolean {
+  try {
+    const ref = (document.referrer || '').trim()
+    if (ref.startsWith('http://') || ref.startsWith('https://')) {
+      const u = new URL(ref)
+      const ownHost = window.location.hostname.toLowerCase()
+      if (u.hostname && u.hostname !== ownHost && (u.protocol === 'http:' || u.protocol === 'https:')) {
+        window.location.replace(u.toString())
+        return true
+      }
+    }
+  } catch { /* invalid referrer → fall through */ }
   window.location.replace('about:blank')
   try { window.close() } catch { /* browsers may block; about:blank suffices */ }
   return false
@@ -109,7 +123,7 @@ export default function PrelanderSlugPage() {
 
         if (!isSameTab) {
           console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → blank page')
-          denyWithBlankPage()
+          denyWithNoPreview()
           return
         }
 
@@ -121,18 +135,18 @@ export default function PrelanderSlugPage() {
             // Server says no valid session — nothing to show. Same-tab reload
             // after the session expired ALSO denies (no preview at all).
             console.log('[PRELANDER] Session resolve rejected — blank page')
-            denyWithBlankPage()
+            denyWithNoPreview()
             return
           }
           const json = await res.json()
           if (!json?.success) {
-            denyWithBlankPage()
+            denyWithNoPreview()
             return
           }
           // Validated — refresh/reload of this tab keeps working.
           setData(json)
         } catch (error) {
-          denyWithBlankPage()
+          denyWithNoPreview()
           return
         } finally {
           setLoading(false)
@@ -218,18 +232,23 @@ export default function PrelanderSlugPage() {
               // NOT authorized (or the mint failed): no preview of any kind —
               // blank page, per spec (new-tab paste / foreign request).
               console.log('[PRELANDER] Unauthorized hop attempt — blank page, no preview')
-              denyWithBlankPage()
+              denyWithNoPreview()
               return
             }
 
             // TIMER LIVES ON THE INTER DOMAIN ONLY (spec): the 0.75s dwell
             // runs right here, on the Inter page, during the hop. The
             // prelander domain itself never waits — it loads naturally.
+            // ZERO SLUG LEAKAGE (spec Tests C/I): the hop goes to /_auth/{handoff}
+            // and lands on the CLEAN ROOT — the slug travels ONLY inside the
+            // server-side session binding, never in any public URL. The
+            // address bar goes from interdomain/d/{slug} directly to
+            // https://prelanderdomain.com/ with nothing in between.
             console.log('[PRELANDER DEBUG] Got handoff token, redirecting after 0.75s dwell')
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
-            const authUrl = `${prelanderDomain}/_auth/${handoffToken}?slug=${encodeURIComponent(slug)}`
-            console.log('[PRELANDER DEBUG] Redirecting to:', authUrl)
+            const authUrl = `${prelanderDomain}/_auth/${handoffToken}`
+            console.log('[PRELANDER DEBUG] Redirecting to clean-root handoff:', authUrl.replace(/\/_auth\/\S+/, '/_auth/{token}'))
             window.location.replace(authUrl)
             return
           }
@@ -254,7 +273,7 @@ export default function PrelanderSlugPage() {
           console.log('[PRELANDER ERROR] Resolve rejected — no preview, blank page')
           // Spec: unauthorized/expired → NO preview of any kind (not even
           // "not found"); blank page.
-          denyWithBlankPage()
+          denyWithNoPreview()
           return
         }
 
@@ -263,7 +282,7 @@ export default function PrelanderSlugPage() {
         
         if (!json?.success) {
           console.log('[PRELANDER ERROR] Resolve returned success=false — blank page')
-          denyWithBlankPage()
+          denyWithNoPreview()
           return
         }
 
