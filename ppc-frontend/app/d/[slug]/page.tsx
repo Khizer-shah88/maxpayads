@@ -96,7 +96,14 @@ export default function PrelanderSlugPage() {
         // SAME-TAB vs NEW-TAB (spec): sessionStorage is PER-TAB. A reload of
         // THIS tab keeps the marker; the same URL pasted into a NEW tab (or
         // any request that never came through the flow) has no marker →
-        // show about:blank with NO preview of any kind.
+        // show nothing with NO preview of any kind.
+        // NOTE: the marker/tab-bridge is DEFENSE-IN-DEPTH only — the SERVER
+        // already denies unauthorized visitors at session-check (204) and at
+        // the resolve (204). A missing marker therefore must NOT preempt the
+        // resolve: an authorized visitor whose bridge cookie was unreadable
+        // (e.g. HttpOnly hardening on an old instance) still gets their
+        // content from the server-side session. The marker check runs AFTER
+        // a successful resolve, purely to stamp the tab for reloads.
         let isSameTab = false
         try { isSameTab = sessionStorage.getItem(TAB_MARKER) === '1' } catch { /* storage blocked → treat as new tab */ }
 
@@ -113,12 +120,8 @@ export default function PrelanderSlugPage() {
             console.log('[PRELANDER] Tab bootstrap consumed — this tab is now the flow tab')
           }
         }
-
-        if (!isSameTab) {
-          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → terminal')
-          setDenied(true)
-          return
-        }
+        // (isSameTab false here does NOT deny — see NOTE above. The resolve
+        // below is the authorization decision; the marker is stamped after it.)
 
         try {
           const res = await fetch('/api/prelander/resolve/session', {
@@ -136,6 +139,12 @@ export default function PrelanderSlugPage() {
             setDenied(true)
             return
           }
+          // Validated by the SERVER — stamp the tab so reloads of THIS tab
+          // are recognized; new-tab pastes of the clean root come through
+          // session-check/resolve with no cookie and are denied server-side.
+          try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
+          // Also consume any lingering bridge cookie (one-time).
+          try { document.cookie = 'mpa_tab_ok=; Max-Age=0; path=/' } catch { /* ignore */ }
           // Validated — refresh/reload of this tab keeps working.
           setData(json)
         } catch (error) {

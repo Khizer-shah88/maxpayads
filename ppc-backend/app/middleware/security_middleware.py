@@ -270,7 +270,16 @@ class SessionSecurityMiddleware(BaseHTTPMiddleware):
                 cookies = response.headers.getlist("Set-Cookie")
                 new_cookies = []
                 for cookie in cookies:
-                    if "HttpOnly" not in cookie:
+                    # mpf_tab_ok (mpa_tab_ok) is the ONE-TIME 60s tab bridge: the
+                    # prelander page must READ it via document.cookie to consume
+                    # it (expire) and set the per-tab sessionStorage marker —
+                    # HttpOnly would make it invisible to the page and the
+                    # authorized visitor's first load rendered a BLANK page
+                    # (isSameTab never became true). It carries no secret (a
+                    # literal "1" valid for one request) so JS-readable is safe;
+                    # every OTHER cookie gets the HttpOnly hardening.
+                    is_tab_bridge = cookie.startswith("mpa_tab_ok=")
+                    if "HttpOnly" not in cookie and not is_tab_bridge:
                         cookie += "; HttpOnly"
                     if "SameSite" not in cookie:
                         cookie += "; SameSite=Lax"
