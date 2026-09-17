@@ -757,6 +757,22 @@ async def mint_handoff_token(
     # when the browser asks for anything the click was not routed to.
     host = pas.resolve_handoff_target(session, normalize_domain(target_host or ""))
     if host is None:
+        # The browser asked for a host the click was NOT routed to — usually a
+        # STALE weighted pick from an old /domain-type response (the pool
+        # re-roll raced the session recording). Never mint for the wrong
+        # domain — instead REDIRECT the visitor to the session-recorded host
+        # (the one the click was actually authorized for), carrying the same
+        # slug. The Inter page follows it and mints there. This turns a
+        # pool-pick mismatch from a dead-end into a self-healing hop, without
+        # ever minting for an unauthorized destination.
+        recorded = normalize_domain(getattr(session, "prelander_host", "") or "")
+        if recorded and slug:
+            hop_to = f"https://{recorded}/d/{slug}"
+            logger.info(
+                "[PRELANDER] Handoff target mismatch (asked=%s) → redirecting to the session-recorded host %s",
+                normalize_domain(target_host or ""), recorded,
+            )
+            return RedirectResponse(url=hop_to, status_code=302, headers={"Referrer-Policy": "no-referrer"})
         return await _denied_response(request)
 
     handoff = await pas.mint_handoff(session, redis, target_host=host)

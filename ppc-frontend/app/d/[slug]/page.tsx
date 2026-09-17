@@ -209,13 +209,27 @@ export default function PrelanderSlugPage() {
               console.log('[PRELANDER DEBUG] Requesting handoff token')
               const hRes = await fetch(
                 `/api/prelander/handoff?slug=${encodeURIComponent(slug)}&target_host=${encodeURIComponent(new URL(prelanderDomain).hostname)}`,
-                { headers: { 'X-Prelander-Host': hostname } }
+                { headers: { 'X-Prelander-Host': hostname }, redirect: 'manual' }
               )
               console.log('[PRELANDER DEBUG] Handoff response status:', hRes.status, hRes.ok)
               if (hRes.ok) {
                 const h = await hRes.json()
                 console.log('[PRELANDER DEBUG] Handoff data:', h)
                 handoffToken = h?.handoff || null
+              } else if (hRes.status === 302 || hRes.status === 301 || hRes.status === 307) {
+                // POOL-PICK SELF-HEALING: the backend refused this target (the
+                // click was routed to a DIFFERENT prelander domain than the
+                // stale /domain-type response suggested) and returned a
+                // redirect to the session-recorded host carrying the same
+                // slug. Follow it: the correct domain mints the handoff there.
+                const hop = hRes.headers.get('location')
+                if (hop) {
+                  console.log('[PRELANDER DEBUG] Mint redirected to the recorded host — following')
+                  setTransitioning(true)
+                  await new Promise(r => setTimeout(r, 750))
+                  window.location.replace(hop)
+                  return
+                }
               }
             } catch (handoffError) {
               console.log('[PRELANDER DEBUG] Handoff request failed:', handoffError)
