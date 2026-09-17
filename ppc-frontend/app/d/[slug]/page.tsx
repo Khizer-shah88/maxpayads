@@ -70,9 +70,9 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SECURITY CHECK: Block pasted URLs in new tabs
+  // SECURITY CHECK: Block pasted URLs in new tabs IMMEDIATELY
   // ═══════════════════════════════════════════════════════════════════════════
-  // Strategy: Always allow first load, check referrer AFTER successful load
+  // Strategy: Check referrer immediately, but allow a brief grace period for redirects
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
@@ -83,15 +83,43 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // If previously denied, redirect to Google (looks natural)
+    // If previously denied, redirect to Google immediately
     if (existingAuth === 'denied') {
       console.log('[SECURITY] ✗ Previously denied tab - redirecting to Google')
       window.location.replace('https://www.google.com')
       return
     }
     
-    // First visit - ALWAYS allow to proceed (no pre-load blocking)
-    console.log('[SECURITY] First visit - allowing page to load')
+    // First visit - check referrer immediately
+    const referrer = document.referrer
+    const currentHost = window.location.hostname
+    const hasExternalReferrer = referrer && !referrer.includes(currentHost)
+    
+    console.log('[SECURITY] Immediate check on first visit')
+    console.log('[SECURITY] - Referrer:', referrer || '(none)')
+    console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
+    
+    // If no external referrer, it's likely a pasted URL
+    if (!hasExternalReferrer) {
+      // Give a tiny delay (50ms) in case it's a legitimate redirect that hasn't set referrer yet
+      setTimeout(() => {
+        const recheckReferrer = document.referrer
+        const recheckExternal = recheckReferrer && !recheckReferrer.includes(currentHost)
+        
+        if (!recheckExternal) {
+          // Still no external referrer after brief wait - definitely pasted URL
+          console.log('[SECURITY] ✗ Confirmed pasted URL - blocking immediately')
+          sessionStorage.setItem(SECURITY_MARKER, 'denied')
+          window.location.replace('https://www.google.com')
+          setDenied(true)
+          setLoading(false)
+        } else {
+          console.log('[SECURITY] ✓ External referrer appeared - allowing')
+        }
+      }, 50)
+    } else {
+      console.log('[SECURITY] ✓ External referrer present - allowing')
+    }
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -360,33 +388,16 @@ export default function PrelanderSlugPage() {
     document.title = 'Download Ready'
   }, [])
 
-  // Post-load security check: Mark tab as authorized or deny based on referrer
+  // Mark tab as authorized after successful data load
   useEffect(() => {
     if (data && !denied) {
       const SECURITY_MARKER = 'prelander_tab_authorized'
       const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
       
       if (!existingAuth) {
-        // First successful load - validate referrer
-        const referrer = document.referrer
-        const currentHost = window.location.hostname
-        const hasExternalReferrer = referrer && !referrer.includes(currentHost)
-        
-        console.log('[SECURITY] Post-load validation')
-        console.log('[SECURITY] - Referrer:', referrer || '(none)')
-        console.log('[SECURITY] - Current host:', currentHost)
-        console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
-        
-        if (hasExternalReferrer) {
-          // Legitimate redirect flow - authorize this tab
-          sessionStorage.setItem(SECURITY_MARKER, 'granted')
-          console.log('[SECURITY] ✓ Tab authorized - legitimate redirect flow')
-        } else {
-          // Pasted URL that loaded - deny and redirect to Google
-          sessionStorage.setItem(SECURITY_MARKER, 'denied')
-          console.log('[SECURITY] ✗ Pasted URL detected - redirecting to Google')
-          window.location.replace('https://www.google.com')
-        }
+        // Successfully loaded - mark as authorized for future reloads
+        sessionStorage.setItem(SECURITY_MARKER, 'granted')
+        console.log('[SECURITY] ✓ Tab authorized after successful load')
       }
     }
   }, [data, denied])
