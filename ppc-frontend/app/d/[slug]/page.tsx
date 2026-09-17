@@ -83,10 +83,10 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // If previously denied, clear URL immediately
+    // If previously denied, redirect to Google (looks natural)
     if (existingAuth === 'denied') {
-      console.log('[SECURITY] ✗ Previously denied tab - clearing URL')
-      window.location.replace('about:blank')
+      console.log('[SECURITY] ✗ Previously denied tab - redirecting to Google')
+      window.location.replace('https://www.google.com')
       return
     }
     
@@ -382,10 +382,10 @@ export default function PrelanderSlugPage() {
           sessionStorage.setItem(SECURITY_MARKER, 'granted')
           console.log('[SECURITY] ✓ Tab authorized - legitimate redirect flow')
         } else {
-          // Pasted URL that loaded - deny and clear
+          // Pasted URL that loaded - deny and redirect to Google
           sessionStorage.setItem(SECURITY_MARKER, 'denied')
-          console.log('[SECURITY] ✗ Pasted URL detected - clearing page')
-          window.location.replace('about:blank')
+          console.log('[SECURITY] ✗ Pasted URL detected - redirecting to Google')
+          window.location.replace('https://www.google.com')
         }
       }
     }
