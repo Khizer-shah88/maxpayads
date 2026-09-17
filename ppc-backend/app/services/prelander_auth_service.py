@@ -1164,6 +1164,21 @@ def _safe_source_fallback(request, own_host: str) -> Optional[str]:
         return None
 
 
+def build_no_content_response():
+    """
+    HTTP 204 No Content — the strict unauthorized terminal response (spec).
+
+    No HTML body, no client-side fallback logic, no redirect, no error page:
+    the browser's NATIVE 204 handling terminates the request. Used for every
+    unauthorized direct Prelander access (missing / invalid / expired /
+    tampered authorization) — the least-revealing response the architecture
+    supports.
+    """
+    from fastapi.responses import Response
+
+    return Response(status_code=204, headers={"Content-Length": "0"})
+
+
 def build_denied_response(redis=None, request=None, own_host: str = ""):
     """
     The configurable safe fallback for denied prelander access (STEP 6).

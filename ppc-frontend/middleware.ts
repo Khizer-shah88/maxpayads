@@ -181,28 +181,16 @@ export async function middleware(request: NextRequest) {
             return NextResponse.rewrite(url);
           }
         }
-        // UNAUTHORIZED (any status — 302 safe-source fallback, 404 neutral
-        // page, anything): proxy the backend's response VERBATIM. view-source
-        // on the domain shows exactly that response and nothing else — no
-        // app shell, no framework HTML, no source to read.
-        const body = await checkRes.text();
-        const shieldHeaders = new Headers();
-        checkRes.headers.forEach((value, key) => {
-          if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key.toLowerCase())) {
-            shieldHeaders.set(key, value);
-          }
-        });
-        return new NextResponse(body, {
-          status: checkRes.status,
-          headers: shieldHeaders,
-        });
+        // UNAUTHORIZED → mirror the backend's HTTP 204 No Content verbatim.
+        // Spec: no HTML body, no redirect, no about:blank, no JS navigation,
+        // no error page — the browser's NATIVE 204 handling terminates the
+        // request. view-source shows nothing: no app shell, no framework
+        // code, no metadata.
+        return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
       } catch (err) {
-        // Backend unreachable — fail CLOSED (spec: never expose the shell).
-        console.log(`[PRELANDER_SHIELD] backend unreachable — serving blank, no source exposed`);
-        return new NextResponse(
-          '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>.</title></head><body></body></html>',
-          { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
-        );
+        // Backend unreachable — fail CLOSED with 204 (never expose the shell).
+        console.log(`[PRELANDER_SHIELD] backend unreachable — strict 204, no content served`);
+        return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
       }
     }
     console.log(

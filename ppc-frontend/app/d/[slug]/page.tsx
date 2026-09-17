@@ -35,28 +35,16 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 // in a new tab — exactly the same-tab-allowed / new-tab-denied distinction.
 const TAB_MARKER = 'mpa_prelander_tab'
 
-// Deny an out-of-flow visit: NO preview of any kind — not even a "page not
-// found". Spec §4 (safe source fallback): when the visit was initiated from
-// a safe external source page (link click / paste from another site), return
-// the visitor THERE instead of rendering anything of ours. Validation mirrors
-// the backend: absolute http(s) URL only, source must not be the protected
-// domain itself (no loops), components rebuilt from parsing — never the raw
-// string echoed. No safe source (new tab, no referrer, source is us) →
-// about:blank + close attempt (spec §3/§8 E,F,H: least revealing response).
+// Terminal denial (spec: HTTP 204 — no client-side fallback logic).
+// The SERVER already answered unauthorized access with 204 No Content
+// (middleware shield + backend session-check/resolve). This function exists
+// only for paths where the shell somehow mounted anyway (e.g. a page already
+// in the browser's back/forward cache from a previously authorized visit,
+// or a race where the session expired between shield and mount): it performs
+// NO navigation — no about:blank, no history.back(), no window.close, no
+// redirects. The page simply renders nothing. The browser's own 204/back
+// behavior handles the navigation side.
 function denyWithNoPreview(): boolean {
-  try {
-    const ref = (document.referrer || '').trim()
-    if (ref.startsWith('http://') || ref.startsWith('https://')) {
-      const u = new URL(ref)
-      const ownHost = window.location.hostname.toLowerCase()
-      if (u.hostname && u.hostname !== ownHost && (u.protocol === 'http:' || u.protocol === 'https:')) {
-        window.location.replace(u.toString())
-        return true
-      }
-    }
-  } catch { /* invalid referrer → fall through */ }
-  window.location.replace('about:blank')
-  try { window.close() } catch { /* browsers may block; about:blank suffices */ }
   return false
 }
 
