@@ -85,18 +85,9 @@ export default function PrelanderSlugPage() {
     }
     
     if (existingAuth === 'denied') {
-      // Tab was previously denied - block permanently
-      console.log('[SECURITY] ✗ Denied tab - blocking permanently')
-      setDenied(true)
-      setLoading(false)
-      
-      // Clear URL from address bar for security
-      try {
-        window.location.replace('about:blank')
-      } catch (e) {
-        // Fallback if about:blank is blocked
-        window.history.replaceState({}, '', 'about:blank')
-      }
+      // Tab was previously denied - clear URL and close
+      console.log('[SECURITY] ✗ Denied tab - clearing URL')
+      window.location.replace('about:blank')
       return
     }
     
@@ -115,21 +106,14 @@ export default function PrelanderSlugPage() {
       sessionStorage.setItem(SECURITY_MARKER, 'granted')
       console.log('[SECURITY] ✓ Access GRANTED - external referrer detected')
     } else {
-      // No external referrer (pasted/typed URL) - DENY permanently
+      // No external referrer (pasted/typed URL) - DENY and clear URL immediately
       sessionStorage.setItem(SECURITY_MARKER, 'denied')
-      console.log('[SECURITY] ✗ Access DENIED - no external referrer')
+      console.log('[SECURITY] ✗ Access DENIED - clearing URL immediately')
+      // Redirect to about:blank immediately to clear URL
+      window.location.replace('about:blank')
+      // Also set denied to prevent any rendering
       setDenied(true)
       setLoading(false)
-      
-      // Clear URL from address bar immediately for security
-      console.log('[SECURITY] Clearing URL from address bar')
-      try {
-        window.location.replace('about:blank')
-      } catch (e) {
-        // Fallback if about:blank is blocked
-        console.log('[SECURITY] about:blank blocked, using fallback')
-        window.history.replaceState({}, '', 'about:blank')
-      }
     }
   }, []) // Empty deps - runs once on mount
 
