@@ -72,25 +72,47 @@ export default function PrelanderSlugPage() {
   // ═══════════════════════════════════════════════════════════════════════════
   // SECURITY CHECK: Block pasted URLs in new tabs
   // ═══════════════════════════════════════════════════════════════════════════
-  // DISABLED for debugging - check console logs to understand referrer behavior
+  // Uses history.length to detect pasted URLs vs redirect flow
+  // - Pasted URL: history.length === 1 (first page in tab)
+  // - Redirect flow: history.length > 1 (navigated from other domains)
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
     
-    console.log('[SECURITY DEBUG] Existing marker:', existingAuth)
-    console.log('[SECURITY DEBUG] Referrer:', document.referrer || '(none)')
-    console.log('[SECURITY DEBUG] Current URL:', window.location.href)
-    console.log('[SECURITY DEBUG] Hostname:', window.location.hostname)
+    // If already authorized, allow access
+    if (existingAuth === 'granted') {
+      console.log('[SECURITY] ✓ Previously authorized tab - access granted')
+      return
+    }
     
-    // Only act if there's a 'denied' marker - never block on first visit
+    // If previously denied, clear URL immediately
     if (existingAuth === 'denied') {
       console.log('[SECURITY] ✗ Previously denied tab - clearing URL')
       window.location.replace('about:blank')
       return
     }
     
-    // All other cases - allow to proceed
-    console.log('[SECURITY] Allowing page to load')
+    // First visit - check history length to detect pasted URLs
+    const historyLength = window.history.length
+    const referrer = document.referrer
+    
+    console.log('[SECURITY] First visit check')
+    console.log('[SECURITY] - History length:', historyLength)
+    console.log('[SECURITY] - Referrer:', referrer || '(none)')
+    
+    // If history length is 1 and no referrer, it's a pasted URL or typed URL
+    if (historyLength === 1 && !referrer) {
+      console.log('[SECURITY] ✗ Pasted URL detected - denying access')
+      sessionStorage.setItem(SECURITY_MARKER, 'denied')
+      window.location.replace('about:blank')
+      setDenied(true)
+      setLoading(false)
+      return
+    }
+    
+    // Otherwise, it's likely legitimate - let it proceed
+    // Will be marked as 'granted' after successful load
+    console.log('[SECURITY] Allowing page to load (history or referrer exists)')
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -359,28 +381,16 @@ export default function PrelanderSlugPage() {
     document.title = 'Download Ready'
   }, [])
 
-  // DISABLED: Security marker - for debugging
+  // Mark tab as authorized after successful data load
   useEffect(() => {
     if (data && !denied) {
-      console.log('[SECURITY DEBUG] Data loaded successfully')
-      console.log('[SECURITY DEBUG] Referrer at load time:', document.referrer || '(none)')
-      
       const SECURITY_MARKER = 'prelander_tab_authorized'
       const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
       
       if (!existingAuth) {
-        const referrer = document.referrer
-        const currentHost = window.location.hostname
-        const hasExternalReferrer = referrer && !referrer.includes(currentHost)
-        
-        console.log('[SECURITY DEBUG] Setting marker based on referrer')
-        console.log('[SECURITY DEBUG] - Referrer:', referrer || '(none)')
-        console.log('[SECURITY DEBUG] - Current host:', currentHost)
-        console.log('[SECURITY DEBUG] - Has external referrer:', hasExternalReferrer)
-        
-        // TEMPORARILY: Always set to 'granted' to allow testing
+        // Successfully loaded - mark as authorized for future reloads
         sessionStorage.setItem(SECURITY_MARKER, 'granted')
-        console.log('[SECURITY DEBUG] Marker set to: granted (temporary - always allow)')
+        console.log('[SECURITY] ✓ Tab authorized after successful load')
       }
     }
   }, [data, denied])
