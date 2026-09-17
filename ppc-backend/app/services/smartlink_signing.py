@@ -130,8 +130,11 @@ def signed_link_params(pub: str, site: Optional[str] = None, nonce: Optional[str
     The complete parameter set for a signed Smartlink: the ids the caller
     already has + the system-generated token (and its nonce when one was used).
     Callers merge this over their structure-driven params.
+
+    When no nonce is passed, one is generated — the whole point is that every
+    generated link carries its own nonce so no two links are byte-identical.
     """
-    n = nonce or ""
+    n = nonce if nonce is not None else new_link_nonce()
     token = generate_link_token(pub, site, n)
     params = {"hmac": token}
     if n:

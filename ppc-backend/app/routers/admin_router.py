@@ -260,6 +260,7 @@ async def admin_get_publisher_smartlink(
     include_site = bool((structure_doc or {}).get("include_website", True))
 
     def _build_link(site_public: Optional[str], nonce: Optional[str] = None) -> str:
+        from urllib.parse import quote as _quote
         from app.services import smartlink_signing as sls
         # Per-link uniqueness: every generated link gets its own CSPRNG nonce
         # folded into the signature, so no two links are byte-identical while
@@ -272,7 +273,11 @@ async def admin_get_publisher_smartlink(
             if isinstance(extra, dict) and extra.get("key"):
                 params.append(f"{extra['key']}={extra.get('value', '')}")
         # System-generated signature bound to THIS link's Tag IDs (+ nonce).
-        params.update(sls.signed_link_params(public_id, site_public if include_site else None, n))
+        # params is a LIST of "key=value" strings — extend, not update.
+        for key, value in sls.signed_link_params(
+            public_id, site_public if include_site else None, n
+        ).items():
+            params.append(f"{key}={_quote(str(value))}")
         return f"{base}/click?{'&'.join(params)}"
 
     anchor_base = base.rstrip("/")
