@@ -80,38 +80,6 @@ export default function PrelanderSlugPage() {
         return 
       }
 
-      // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: Detect URL copying to new tabs
-      // ═══════════════════════════════════════════════════════════════════
-      const TAB_ACCESS_KEY = 'prelander_content_loaded'
-      const hasLoadedBefore = sessionStorage.getItem(TAB_ACCESS_KEY)
-      
-      // Check how this page was accessed using Navigation API
-      const navigationType = typeof window !== 'undefined' && window.performance
-        ? performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming
-        : null
-      
-      // Only block if:
-      // 1. No sessionStorage (new tab)
-      // 2. AND navigation type is "navigate" (not "reload")  
-      // 3. AND no referrer (pasted URL)
-      const referrer = typeof document !== 'undefined' ? document.referrer : ''
-      
-      if (!hasLoadedBefore && 
-          navigationType?.type === 'navigate' && 
-          !referrer) {
-        console.log('[PRELANDER SECURITY] Blocked - URL pasted in new tab')
-        console.log('[PRELANDER SECURITY] - navType:', navigationType?.type)
-        console.log('[PRELANDER SECURITY] - referrer:', referrer)
-        setDenied(true)
-        setLoading(false)
-        return
-      }
-      
-      // Mark as loaded (persists in this tab across reloads)
-      sessionStorage.setItem(TAB_ACCESS_KEY, 'true')
-      console.log('[PRELANDER SECURITY] Access granted')
-
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
 
