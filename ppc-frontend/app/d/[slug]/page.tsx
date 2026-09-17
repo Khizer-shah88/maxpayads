@@ -73,6 +73,27 @@ export default function PrelanderSlugPage() {
     const fetchData = async () => {
       console.log('[PRELANDER DEBUG] useEffect triggered')
       
+      // ═══════════════════════════════════════════════════════════════════
+      // SECURITY: One-time tab access - prevents URL copying to new tabs
+      // ═══════════════════════════════════════════════════════════════════
+      const TAB_ACCESS_KEY = 'prelander_tab_access'
+      const hasLoadedBefore = sessionStorage.getItem(TAB_ACCESS_KEY)
+      
+      if (hasLoadedBefore === 'loaded') {
+        // Same tab reload - allow it
+        console.log('[PRELANDER SECURITY] Same tab reload - access granted')
+      } else if (hasLoadedBefore === null) {
+        // First time in this tab - grant access and mark as loaded
+        console.log('[PRELANDER SECURITY] First load - granting access')
+        sessionStorage.setItem(TAB_ACCESS_KEY, 'loaded')
+      } else {
+        // This shouldn't happen, but deny if unknown state
+        console.log('[PRELANDER SECURITY] Unknown state - denying')
+        setDenied(true)
+        setLoading(false)
+        return
+      }
+      
       if (!slug) { 
         console.log('[PRELANDER ERROR] No slug provided')
         setDenied(true)
