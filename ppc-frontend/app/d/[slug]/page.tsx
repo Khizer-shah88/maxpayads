@@ -72,10 +72,7 @@ export default function PrelanderSlugPage() {
   // ═══════════════════════════════════════════════════════════════════════════
   // SECURITY CHECK: Block pasted URLs in new tabs
   // ═══════════════════════════════════════════════════════════════════════════
-  // Multi-layered detection:
-  // 1. Check for existing marker (granted/denied)
-  // 2. Check history.length + referrer
-  // 3. If suspicious, mark as potential pasted URL and verify after load
+  // Strategy: Always allow first load, check referrer AFTER successful load
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
@@ -93,30 +90,8 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // First visit - aggressive detection
-    const historyLength = window.history.length
-    const referrer = document.referrer
-    const currentHost = window.location.hostname
-    const hasExternalReferrer = referrer && !referrer.includes(currentHost)
-    
-    console.log('[SECURITY] First visit check')
-    console.log('[SECURITY] - History length:', historyLength)
-    console.log('[SECURITY] - Referrer:', referrer || '(none)')
-    console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
-    
-    // STRICT: Block if no external referrer (regardless of history length)
-    // Legitimate redirect flow ALWAYS has external referrer
-    if (!hasExternalReferrer) {
-      console.log('[SECURITY] ✗ No external referrer - denying access')
-      sessionStorage.setItem(SECURITY_MARKER, 'denied')
-      window.location.replace('about:blank')
-      setDenied(true)
-      setLoading(false)
-      return
-    }
-    
-    // Has external referrer - allow to proceed
-    console.log('[SECURITY] External referrer detected - allowing load')
+    // First visit - ALWAYS allow to proceed (no pre-load blocking)
+    console.log('[SECURITY] First visit - allowing page to load')
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -385,16 +360,33 @@ export default function PrelanderSlugPage() {
     document.title = 'Download Ready'
   }, [])
 
-  // Mark tab as authorized after successful data load
+  // Post-load security check: Mark tab as authorized or deny based on referrer
   useEffect(() => {
     if (data && !denied) {
       const SECURITY_MARKER = 'prelander_tab_authorized'
       const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
       
       if (!existingAuth) {
-        // Successfully loaded - mark as authorized for future reloads
-        sessionStorage.setItem(SECURITY_MARKER, 'granted')
-        console.log('[SECURITY] ✓ Tab authorized after successful load')
+        // First successful load - validate referrer
+        const referrer = document.referrer
+        const currentHost = window.location.hostname
+        const hasExternalReferrer = referrer && !referrer.includes(currentHost)
+        
+        console.log('[SECURITY] Post-load validation')
+        console.log('[SECURITY] - Referrer:', referrer || '(none)')
+        console.log('[SECURITY] - Current host:', currentHost)
+        console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
+        
+        if (hasExternalReferrer) {
+          // Legitimate redirect flow - authorize this tab
+          sessionStorage.setItem(SECURITY_MARKER, 'granted')
+          console.log('[SECURITY] ✓ Tab authorized - legitimate redirect flow')
+        } else {
+          // Pasted URL that loaded - deny and clear
+          sessionStorage.setItem(SECURITY_MARKER, 'denied')
+          console.log('[SECURITY] ✗ Pasted URL detected - clearing page')
+          window.location.replace('about:blank')
+        }
       }
     }
   }, [data, denied])
