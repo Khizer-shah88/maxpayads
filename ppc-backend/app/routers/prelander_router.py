@@ -243,7 +243,13 @@ async def _host_in_chain_sequence(db, host: str) -> bool:
     return False
 
 
-async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
+async def _resolve_next_hop(
+    db,
+    current_host: str,
+    *,
+    request: Optional[Request] = None,
+    slug: Optional[str] = None,
+) -> Optional[str]:
     """
     Next managed hop for a visitor currently on `current_host` (Bypass OFF).
 
@@ -259,6 +265,15 @@ async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
     in a chain field would produce a RELATIVE /d/{slug} destination and the
     browser would resolve it against the current page's domain.
 
+    DETERMINISTIC PICK (fix for intermittent about:blank): when the visitor
+    carries an authorization session, the pool pick was ALREADY made at click
+    time and recorded on the session (session.prelander_host). Re-rolling the
+    weighted pool here could pick a DIFFERENT domain than the one the click
+    was authorized for — the handoff mint then correctly rejected it
+    (STEP 14 binding) and the visitor bounced to about:blank. The recorded
+    host is the single source of truth: route_click picked it once, every
+    later hop reuses it.
+
     Returns a URL (https://host) or None when there is nothing to hop to —
     the caller then serves prelander data on the current host.
     """
@@ -270,6 +285,20 @@ async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
     host = normalize_domain(current_host)
     if not host:
         return None
+
+    # ── Session-recorded destination first (authorized visitor) ────────────
+    # The ONE pick already made at click time. Falls back to normal resolution
+    # for visitors without a session (preview, direct hop, legacy links).
+    if request is not None and slug:
+        try:
+            session = await get_authorized_session(request, slug, db)
+            if session and session is not True:
+                recorded = normalize_domain(getattr(session, "prelander_host", "") or "")
+                if recorded and recorded != host:
+                    from app.services.domain_service import domain_to_url as _dtu
+                    return _dtu(recorded).rstrip("/")
+        except Exception:
+            pass  # no session / lookup failure → normal resolution below
 
     # ── Chain override: host is inside a chain sequence ───────────────────────
     chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
@@ -320,6 +349,7 @@ async def _resolve_next_hop(db, current_host: str) -> Optional[str]:
 
 @router.get("/domain-type")
 async def get_domain_type(
+    request: Request,
     host: str,
     slug: Optional[str] = Query(None, description="Prelander slug — enables bypass detection"),
     db=Depends(get_db),
@@ -373,9 +403,12 @@ async def get_domain_type(
                 bypass_redirect_url = _clean_campaign_url(target)
 
     # ── Next hop (chain-aware) ───────────────────────────────────────────────
+    # Passes the request + slug so an authorized visitor reuses the
+    # SESSION-recorded prelander host (deterministic) instead of re-rolling
+    # the weighted pool (the intermittent about:blank cause).
     prelander_domain = None
     if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and not bypass_redirect_url:
-        next_hop = await _resolve_next_hop(db, h)
+        next_hop = await _resolve_next_hop(db, h, request=request, slug=slug)
         if next_hop and normalize_domain(next_hop) != h:
             prelander_domain = next_hop.rstrip("/")
 
@@ -491,8 +524,11 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                         headers={"Referrer-Policy": "no-referrer"},
                     )
 
-            # Bypass OFF → chain-aware next hop (extra hops, then prelander pool)
-            next_hop = await _resolve_next_hop(db, prelander_host)
+            # Bypass OFF → chain-aware next hop (extra hops, then prelander
+            # pool). Session-aware: an authorized visitor reuses the
+            # click-time recorded prelander host (deterministic — no pool
+            # re-roll that could disagree with the authorized destination).
+            next_hop = await _resolve_next_hop(db, prelander_host, request=request, slug=slug)
             if next_hop:
                 dest = f"{next_hop.rstrip('/')}/d/{slug}"
                 logger.info("[PRELANDER] Hopping %s → %s", prelander_host, dest)
