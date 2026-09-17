@@ -26,7 +26,7 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  *  - NO slug visible EVER: the URL is rewritten to the bare root " /"
  *    immediately on mount, before any data loads.
  *  - SAME-TAB reload works (sessionStorage marker survives reload);
- *    a NEW TAB paste has no marker → bounce back to where it came from,
+ *    a NEW TAB paste has no marker → about:blank (never a preview).
  *    no preview of any kind (not even "not found").
  */
 
@@ -35,23 +35,12 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 // in a new tab — exactly the same-tab-allowed / new-tab-denied distinction.
 const TAB_MARKER = 'mpa_prelander_tab'
 
-// Send the visitor back to where they came from — no preview, no "not found"
-// page, nothing rendered. If there is no history to go back to (the URL was
-// pasted into a fresh tab from nowhere), close the tab / go to a blank page.
-function bounceToSource(): boolean {
-  try {
-    // navigation entry count > 1 means we have a real place to go back to
-    const nav = (window as any).navigation
-    const hasHistory = nav && typeof nav.entries === 'function'
-      ? nav.entries().length > 1
-      : window.history.length > 1
-    if (hasHistory) {
-      window.history.back()
-      return true
-    }
-  } catch { /* fall through */ }
-  // Pasted into a tab with no chain history — fall back to the source: the
-  // about:blank the tab started as (or close if the browser allows it).
+// Deny an out-of-flow visit: NO preview of any kind — not even a "page not
+// found" — and land on a blank page. Per spec, a URL pasted into a NEW TAB
+// shows about:blank (never the prelander, never a fallback site): the paste
+// source's history belongs to a different page, so going "back" there would
+// just reveal an unrelated page instead of denying the request.
+function denyWithBlankPage(): boolean {
   window.location.replace('about:blank')
   try { window.close() } catch { /* browsers may block; about:blank suffices */ }
   return false
@@ -100,7 +89,7 @@ export default function PrelanderSlugPage() {
         // SAME-TAB vs NEW-TAB (spec): sessionStorage is PER-TAB. A reload of
         // THIS tab keeps the marker; the same URL pasted into a NEW tab (or
         // any request that never came through the flow) has no marker →
-        // bounce back to the source with NO preview of any kind.
+        // show about:blank with NO preview of any kind.
         let isSameTab = false
         try { isSameTab = sessionStorage.getItem(TAB_MARKER) === '1' } catch { /* storage blocked → treat as new tab */ }
 
@@ -119,8 +108,8 @@ export default function PrelanderSlugPage() {
         }
 
         if (!isSameTab) {
-          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → bounce to source')
-          bounceToSource()
+          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → blank page')
+          denyWithBlankPage()
           return
         }
 
@@ -130,20 +119,20 @@ export default function PrelanderSlugPage() {
           })
           if (!res.ok) {
             // Server says no valid session — nothing to show. Same-tab reload
-            // after the session expired ALSO bounces (no preview at all).
-            console.log('[PRELANDER] Session resolve rejected — bounce to source')
-            bounceToSource()
+            // after the session expired ALSO denies (no preview at all).
+            console.log('[PRELANDER] Session resolve rejected — blank page')
+            denyWithBlankPage()
             return
           }
           const json = await res.json()
           if (!json?.success) {
-            bounceToSource()
+            denyWithBlankPage()
             return
           }
           // Validated — refresh/reload of this tab keeps working.
           setData(json)
         } catch (error) {
-          bounceToSource()
+          denyWithBlankPage()
           return
         } finally {
           setLoading(false)
@@ -227,9 +216,9 @@ export default function PrelanderSlugPage() {
 
             if (!handoffToken) {
               // NOT authorized (or the mint failed): no preview of any kind —
-              // bounce back to the source the request came from.
-              console.log('[PRELANDER] Unauthorized hop attempt — bounce to source, no preview')
-              bounceToSource()
+              // blank page, per spec (new-tab paste / foreign request).
+              console.log('[PRELANDER] Unauthorized hop attempt — blank page, no preview')
+              denyWithBlankPage()
               return
             }
 
@@ -262,10 +251,10 @@ export default function PrelanderSlugPage() {
         console.log('[PRELANDER DEBUG] Resolve response status:', res.status, res.ok)
 
         if (!res.ok) {
-          console.log('[PRELANDER ERROR] Resolve rejected — no preview, bounce to source')
+          console.log('[PRELANDER ERROR] Resolve rejected — no preview, blank page')
           // Spec: unauthorized/expired → NO preview of any kind (not even
-          // "not found"); fall back to where the request came from.
-          bounceToSource()
+          // "not found"); blank page.
+          denyWithBlankPage()
           return
         }
 
@@ -273,15 +262,15 @@ export default function PrelanderSlugPage() {
         console.log('[PRELANDER DEBUG] Resolve data:', JSON.stringify(json, null, 2))
         
         if (!json?.success) {
-          console.log('[PRELANDER ERROR] Resolve returned success=false — bounce to source')
-          bounceToSource()
+          console.log('[PRELANDER ERROR] Resolve returned success=false — blank page')
+          denyWithBlankPage()
           return
         }
 
         console.log('[PRELANDER SUCCESS] Setting prelander data')
         setData(json)
         // THE FLOW'S OWN ARRIVAL: mark THIS tab (reload now works; a paste
-        // of this URL into a new tab has no marker and bounces).
+        // of this URL into a new tab has no marker and shows about:blank).
         try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
