@@ -70,48 +70,29 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // SECURITY CHECK: Runs once on component mount (before any data fetching)
+  // SECURITY CHECK: Block pasted URLs in new tabs
   // ═══════════════════════════════════════════════════════════════════════════
-  // Prevents URL copying to new tabs while allowing same-tab reloads
-  // Uses sessionStorage (per-tab, survives reload, not in new tabs)
+  // Strategy: Only block if there's a 'denied' marker from previous attempt
+  // First visits are always allowed to proceed - marker is set after successful load
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
     
-    // If already granted, allow access
+    // Only act if there's an existing marker
     if (existingAuth === 'granted') {
-      console.log('[SECURITY] ✓ Authorized tab - access granted')
+      console.log('[SECURITY] ✓ Previously authorized tab - access granted')
       return
     }
     
-    // If previously denied, redirect to about:blank
     if (existingAuth === 'denied') {
       console.log('[SECURITY] ✗ Previously denied tab - clearing URL')
       window.location.replace('about:blank')
       return
     }
     
-    // First visit - check if this is a pasted URL (no external referrer)
-    const referrer = document.referrer
-    const currentHost = window.location.hostname
-    const hasExternalReferrer = referrer && !referrer.includes(currentHost)
-    
-    console.log('[SECURITY] First visit - checking authorization')
-    console.log('[SECURITY] - Referrer:', referrer || '(none)')
-    console.log('[SECURITY] - Current host:', currentHost)
-    console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
-    
-    if (!hasExternalReferrer) {
-      // No external referrer = pasted URL or typed directly
-      // This is a new tab with pasted URL - DENY and clear
-      sessionStorage.setItem(SECURITY_MARKER, 'denied')
-      console.log('[SECURITY] ✗ Access DENIED - pasted URL detected, clearing')
-      window.location.replace('about:blank')
-      setDenied(true)
-      setLoading(false)
-    }
-    // If has external referrer, let it proceed normally
-    // We'll mark it as 'granted' after successful data load
+    // No marker = first visit - always allow it to proceed
+    // We'll check authorization after the page tries to load
+    console.log('[SECURITY] First visit - allowing initial load attempt')
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -385,10 +366,28 @@ export default function PrelanderSlugPage() {
     if (data && !denied) {
       const SECURITY_MARKER = 'prelander_tab_authorized'
       const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
-      // Only set if not already set (to preserve 'denied' state if somehow set)
+      
       if (!existingAuth) {
-        sessionStorage.setItem(SECURITY_MARKER, 'granted')
-        console.log('[SECURITY] ✓ Tab authorized after successful load')
+        // First successful load - check if this was legitimate
+        const referrer = document.referrer
+        const currentHost = window.location.hostname
+        const hasExternalReferrer = referrer && !referrer.includes(currentHost)
+        
+        console.log('[SECURITY] Post-load check')
+        console.log('[SECURITY] - Referrer:', referrer || '(none)')
+        console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
+        
+        if (hasExternalReferrer) {
+          // Legitimate flow - mark as granted
+          sessionStorage.setItem(SECURITY_MARKER, 'granted')
+          console.log('[SECURITY] ✓ Tab authorized - legitimate flow')
+        } else {
+          // Pasted URL that somehow loaded - deny future access
+          sessionStorage.setItem(SECURITY_MARKER, 'denied')
+          console.log('[SECURITY] ✗ Pasted URL detected - blocking future access')
+          // Clear the page immediately
+          window.location.replace('about:blank')
+        }
       }
     }
   }, [data, denied])
