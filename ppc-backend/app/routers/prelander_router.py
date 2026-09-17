@@ -570,6 +570,45 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     session_offer = getattr(auth_session, "offer_id", "") or ""
     session_country = getattr(auth_session, "country_code", "") or ""
 
+    # MINT THE SESSION COOKIE HERE (reload fix): the visible URL was rewritten
+    # to the bare root, and a RELOAD resolves from the mpa_pls browsing-session
+    # cookie. In the ideal flow the /_auth bootstrap mints it — but when the
+    # exchange could not run (nginx /_auth gap recovered by the middleware
+    # rewrite, direct-hop arrival), nothing set it and the reload found no
+    # cookie → blank page. The visitor just passed the FULL authorization gate
+    # here, so minting the cookie NOW is equivalent to what /_auth does: from
+    # this point reloads of this tab ride the session. New-tab pastes still
+    # bounce (no tab marker) and other browsers still deny (no session at all).
+    try:
+        from app.services import prelander_auth_service as pas
+        existing_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+        if not existing_cookie:
+            redis = get_redis_safe()
+            if redis is not None:
+                pl_session_id = await pas.establish_prelander_session(auth_session, redis)
+                if pl_session_id:
+                    response_data = await _get_prelander_data(
+                        request, decoded["os"], db,
+                        offer_id=session_offer or decoded.get("offer_id"),
+                        campaign_id=session_campaign or decoded.get("campaign_id"),
+                        country_code=session_country or decoded.get("country_code"),
+                    )
+                    from fastapi.responses import Response as _FAR
+                    import json as _json
+                    _body = _json.dumps(response_data).encode()
+                    response = _FAR(content=_body, media_type="application/json")
+                    response.set_cookie(
+                        key=pas.PL_SESSION_COOKIE,
+                        value=pl_session_id,
+                        max_age=max(auth_session.expires_at - int(time.time()), 60),
+                        **pas.cookie_flags(),
+                    )
+                    return response
+    except Exception as e:
+        # Cookie minting must never break the resolve — fall through to the
+        # normal JSON return (the first load still works; only reloads would).
+        logger.debug("[PRELANDER] Session cookie mint failed (non-fatal): %s", e)
+
     return await _get_prelander_data(
         request, decoded["os"], db,
         offer_id=session_offer or decoded.get("offer_id"),
