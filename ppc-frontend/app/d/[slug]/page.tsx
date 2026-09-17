@@ -81,31 +81,39 @@ export default function PrelanderSlugPage() {
       }
 
       // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: Strict new tab blocking
+      // SECURITY: STRICT - Block pasted URLs permanently
       // ═══════════════════════════════════════════════════════════════════
+      // Logic: Marker is ONLY set if coming from external referrer
+      // Once denied (no marker), STAYS denied forever in that tab
       const MARKER = 'pldr_ok'
       const hasMarker = sessionStorage.getItem(MARKER)
       
-      // Simple rule: If no marker, BLOCK (except will be set immediately below for first load)
-      // If marker exists, ALLOW (this is a reload)
-      if (hasMarker) {
-        console.log('[PRELANDER SECURITY] Marker found - reload allowed')
+      if (hasMarker === 'granted') {
+        // This tab was authorized on first load - allow all future loads
+        console.log('[PRELANDER SECURITY] Authorized tab - access granted')
+      } else if (hasMarker === 'denied') {
+        // This tab was explicitly denied - block forever
+        console.log('[PRELANDER SECURITY] BLOCKED - This tab was denied access')
+        setDenied(true)
+        setLoading(false)
+        return
       } else {
-        // No marker - this is either first load OR new tab paste
-        // Set marker NOW (will exist for reloads but NOT in new tabs)
-        sessionStorage.setItem(MARKER, '1')
-        console.log('[PRELANDER SECURITY] First load - marker set')
-        
-        // Additional check: If we're NOT coming from a redirect, block
-        // New tab paste will have document.referrer empty or same domain
+        // First load in this tab - check referrer
         const ref = document.referrer
-        const sameOrigin = ref && new URL(ref).hostname === window.location.hostname
+        const hasExternalReferrer = ref && !ref.includes(window.location.hostname)
         
-        // If opening directly (no referrer or same domain) on FIRST load without marker
-        // This is a pasted URL - BLOCK IT
-        if (!ref || sameOrigin) {
-          console.log('[PRELANDER SECURITY] BLOCKED - Direct access or same-domain (pasted URL)')
-          console.log('[PRELANDER SECURITY] Referrer:', ref)
+        console.log('[PRELANDER SECURITY] First load - checking referrer')
+        console.log('[PRELANDER SECURITY] Referrer:', ref)
+        console.log('[PRELANDER SECURITY] Has external referrer:', hasExternalReferrer)
+        
+        if (hasExternalReferrer) {
+          // Came from external source (redirect flow) - GRANT permanently
+          sessionStorage.setItem(MARKER, 'granted')
+          console.log('[PRELANDER SECURITY] Access GRANTED - external referrer')
+        } else {
+          // No external referrer (pasted URL) - DENY permanently
+          sessionStorage.setItem(MARKER, 'denied')
+          console.log('[PRELANDER SECURITY] Access DENIED - no external referrer')
           setDenied(true)
           setLoading(false)
           return
