@@ -414,6 +414,36 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     if not prelander_host:
         prelander_host = normalize_domain(host_header)
 
+    # ── CLEAN URL MODE (spec: final prelander shows https://prelander-domain.com/
+    #    with NO slug/ids — the server associates the request internally) ──────
+    # slug == "session" is a sentinel meaning "no route in the URL": identity
+    # and campaign context come ENTIRELY from the prelander-domain browsing
+    # session cookie (mpa_pls) minted at the /_auth exchange. Tab B opening
+    # the bare domain carries no session → denied (image #2 requirement).
+    if slug == "session":
+        from app.services import prelander_auth_service as pas
+
+        redis = get_redis_safe()
+        if redis is None:
+            return await _denied_response()
+
+        pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+        session = await pas.validate_prelander_session(pl_session_cookie, redis)
+        if session is None:
+            logger.info("[PRELANDER] Clean-URL resolve denied (no valid session cookie)")
+            return await _denied_response()
+
+        # The session IS the authorization — content follows the session
+        # context (same hostname, different campaigns per visitor, STEP 10).
+        return await _get_prelander_data(
+            request,
+            session.os or "windows",
+            db,
+            offer_id=session.offer_id or None,
+            campaign_id=session.campaign_id or None,
+            country_code=session.country_code or None,
+        )
+
     # ── Domain-type detection & hop ───────────────────────────────────────────
     # The visitor is somewhere in the redirect chain sequence:
     #   Anchor → Inter → [extra hops] → Prelander Pool (Bypass OFF)
@@ -661,9 +691,12 @@ async def prelander_bootstrap(
     if not pl_session_id:
         return await _denied_response()
 
-    # Clean destination: back to the /d/{slug} page — the visible URL carries
-    # only the opaque route, never the handoff or any internal id.
-    dest = f"/d/{slug}" if slug else "/d/"
+    # CLEAN FINAL URL (spec): the visible prelander URL must be
+    # https://prelander-domain.com/ — no slug, no ids, no routing info.
+    # The browsing-session cookie now carries everything server-side; the
+    # root page resolves its content from that session ("session" sentinel).
+    # If the exchange arrived without a slug the /d fallback still applies.
+    dest = "/" if slug else "/d/"
     response = RedirectResponse(url=dest, status_code=302)
     response.set_cookie(
         key=pas.PL_SESSION_COOKIE,
@@ -671,7 +704,7 @@ async def prelander_bootstrap(
         max_age=max(session.expires_at - int(time.time()), 60),
         **pas.cookie_flags(),
     )
-    logger.info("[PRELANDER-AUTH] Handoff exchanged → browsing session established (click=%s)", session.click_id)
+    logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
     return response
 
 

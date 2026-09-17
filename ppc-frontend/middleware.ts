@@ -161,6 +161,17 @@ export async function middleware(request: NextRequest) {
     pathname === '/favicon.ico';
 
   if (!isPortalHost(host) && !isInfraPath) {
+    // ── CLEAN PRELANDER URL (spec): the bare prelander root is the FINAL
+    // prelander page. Non-portal domains requesting "/" are rewritten to the
+    // /d/[slug] page with the "session" sentinel — content resolves entirely
+    // from the server-side browsing-session cookie (no slug, no ids in the
+    // URL). No valid session → the backend returns the denied fallback, so a
+    // Tab B direct-open of the domain shows nothing protected.
+    if (pathname === '/') {
+      const url = request.nextUrl.clone();
+      url.pathname = '/d/session';
+      return NextResponse.rewrite(url);
+    }
     console.log(
       `[PORTAL_HOST_BLOCKED] host=${host} path=${pathname} — ` +
         `serving 404 (portal pages only allowed on: ${PORTAL_HOSTNAMES.join(', ')})`,

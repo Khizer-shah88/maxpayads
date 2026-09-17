@@ -108,8 +108,13 @@ app.include_router(prelander_router.router)
 app.include_router(redirection_domain_router.router)
 app.include_router(prelander_template_router.router)
 app.include_router(prelander_public_router.router)  # Public prelander rendering
-app.include_router(direct_link_router.router)
+# direct_link_stats_router BEFORE direct_link_router: it owns the literal
+# /direct-links/manual-conversions|stats-profiles|stats/... routes. FastAPI
+# matches routes in registration order — with direct_link_router first, its
+# GET /{link_id} captured "manual-conversions" as a link id and the Conversion
+# History modal failed with "Direct Link not found".
 app.include_router(direct_link_stats_router.router)  # Direct link enhanced stats
+app.include_router(direct_link_router.router)
 app.include_router(redirect_chain_router.router)
 app.include_router(smartlink_structure_router.router)
 app.include_router(public_stats_router.router)

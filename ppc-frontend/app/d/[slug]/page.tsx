@@ -23,7 +23,10 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
 export default function PrelanderSlugPage() {
   const params = useParams()
-  const slug = params.slug as string
+  // slug == "session" is the CLEAN-URL sentinel: the page was mounted at the
+  // bare prelander domain root (https://prelander-domain.com/) and resolves
+  // its content entirely from the server-side browsing-session cookie.
+  const slug = (params.slug as string) || 'session'
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
@@ -47,6 +50,36 @@ export default function PrelanderSlugPage() {
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
+
+      // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
+      // slug == "session": mounted at the bare prelander root. No hop
+      // decisions apply — resolve content from the browsing-session cookie.
+      if (slug === 'session') {
+        try {
+          const res = await fetch('/api/prelander/resolve/session', {
+            headers: { 'X-Prelander-Host': hostname },
+          })
+          if (!res.ok) {
+            setBlocked(true)
+            setErrorDetails(`API returned status ${res.status}`)
+            setLoading(false)
+            return
+          }
+          const json = await res.json()
+          if (!json?.success) {
+            setBlocked(true)
+            setErrorDetails('API returned success=false')
+          } else {
+            setData(json)
+          }
+        } catch (error) {
+          setBlocked(true)
+          setErrorDetails(error instanceof Error ? error.message : 'Unknown error')
+        } finally {
+          setLoading(false)
+        }
+        return
+      }
 
       console.log('[PRELANDER DEBUG] Starting fetch')
       console.log('[PRELANDER DEBUG] - slug:', slug)
@@ -178,6 +211,13 @@ export default function PrelanderSlugPage() {
         } else {
           console.log('[PRELANDER SUCCESS] Setting prelander data')
           setData(json)
+          // CLEAN FINAL URL (spec): the visible prelander address must be
+          // https://prelander-domain.com/ — no slug, no ids. The content is
+          // already validated server-side; from here refreshes ride the
+          // browsing-session cookie (the /d/session route), not the slug.
+          if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
+            window.history.replaceState({}, '', '/')
+          }
         }
       } catch (error) {
         console.error('[PRELANDER ERROR] Exception in fetchData:', error)
