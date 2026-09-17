@@ -69,7 +69,59 @@ export default function PrelanderSlugPage() {
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SECURITY CHECK: Runs once on component mount (before any data fetching)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Prevents URL copying to new tabs while allowing same-tab reloads
+  // Uses sessionStorage (per-tab, survives reload, not in new tabs)
   useEffect(() => {
+    const SECURITY_MARKER = 'prelander_tab_authorized'
+    const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
+    
+    if (existingAuth === 'granted') {
+      // Tab was previously authorized - allow
+      console.log('[SECURITY] ✓ Authorized tab - access granted')
+      return
+    }
+    
+    if (existingAuth === 'denied') {
+      // Tab was previously denied - block permanently
+      console.log('[SECURITY] ✗ Denied tab - blocking permanently')
+      setDenied(true)
+      setLoading(false)
+      return
+    }
+    
+    // First visit in this tab - check referrer
+    const referrer = document.referrer
+    const currentHost = window.location.hostname
+    const hasExternalReferrer = referrer && !referrer.includes(currentHost)
+    
+    console.log('[SECURITY] First visit - checking authorization')
+    console.log('[SECURITY] - Referrer:', referrer || '(none)')
+    console.log('[SECURITY] - Current host:', currentHost)
+    console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
+    
+    if (hasExternalReferrer) {
+      // Came from external domain (legitimate redirect flow) - GRANT
+      sessionStorage.setItem(SECURITY_MARKER, 'granted')
+      console.log('[SECURITY] ✓ Access GRANTED - external referrer detected')
+    } else {
+      // No external referrer (pasted/typed URL) - DENY permanently
+      sessionStorage.setItem(SECURITY_MARKER, 'denied')
+      console.log('[SECURITY] ✗ Access DENIED - no external referrer')
+      setDenied(true)
+      setLoading(false)
+    }
+  }, []) // Empty deps - runs once on mount
+
+  useEffect(() => {
+    // Skip data fetch if already denied by security check
+    if (denied) {
+      console.log('[PRELANDER] Skipping fetch - access denied by security check')
+      return
+    }
+
     const fetchData = async () => {
       console.log('[PRELANDER DEBUG] useEffect triggered')
       
@@ -78,51 +130,6 @@ export default function PrelanderSlugPage() {
         setDenied(true)
         setLoading(false)
         return 
-      }
-
-      // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: Referrer-based access control
-      // ═══════════════════════════════════════════════════════════════════
-      // Strategy:
-      //  - First visit with external referrer → GRANT (mark tab as authorized)
-      //  - First visit WITHOUT external referrer (pasted URL) → DENY forever
-      //  - Subsequent visits in same tab → Use existing marker (survives reload)
-      //  - New tab → No marker → Check referrer → Will be denied (self-referrer)
-      const MARKER = 'pldr_security_ok'
-      const existingMarker = sessionStorage.getItem(MARKER)
-      
-      if (existingMarker === 'granted') {
-        // This tab was previously authorized - allow access
-        console.log('[PRELANDER SECURITY] Previously authorized tab - access granted')
-      } else if (existingMarker === 'denied') {
-        // This tab was previously denied - block permanently
-        console.log('[PRELANDER SECURITY] BLOCKED - Previously denied tab')
-        setDenied(true)
-        setLoading(false)
-        return
-      } else {
-        // First visit in this tab - validate referrer
-        const ref = document.referrer
-        const currentHost = window.location.hostname
-        const hasExternalReferrer = ref && !ref.includes(currentHost)
-        
-        console.log('[PRELANDER SECURITY] First visit - validating access')
-        console.log('[PRELANDER SECURITY] Referrer:', ref || '(empty)')
-        console.log('[PRELANDER SECURITY] Current host:', currentHost)
-        console.log('[PRELANDER SECURITY] Has external referrer:', hasExternalReferrer)
-        
-        if (hasExternalReferrer) {
-          // Legitimate redirect flow - GRANT access to this tab
-          sessionStorage.setItem(MARKER, 'granted')
-          console.log('[PRELANDER SECURITY] ✓ Access GRANTED - external referrer detected')
-        } else {
-          // Direct access (pasted URL / typed URL / bookmark) - DENY forever
-          sessionStorage.setItem(MARKER, 'denied')
-          console.log('[PRELANDER SECURITY] ✗ Access DENIED - no external referrer')
-          setDenied(true)
-          setLoading(false)
-          return
-        }
       }
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
@@ -368,7 +375,7 @@ export default function PrelanderSlugPage() {
       }
     }
     fetchData()
-  }, [slug])
+  }, [slug, denied])
 
   useEffect(() => {
     document.title = 'Download Ready'
