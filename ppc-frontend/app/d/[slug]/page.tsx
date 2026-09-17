@@ -72,7 +72,7 @@ export default function PrelanderSlugPage() {
   // ═══════════════════════════════════════════════════════════════════════════
   // SECURITY CHECK: Block pasted URLs in new tabs
   // ═══════════════════════════════════════════════════════════════════════════
-  // Strategy: Always allow first load, check referrer AFTER successful load
+  // Strategy: Check immediately for denied marker, allow first loads, validate after
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
@@ -83,15 +83,39 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // If previously denied, redirect to Google immediately
+    // If previously denied, go back to previous page immediately
     if (existingAuth === 'denied') {
-      console.log('[SECURITY] ✗ Previously denied tab - redirecting to Google')
-      window.location.replace('https://www.google.com')
+      console.log('[SECURITY] ✗ Previously denied tab - going back')
+      if (window.history.length > 1) {
+        window.history.back()
+      } else {
+        // Fallback if no history - go to Google
+        window.location.replace('https://www.google.com')
+      }
       return
     }
     
-    // First visit - ALWAYS allow to proceed (no pre-load blocking)
-    console.log('[SECURITY] First visit - allowing page to load')
+    // First visit - check quickly for obvious pasted URLs
+    const referrer = document.referrer
+    const historyLength = window.history.length
+    
+    console.log('[SECURITY] Quick first visit check')
+    console.log('[SECURITY] - Referrer:', referrer || '(none)')
+    console.log('[SECURITY] - History length:', historyLength)
+    
+    // If it's clearly a pasted URL (no referrer AND history length = 1), block immediately
+    if (!referrer && historyLength === 1) {
+      console.log('[SECURITY] ✗ Clear pasted URL - blocking before load')
+      sessionStorage.setItem(SECURITY_MARKER, 'denied')
+      // Go to Google since there's no previous page
+      window.location.replace('https://www.google.com')
+      setDenied(true)
+      setLoading(false)
+      return
+    }
+    
+    // Otherwise allow to proceed - will be validated after load
+    console.log('[SECURITY] Allowing page to load for validation')
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -361,7 +385,6 @@ export default function PrelanderSlugPage() {
   }, [])
 
   // Post-load security check: Mark tab as authorized or deny based on referrer
-  // This runs AFTER data loads to minimize false positives on legitimate redirects
   useEffect(() => {
     if (data && !denied) {
       const SECURITY_MARKER = 'prelander_tab_authorized'
@@ -382,13 +405,17 @@ export default function PrelanderSlugPage() {
           sessionStorage.setItem(SECURITY_MARKER, 'granted')
           console.log('[SECURITY] ✓ Tab authorized - legitimate redirect flow')
         } else {
-          // Pasted URL that loaded - deny and redirect to Google IMMEDIATELY
+          // Pasted URL that somehow loaded - deny and go back
           sessionStorage.setItem(SECURITY_MARKER, 'denied')
-          console.log('[SECURITY] ✗ Pasted URL detected - redirecting to Google')
-          // Use setTimeout 0 to redirect as fast as possible after render
-          setTimeout(() => {
+          console.log('[SECURITY] ✗ Pasted URL detected - going back to previous page')
+          
+          // Go back to previous page (e.g., Wikipedia)
+          if (window.history.length > 1) {
+            window.history.back()
+          } else {
+            // Fallback if no history
             window.location.replace('https://www.google.com')
-          }, 0)
+          }
         }
       }
     }
