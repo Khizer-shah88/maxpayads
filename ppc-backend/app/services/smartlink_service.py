@@ -77,6 +77,15 @@ async def generate_smartlink(
         base_url = "https://clickspot.icu"
     
     base_url = base_url.rstrip("/")
+    
+    # ── SMARTLINK SIGNING ──────────────────────────────────────────────────
+    # Every generated link carries a system-generated HMAC token bound to the
+    # exact Tag IDs + a fresh per-link nonce (so no two generated links are
+    # byte-identical, yet each copy validates). /click verifies it server-side.
+    from app.services import smartlink_signing as sls
+    nonce = sls.new_link_nonce()
+    params.update(sls.signed_link_params(pub_identifier, site_identifier, nonce))
+    
     query_string = urlencode(params)
     
     return f"{base_url}/click?{query_string}"

@@ -95,7 +95,10 @@ class Settings(BaseSettings):
     # per window, on top of the global request limiter.
     PRELANDER_AUTH_RATE_LIMIT: int = 30
     PRELANDER_AUTH_RATE_WINDOW: int = 60
-
+    # Smartlink signing — strict mode rejects Smartlinks WITHOUT a valid
+    # HMAC token at /click. Default false: legacy links (no token) keep
+    # working; links CARRYING a token are always verified regardless.
+    SMARTLINK_HASH_REQUIRED: bool = False
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
     # Turn off to keep click documents minimal on very high volume.
