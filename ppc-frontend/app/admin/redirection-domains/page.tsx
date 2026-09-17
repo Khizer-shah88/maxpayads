@@ -101,8 +101,6 @@ export default function RedirectionDomainsPage() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [affectedChains, setAffectedChains] = useState<{ id: string; name: string }[]>([])
 
-  useEffect(() => { initialize() }, [])
-
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -120,7 +118,10 @@ export default function RedirectionDomainsPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { 
+    initialize()
+    load() 
+  }, [])
 
   const filtered = domains.filter(d => d.domain_type === activeTab)
   const typeMeta = DOMAIN_TYPES.find(t => t.key === activeTab)!
@@ -164,14 +165,17 @@ export default function RedirectionDomainsPage() {
     try {
       const payload = { ...form }
       if (modal === 'edit' && editId) {
-        await adminApi.updateRedirectionDomain(editId, payload)
+        const res = await adminApi.updateRedirectionDomain(editId, payload)
+        // Update in place instead of full reload
+        setDomains(prev => prev.map(d => d.id === editId ? res.data.domain : d))
         toast.success('Domain updated')
       } else {
-        await adminApi.createRedirectionDomain(payload)
+        const res = await adminApi.createRedirectionDomain(payload)
+        // Add new domain to list instead of full reload
+        setDomains(prev => [...prev, res.data.domain])
         toast.success('Domain added')
       }
       setModal(null)
-      load()
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to save domain')
     } finally {
@@ -196,10 +200,11 @@ export default function RedirectionDomainsPage() {
       } else {
         toast.success('Domain removed')
       }
+      // Remove from list instead of full reload
+      setDomains(prev => prev.filter(d => d.id !== deleteModal.id))
       setDeleteModal(null)
       setDeleteConfirmText('')
       setAffectedChains([])
-      load()
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Delete failed')
     } finally {
@@ -213,12 +218,15 @@ export default function RedirectionDomainsPage() {
       const res = await adminApi.verifyRedirectionDomainDns(d.id)
       if (res.data.domain?.dns_status === 'verified') {
         toast.success('DNS verified — domain is pointing to the server')
+        // Update in place instead of full reload
+        setDomains(prev => prev.map(dom => dom.id === d.id ? { ...dom, dns_status: 'verified' } : dom))
       } else {
         toast.error(res.data.message || 'DNS verification failed')
+        setDomains(prev => prev.map(dom => dom.id === d.id ? { ...dom, dns_status: 'failed' } : dom))
       }
-      load()
     } catch {
       toast.error('DNS verification failed')
+      setDomains(prev => prev.map(dom => dom.id === d.id ? { ...dom, dns_status: 'failed' } : dom))
     } finally {
       setVerifyingId(null)
     }
