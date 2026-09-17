@@ -81,30 +81,36 @@ export default function PrelanderSlugPage() {
       }
 
       // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: One-time tab access - prevents URL copying to new tabs
+      // SECURITY: Detect URL copying to new tabs
       // ═══════════════════════════════════════════════════════════════════
-      const TAB_ACCESS_KEY = 'prelander_legitimate_access'
-      const hasLegitimateAccess = sessionStorage.getItem(TAB_ACCESS_KEY)
+      const TAB_ACCESS_KEY = 'prelander_content_loaded'
+      const hasLoadedBefore = sessionStorage.getItem(TAB_ACCESS_KEY)
+      
+      // Check how this page was accessed using Navigation API
+      const navigationType = typeof window !== 'undefined' && window.performance
+        ? performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming
+        : null
+      
+      // Only block if:
+      // 1. No sessionStorage (new tab)
+      // 2. AND navigation type is "navigate" (not "reload")  
+      // 3. AND no referrer (pasted URL)
       const referrer = typeof document !== 'undefined' ? document.referrer : ''
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : ''
       
-      // Check if this is legitimate access
-      const isLegitimate = hasLegitimateAccess === 'granted' || 
-                          (referrer && !referrer.includes(currentHost)) // Came from external referrer
-      
-      if (!isLegitimate) {
-        // No access token AND no external referrer = URL was pasted = DENY
-        console.log('[PRELANDER SECURITY] Access denied - no legitimate access (new tab with copied URL)')
-        console.log('[PRELANDER SECURITY] - hasToken:', hasLegitimateAccess)
+      if (!hasLoadedBefore && 
+          navigationType?.type === 'navigate' && 
+          !referrer) {
+        console.log('[PRELANDER SECURITY] Blocked - URL pasted in new tab')
+        console.log('[PRELANDER SECURITY] - navType:', navigationType?.type)
         console.log('[PRELANDER SECURITY] - referrer:', referrer)
         setDenied(true)
         setLoading(false)
         return
       }
       
-      // Grant access token for this tab (persists across reloads)
-      sessionStorage.setItem(TAB_ACCESS_KEY, 'granted')
-      console.log('[PRELANDER SECURITY] Access granted - legitimate access from redirect flow')
+      // Mark as loaded (persists in this tab across reloads)
+      sessionStorage.setItem(TAB_ACCESS_KEY, 'true')
+      console.log('[PRELANDER SECURITY] Access granted')
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
