@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
@@ -11,9 +11,29 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  * 
  * This bypasses the click-based authorization system to allow direct testing
  * of template assignments on prelander domains.
+ *
+ * Next.js 14 requires any component reading useSearchParams() to sit inside a
+ * Suspense boundary, or static prerendering of the page fails the build.
  */
 
 export default function PreviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#f7f8fa]">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
+            <p className="text-sm text-gray-500">Loading preview...</p>
+          </div>
+        </div>
+      }
+    >
+      <PreviewContent />
+    </Suspense>
+  )
+}
+
+function PreviewContent() {
   const searchParams = useSearchParams()
   const osParam = searchParams.get('os') || 'windows'
   
