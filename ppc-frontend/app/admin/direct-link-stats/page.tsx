@@ -213,6 +213,14 @@ export default function DirectLinkStatsPage() {
   const [editConvValue, setEditConvValue] = useState(0)
   const [editConvReason, setEditConvReason] = useState('')
   const [savingConversion, setSavingConversion] = useState(false)
+  // Add-new-conversion form (inside the history modal — works even when the
+  // list is empty, so the publisher's card action is never a dead end)
+  const [showAddConv, setShowAddConv] = useState(false)
+  const [addConvDate, setAddConvDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [addConvLink, setAddConvLink] = useState('')
+  const [addConvValue, setAddConvValue] = useState(0)
+  const [addConvReason, setAddConvReason] = useState('')
+  const [addingConversion, setAddingConversion] = useState(false)
 
   // Date filter
   const [dateFrom, setDateFrom] = useState(() => {
@@ -385,13 +393,18 @@ export default function DirectLinkStatsPage() {
   }
 
   // ── Conversion history (old entries editable + deletable) ─────────────────
+  const refreshHistory = async (pubId: string) => {
+    const res = await directLinkApi.listManualConversions({ publisher_id: pubId })
+    setHistoryRows(res.data?.conversions || [])
+  }
+
   const openHistory = async (pub: { id: string; name: string }) => {
     setHistoryModal({ pubId: pub.id, pubName: pub.name })
     setHistoryLoading(true)
     setEditingConversion(null)
+    setShowAddConv(false)
     try {
-      const res = await directLinkApi.listManualConversions({ publisher_id: pub.id })
-      setHistoryRows(res.data?.conversions || [])
+      await refreshHistory(pub.id)
     } catch (err: any) {
       console.error('Failed to load conversion history:', err)
       const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to load conversion history'
@@ -399,6 +412,33 @@ export default function DirectLinkStatsPage() {
       setHistoryRows([])
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+  const addConversion = async () => {
+    if (!historyModal) return
+    if (!addConvDate) { toast.error('Date is required'); return }
+    if (addConvValue < 0) { toast.error('Conversions must be ≥ 0'); return }
+    if (!addConvReason.trim()) { toast.error('Reason is required'); return }
+    setAddingConversion(true)
+    try {
+      await directLinkApi.createManualConversion({
+        date: addConvDate,
+        publisher_id: historyModal.pubId,
+        link_id: addConvLink || null,
+        conversions: addConvValue,
+        reason: addConvReason.trim(),
+      })
+      toast.success('Conversion entry added')
+      setShowAddConv(false)
+      setAddConvValue(0)
+      setAddConvReason('')
+      await refreshHistory(historyModal.pubId)
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to add the conversion entry'
+      toast.error(errorMsg)
+    } finally {
+      setAddingConversion(false)
     }
   }
 
@@ -415,8 +455,7 @@ export default function DirectLinkStatsPage() {
       toast.success('Conversion entry updated')
       setEditingConversion(null)
       // Refresh the open history list
-      const res = await directLinkApi.listManualConversions({ publisher_id: editingConversion.publisher_id })
-      setHistoryRows(res.data?.conversions || [])
+      await refreshHistory(editingConversion.publisher_id)
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to update the conversion entry'
       toast.error(errorMsg)
@@ -1451,11 +1490,73 @@ export default function DirectLinkStatsPage() {
                   <h3 className="text-lg font-bold text-gray-900">Conversion History</h3>
                   <p className="text-sm text-gray-400 mt-0.5">{historyModal.pubName} — entered conversions, newest first</p>
                 </div>
-                <button onClick={() => setHistoryModal(null)}
-                  className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
-                  <X size={18} />
-                </button>
+                <div className="flex items-center gap-2">
+                  {!showAddConv && (
+                    <button
+                      onClick={() => {
+                        setShowAddConv(true)
+                        setEditingConversion(null)
+                        setAddConvDate(new Date().toISOString().split('T')[0])
+                        setAddConvLink('')
+                        setAddConvValue(0)
+                        setAddConvReason('')
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white transition-colors"
+                    >
+                      <Plus size={14} /> Add Conversion
+                    </button>
+                  )}
+                  <button onClick={() => { setHistoryModal(null); setShowAddConv(false) }}
+                    className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
+
+              {/* ── Add conversion form (works even when the list is empty) ── */}
+              {showAddConv && (
+                <div className="mx-5 mt-5 border border-gray-200 rounded-xl bg-gray-50 p-4">
+                  <p className="text-sm font-semibold text-gray-800 mb-3">New conversion entry</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Date</label>
+                      <input type="date" value={addConvDate}
+                        onChange={e => setAddConvDate(e.target.value)} className={inp} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Conversions</label>
+                      <input type="number" min={0} value={addConvValue}
+                        onChange={e => setAddConvValue(parseInt(e.target.value) || 0)} className={inp} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Link (optional)</label>
+                      <select value={addConvLink} onChange={e => setAddConvLink(e.target.value)} className={inp}>
+                        <option value="">All Links</option>
+                        {links.filter(l => l.publisher_id === historyModal.pubId && l.status !== 'archived').map(l => (
+                          <option key={l.id} value={l.id}>{l.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Reason</label>
+                    <input value={addConvReason}
+                      onChange={e => setAddConvReason(e.target.value)}
+                      placeholder="e.g. Postback missed — entered manually"
+                      className={inp} />
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <button onClick={addConversion} disabled={addingConversion}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white disabled:bg-gray-300 flex items-center gap-1.5">
+                      {addingConversion ? <><Spinner size={13} /> Saving…</> : 'Save Entry'}
+                    </button>
+                    <button onClick={() => setShowAddConv(false)}
+                      className="px-4 py-2 rounded-xl text-xs text-gray-600 border border-gray-200 hover:bg-gray-50">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="overflow-y-auto flex-1">
                 {historyLoading ? (
@@ -1464,7 +1565,21 @@ export default function DirectLinkStatsPage() {
                   <div className="text-center py-16 text-gray-400">
                     <History size={36} className="mx-auto mb-3 opacity-20" />
                     <p className="text-sm">No conversion entries yet for this publisher</p>
-                    <p className="text-xs mt-1">Use the ✏️ button on a link row to add conversions for any date.</p>
+                    <p className="text-xs mt-1 mb-4">Add one for any date — past or today.</p>
+                    {!showAddConv && (
+                      <button
+                        onClick={() => {
+                          setShowAddConv(true)
+                          setAddConvDate(new Date().toISOString().split('T')[0])
+                          setAddConvLink('')
+                          setAddConvValue(0)
+                          setAddConvReason('')
+                        }}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white transition-colors"
+                      >
+                        <Plus size={14} /> Add First Conversion
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <table className="w-full text-sm">
@@ -1512,11 +1627,11 @@ export default function DirectLinkStatsPage() {
                               <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate" title={row.reason}>{row.reason || '—'}</td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <button
-                                  onClick={() => { setEditingConversion(row); setEditConvValue(row.conversions); setEditConvReason(row.reason || '') }}
+                                  onClick={() => { setEditingConversion(row); setEditConvValue(row.conversions); setEditConvReason(row.reason || ''); setShowAddConv(false) }}
                                   title="Edit this conversion entry"
-                                  className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 mr-1"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 mr-1.5"
                                 >
-                                  <Edit3 size={13} />
+                                  <Edit3 size={12} /> Edit
                                 </button>
                                 <button
                                   onClick={() => deleteConversion(row)}
