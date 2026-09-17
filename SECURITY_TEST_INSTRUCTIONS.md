@@ -34,7 +34,7 @@ The security check now runs in a **separate useEffect** that executes **before**
 3. Content still shows ✅
 4. Reload multiple times - always works ✅
 
-### Step 3: Test New Tab with Pasted URL (Should Block)
+### Step 3: Test New Tab with Pasted URL (Should Block + Clear URL)
 1. **Copy the URL** from address bar (e.g., `https://prelander-domain.com/`)
 2. **Open NEW tab** (Ctrl+T / Cmd+T)
 3. **Paste URL** and press Enter
@@ -44,20 +44,18 @@ The security check now runs in a **separate useEffect** that executes **before**
    [SECURITY] - Referrer: (none)
    [SECURITY] - Has external referrer: false
    [SECURITY] ✗ Access DENIED - no external referrer
+   [SECURITY] Clearing URL from address bar
    [PRELANDER] Skipping fetch - access denied by security check
    ```
 5. Page shows **completely blank** (white screen) ❌
-6. No content, no loader, nothing
+6. **Address bar shows `about:blank`** - URL is automatically cleared 🔒
+7. No content, no loader, nothing visible
 
 ### Step 4: Test Reload in Blocked Tab (Should Stay Blocked)
-1. **In the blocked tab**, press F5 to reload
-2. Check console - You should see:
-   ```
-   [SECURITY] ✗ Denied tab - blocking permanently
-   [PRELANDER] Skipping fetch - access denied by security check
-   ```
-3. Page stays **completely blank** ❌
-4. Reload multiple times - always blocked ❌
+1. **In the blocked tab** (now showing `about:blank`), press F5 to reload
+2. Page stays on `about:blank` ❌
+3. **Note**: The `about:blank` page itself reloads, sessionStorage is cleared
+4. Security marker is gone, so if you manually type the URL again, it will deny and clear again
 
 ### Step 5: Test Typing URL Manually (Should Block)
 1. Open new tab
