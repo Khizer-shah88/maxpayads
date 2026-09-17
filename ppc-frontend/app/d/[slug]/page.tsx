@@ -100,6 +100,10 @@ export default function PrelanderSlugPage() {
             // lands the visitor on the clean /d/{slug} URL (no token in the
             // address bar). Refreshes then ride the session cookie, never the
             // handoff.
+            // If the prelander domain's nginx block is missing the /_auth/
+            // location, the Next.js middleware there recovers the request by
+            // redirecting to the clean /d/{slug} — the server-side
+            // fingerprint/slug binding still authorizes the visitor.
             try {
               console.log('[PRELANDER DEBUG] Requesting handoff token')
               const hRes = await fetch(

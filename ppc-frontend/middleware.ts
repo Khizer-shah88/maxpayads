@@ -112,6 +112,30 @@ export async function middleware(request: NextRequest) {
   let response: NextResponse;
 
   // ════════════════════════════════════════════════════════════════════════════
+  // 0a. /_auth/* RECOVERY — this request should never reach Next.js
+  // ════════════════════════════════════════════════════════════════════════════
+  // /_auth/{handoff} is a FastAPI route (nginx rewrites it to
+  // /prelander/_auth/…). If the request arrives HERE, the domain's nginx block
+  // is missing the /_auth/ location — without this recovery the visitor would
+  // hit Next.js's own 404 and the whole redirect flow dies at the prelander
+  // hop. Recover by redirecting to the clean /d/{slug}: the server-side
+  // fingerprint/slug binding still authorizes the visitor there, so the
+  // prelander renders normally (without the prelander-domain cookie, which
+  // only the real bootstrap could mint).
+  if (pathname.startsWith('/_auth/')) {
+    const slug = request.nextUrl.searchParams.get('slug');
+    const handoff = pathname.slice('/_auth/'.length);
+    console.log(
+      `[_AUTH_RECOVERY] handoff arrived at Next.js (nginx /_auth/ location missing?) — ` +
+        `redirecting slug=${slug ?? '(none)'} handoff=${handoff.slice(0, 6)}… to /d/{slug}`,
+    );
+    return NextResponse.redirect(
+      new URL(slug ? `/d/${slug}` : '/d/', request.nextUrl.origin),
+      302,
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
   // ════════════════════════════════════════════════════════════════════════════
   // Any hostname pointing at this server (newly added redirection domains hit
