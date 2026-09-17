@@ -170,6 +170,10 @@ _PL_SESSION_PREFIX = "prelander_plsess:"  # prelander-domain browsing session id
 COOKIE_NAME = "mpa_pla"
 # Prelander-domain browsing-session cookie (set by the handoff exchange).
 PL_SESSION_COOKIE = "mpa_pls"
+# One-time 60s bridge cookie set ONLY by the /_auth exchange. The prelander
+# page consumes it once to mark the tab (sessionStorage is per-tab); after
+# that, same-tab reloads carry the marker and new-tab pastes do not.
+TAB_BOOTSTRAP_COOKIE = "mpa_tab_ok"
 
 
 def cookie_ttl_seconds() -> int:

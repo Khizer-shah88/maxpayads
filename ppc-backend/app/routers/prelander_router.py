@@ -704,6 +704,20 @@ async def prelander_bootstrap(
         max_age=max(session.expires_at - int(time.time()), 60),
         **pas.cookie_flags(),
     )
+    # ONE-TIME TAB BOOTSTRAP (spec: same-tab reload works, new-tab paste
+    # denied): cookies are shared across tabs, so the server alone can never
+    # distinguish them — sessionStorage (PER-TAB) can. This 60s cookie is the
+    # bridge: the FIRST session-mode load after the exchange consumes it to
+    # set the per-tab marker; after that, only a reload of THIS tab carries
+    # the marker. A URL pasted into a new tab has neither → bounced client-side.
+    response.set_cookie(
+        key=pas.TAB_BOOTSTRAP_COOKIE,
+        value="1",
+        max_age=60,
+        samesite="lax",
+        secure=True,
+        path="/",
+    )
     logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
     return response
 

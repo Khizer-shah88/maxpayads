@@ -16,10 +16,46 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  *    fetch's opaque redirect mode would otherwise hide).
  *
  * Redirection flow (spec):
- *  - Bypass OFF: Anchor → Inter (0.75s dwell) → THIS landing page
- *  - Bypass ON:  Anchor → Inter (0.75s dwell) → Campaign URL (via
+ *  - Bypass OFF: Anchor → Inter (timer dwell on the INTER domain only) → THIS landing page
+ *  - Bypass ON:  Anchor → Inter (timer dwell) → Campaign URL (via
  *    bypass_redirect_url from /domain-type — this page never shows)
+ *
+ * PRELANDER-DOMAIN RULES (spec):
+ *  - NO timer on the prelander domain — the dwell runs only on the Inter
+ *    domain during its hop. This page never waits artificially.
+ *  - NO slug visible EVER: the URL is rewritten to the bare root " /"
+ *    immediately on mount, before any data loads.
+ *  - SAME-TAB reload works (sessionStorage marker survives reload);
+ *    a NEW TAB paste has no marker → bounce back to where it came from,
+ *    no preview of any kind (not even "not found").
  */
+
+// sessionStorage key marking THIS TAB as the one the flow opened the
+// prelander in. sessionStorage is PER-TAB: it survives reloads but is empty
+// in a new tab — exactly the same-tab-allowed / new-tab-denied distinction.
+const TAB_MARKER = 'mpa_prelander_tab'
+
+// Send the visitor back to where they came from — no preview, no "not found"
+// page, nothing rendered. If there is no history to go back to (the URL was
+// pasted into a fresh tab from nowhere), close the tab / go to a blank page.
+function bounceToSource(): boolean {
+  try {
+    // navigation entry count > 1 means we have a real place to go back to
+    const nav = (window as any).navigation
+    const hasHistory = nav && typeof nav.entries === 'function'
+      ? nav.entries().length > 1
+      : window.history.length > 1
+    if (hasHistory) {
+      window.history.back()
+      return true
+    }
+  } catch { /* fall through */ }
+  // Pasted into a tab with no chain history — fall back to the source: the
+  // about:blank the tab started as (or close if the browser allows it).
+  window.location.replace('about:blank')
+  try { window.close() } catch { /* browsers may block; about:blank suffices */ }
+  return false
+}
 
 export default function PrelanderSlugPage() {
   const params = useParams()
@@ -55,26 +91,60 @@ export default function PrelanderSlugPage() {
       // slug == "session": mounted at the bare prelander root. No hop
       // decisions apply — resolve content from the browsing-session cookie.
       if (slug === 'session') {
+        // NO SLUG VISIBLE, EVEN WHILE LOADING: scrub the path to the bare
+        // root immediately — before any fetch renders anything.
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
+          window.history.replaceState({}, '', '/')
+        }
+
+        // SAME-TAB vs NEW-TAB (spec): sessionStorage is PER-TAB. A reload of
+        // THIS tab keeps the marker; the same URL pasted into a NEW tab (or
+        // any request that never came through the flow) has no marker →
+        // bounce back to the source with NO preview of any kind.
+        let isSameTab = false
+        try { isSameTab = sessionStorage.getItem(TAB_MARKER) === '1' } catch { /* storage blocked → treat as new tab */ }
+
+        // TAB BOOTSTRAP: the /_auth exchange set a one-time 60s bridge cookie.
+        // This is the flow's own arrival — consume it NOW and mark THIS tab,
+        // so reloads of this tab keep working while pastes elsewhere never do.
+        if (!isSameTab) {
+          const m = document.cookie.match(/(?:^|;\s*)mpa_tab_ok=1(?:;|$)/)
+          if (m) {
+            // Consume (expire immediately) — one-time bridge.
+            document.cookie = 'mpa_tab_ok=; Max-Age=0; path=/'
+            try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
+            isSameTab = true
+            console.log('[PRELANDER] Tab bootstrap consumed — this tab is now the flow tab')
+          }
+        }
+
+        if (!isSameTab) {
+          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → bounce to source')
+          bounceToSource()
+          return
+        }
+
         try {
           const res = await fetch('/api/prelander/resolve/session', {
             headers: { 'X-Prelander-Host': hostname },
           })
           if (!res.ok) {
-            setBlocked(true)
-            setErrorDetails(`API returned status ${res.status}`)
-            setLoading(false)
+            // Server says no valid session — nothing to show. Same-tab reload
+            // after the session expired ALSO bounces (no preview at all).
+            console.log('[PRELANDER] Session resolve rejected — bounce to source')
+            bounceToSource()
             return
           }
           const json = await res.json()
           if (!json?.success) {
-            setBlocked(true)
-            setErrorDetails('API returned success=false')
-          } else {
-            setData(json)
+            bounceToSource()
+            return
           }
+          // Validated — refresh/reload of this tab keeps working.
+          setData(json)
         } catch (error) {
-          setBlocked(true)
-          setErrorDetails(error instanceof Error ? error.message : 'Unknown error')
+          bounceToSource()
+          return
         } finally {
           setLoading(false)
         }
@@ -130,13 +200,15 @@ export default function PrelanderSlugPage() {
             // the prelander, mint a one-time handoff and exchange it at
             // /_auth/{handoff} on the prelander domain — the bootstrap consumes
             // it once, sets the prelander-domain HttpOnly session cookie, and
-            // lands the visitor on the clean /d/{slug} URL (no token in the
-            // address bar). Refreshes then ride the session cookie, never the
-            // handoff.
-            // If the prelander domain's nginx block is missing the /_auth/
-            // location, the Next.js middleware there recovers the request by
-            // redirecting to the clean /d/{slug} — the server-side
-            // fingerprint/slug binding still authorizes the visitor.
+            // lands the visitor on the clean root. Refreshes then ride the
+            // session cookie, never the handoff.
+            // AUTHORIZATION GATE (spec: no request outside the Anchor flow
+            // may see ANYTHING): the handoff mint runs the server-side
+            // authorization (click-time session + browser fingerprint + slug
+            // binding). A visitor without it — pasted URL, foreign referer,
+            // direct hit — gets NO preview, not even a "not found" page, and
+            // is sent back to where they came from.
+            let handoffToken: string | null = null
             try {
               console.log('[PRELANDER DEBUG] Requesting handoff token')
               const hRes = await fetch(
@@ -144,36 +216,32 @@ export default function PrelanderSlugPage() {
                 { headers: { 'X-Prelander-Host': hostname } }
               )
               console.log('[PRELANDER DEBUG] Handoff response status:', hRes.status, hRes.ok)
-              
               if (hRes.ok) {
                 const h = await hRes.json()
                 console.log('[PRELANDER DEBUG] Handoff data:', h)
-                
-                if (h?.handoff) {
-                  // Hold the 0.75s dwell so the loader reads as intentional.
-                  console.log('[PRELANDER DEBUG] Got handoff token, redirecting after 0.75s')
-                  setTransitioning(true)
-                  await new Promise(r => setTimeout(r, 750))
-                  const authUrl = `${prelanderDomain}/_auth/${h.handoff}?slug=${encodeURIComponent(slug)}`
-                  console.log('[PRELANDER DEBUG] Redirecting to:', authUrl)
-                  window.location.replace(authUrl)
-                  return
-                }
+                handoffToken = h?.handoff || null
               }
             } catch (handoffError) {
               console.log('[PRELANDER DEBUG] Handoff request failed:', handoffError)
-              // Handoff unavailable — fall through to the direct hop (the
-              // server-side fingerprint/slug binding still authorizes).
             }
-            // Not on the final prelander — hop to the next domain. Show a clear
-            // loader for a fixed 0.75s so the domain switch reads as
-            // intentional, then navigate. Raw slug chars are base64url-safe.
-            console.log('[PRELANDER DEBUG] Direct hop (no handoff), redirecting after 0.75s')
+
+            if (!handoffToken) {
+              // NOT authorized (or the mint failed): no preview of any kind —
+              // bounce back to the source the request came from.
+              console.log('[PRELANDER] Unauthorized hop attempt — bounce to source, no preview')
+              bounceToSource()
+              return
+            }
+
+            // TIMER LIVES ON THE INTER DOMAIN ONLY (spec): the 0.75s dwell
+            // runs right here, on the Inter page, during the hop. The
+            // prelander domain itself never waits — it loads naturally.
+            console.log('[PRELANDER DEBUG] Got handoff token, redirecting after 0.75s dwell')
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
-            const directUrl = `${prelanderDomain}/d/${slug}`
-            console.log('[PRELANDER DEBUG] Direct hop to:', directUrl)
-            window.location.replace(directUrl)
+            const authUrl = `${prelanderDomain}/_auth/${handoffToken}?slug=${encodeURIComponent(slug)}`
+            console.log('[PRELANDER DEBUG] Redirecting to:', authUrl)
+            window.location.replace(authUrl)
             return
           }
           
@@ -194,10 +262,10 @@ export default function PrelanderSlugPage() {
         console.log('[PRELANDER DEBUG] Resolve response status:', res.status, res.ok)
 
         if (!res.ok) {
-          console.log('[PRELANDER ERROR] Resolve API failed, showing blocked state')
-          setBlocked(true)
-          setErrorDetails(`API returned status ${res.status}`)
-          setLoading(false)
+          console.log('[PRELANDER ERROR] Resolve rejected — no preview, bounce to source')
+          // Spec: unauthorized/expired → NO preview of any kind (not even
+          // "not found"); fall back to where the request came from.
+          bounceToSource()
           return
         }
 
@@ -205,19 +273,23 @@ export default function PrelanderSlugPage() {
         console.log('[PRELANDER DEBUG] Resolve data:', JSON.stringify(json, null, 2))
         
         if (!json?.success) {
-          console.log('[PRELANDER ERROR] Resolve returned success=false')
-          setBlocked(true)
-          setErrorDetails('API returned success=false')
-        } else {
-          console.log('[PRELANDER SUCCESS] Setting prelander data')
-          setData(json)
-          // CLEAN FINAL URL (spec): the visible prelander address must be
-          // https://prelander-domain.com/ — no slug, no ids. The content is
-          // already validated server-side; from here refreshes ride the
-          // browsing-session cookie (the /d/session route), not the slug.
-          if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
-            window.history.replaceState({}, '', '/')
-          }
+          console.log('[PRELANDER ERROR] Resolve returned success=false — bounce to source')
+          bounceToSource()
+          return
+        }
+
+        console.log('[PRELANDER SUCCESS] Setting prelander data')
+        setData(json)
+        // THE FLOW'S OWN ARRIVAL: mark THIS tab (reload now works; a paste
+        // of this URL into a new tab has no marker and bounces).
+        try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
+        // CLEAN FINAL URL (spec): the visible prelander address must be
+        // https://prelander-domain.com/ — no slug, no ids, and rewritten
+        // IMMEDIATELY (before this render paints the data) so the slug is
+        // never visible even during loading. From here refreshes ride the
+        // browsing-session cookie (the /d/session route), not the slug.
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
+          window.history.replaceState({}, '', '/')
         }
       } catch (error) {
         console.error('[PRELANDER ERROR] Exception in fetchData:', error)
