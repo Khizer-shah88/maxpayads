@@ -57,6 +57,12 @@ export default function PrelanderSlugPage() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
+  // TERMINAL DENIED state (spec: HTTP 204 semantics — no client-side fallback
+  // logic, no error page, no navigation): when the server denies access, the
+  // page renders NOTHING. This state exists because the shell may already be
+  // mounted (the browser keeps the previous page / a bfcache entry) — we must
+  // never paint content or an error screen on top of it.
+  const [denied, setDenied] = useState(false)
   const [errorDetails, setErrorDetails] = useState<string>('')
   // True while the browser is transitioning from an Anchor/Inter domain to the
   // Prelander domain. We hold a loader on screen for a short fixed delay so the
@@ -69,8 +75,7 @@ export default function PrelanderSlugPage() {
       
       if (!slug) { 
         console.log('[PRELANDER ERROR] No slug provided')
-        setBlocked(true)
-        setErrorDetails('No slug provided')
+        setDenied(true)
         setLoading(false)
         return 
       }
@@ -110,8 +115,8 @@ export default function PrelanderSlugPage() {
         }
 
         if (!isSameTab) {
-          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → blank page')
-          denyWithNoPreview()
+          console.log('[PRELANDER] No tab marker — new-tab paste or foreign request → terminal')
+          setDenied(true)
           return
         }
 
@@ -119,22 +124,22 @@ export default function PrelanderSlugPage() {
           const res = await fetch('/api/prelander/resolve/session', {
             headers: { 'X-Prelander-Host': hostname },
           })
-          if (!res.ok) {
-            // Server says no valid session — nothing to show. Same-tab reload
-            // after the session expired ALSO denies (no preview at all).
-            console.log('[PRELANDER] Session resolve rejected — blank page')
-            denyWithNoPreview()
+          // HTTP 204 = server denied (missing/invalid/expired/tampered
+          // authorization). NOTE: 204 is 2xx so res.ok is TRUE — the empty
+          // body makes res.json() throw unless we short-circuit here.
+          if (res.status === 204 || !res.ok) {
+            setDenied(true)
             return
           }
           const json = await res.json()
           if (!json?.success) {
-            denyWithNoPreview()
+            setDenied(true)
             return
           }
           // Validated — refresh/reload of this tab keeps working.
           setData(json)
         } catch (error) {
-          denyWithNoPreview()
+          setDenied(true)
           return
         } finally {
           setLoading(false)
@@ -218,9 +223,9 @@ export default function PrelanderSlugPage() {
 
             if (!handoffToken) {
               // NOT authorized (or the mint failed): no preview of any kind —
-              // blank page, per spec (new-tab paste / foreign request).
-              console.log('[PRELANDER] Unauthorized hop attempt — blank page, no preview')
-              denyWithNoPreview()
+              // terminal (renders nothing), per spec.
+              console.log('[PRELANDER] Unauthorized hop attempt — terminal, no preview')
+              setDenied(true)
               return
             }
 
@@ -257,11 +262,11 @@ export default function PrelanderSlugPage() {
         
         console.log('[PRELANDER DEBUG] Resolve response status:', res.status, res.ok)
 
-        if (!res.ok) {
-          console.log('[PRELANDER ERROR] Resolve rejected — no preview, blank page')
-          // Spec: unauthorized/expired → NO preview of any kind (not even
-          // "not found"); blank page.
-          denyWithNoPreview()
+        // HTTP 204 = server denied (204 is 2xx so res.ok is TRUE — handle it
+        // BEFORE res.ok/json parsing, the empty body breaks res.json()).
+        if (res.status === 204 || !res.ok) {
+          console.log('[PRELANDER ERROR] Resolve rejected — terminal, no preview')
+          setDenied(true)
           return
         }
 
@@ -269,8 +274,8 @@ export default function PrelanderSlugPage() {
         console.log('[PRELANDER DEBUG] Resolve data:', JSON.stringify(json, null, 2))
         
         if (!json?.success) {
-          console.log('[PRELANDER ERROR] Resolve returned success=false — blank page')
-          denyWithNoPreview()
+          console.log('[PRELANDER ERROR] Resolve returned success=false — terminal')
+          setDenied(true)
           return
         }
 
@@ -289,7 +294,8 @@ export default function PrelanderSlugPage() {
         }
       } catch (error) {
         console.error('[PRELANDER ERROR] Exception in fetchData:', error)
-        setBlocked(true)
+        // Terminal denied — render nothing, never the error page.
+        setDenied(true)
         setErrorDetails(error instanceof Error ? error.message : 'Unknown error')
       } finally {
         console.log('[PRELANDER DEBUG] Fetch complete, loading=false')
@@ -302,6 +308,13 @@ export default function PrelanderSlugPage() {
   useEffect(() => {
     document.title = 'Download Ready'
   }, [])
+
+  // Terminal denied state — render NOTHING (spec: no error page, no content,
+  // no loader). The server's 204 semantics are honored by leaving the page
+  // empty; the browser's native handling takes care of the rest.
+  if (denied) {
+    return null
+  }
 
   // Simple professional loader — shown during the data fetch and during the
   // 0.75s Inter-domain dwell. Nothing extra: one spinner, one line of text.
@@ -318,23 +331,10 @@ export default function PrelanderSlugPage() {
     )
   }
 
-  if (blocked || !data) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5]">
-        <div className="text-center max-w-md px-4">
-          <div className="w-16 h-16 rounded-full bg-gray-200 mx-auto mb-4 flex items-center justify-center">
-            <FileDown size={24} className="text-gray-400" />
-          </div>
-          <p className="text-gray-500 text-sm">This link is no longer available.</p>
-          {errorDetails && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-xs text-red-600 font-mono">{errorDetails}</p>
-              <p className="text-xs text-gray-500 mt-1">Check browser console for details</p>
-            </div>
-          )}
-        </div>
-      </div>
-    )
+  // Terminal denied (no data after a completed fetch) — render NOTHING.
+  // Spec: never an application error page, never content, never a loader.
+  if (!data) {
+    return null
   }
 
   // Note: Bypass OFF always shows the landing page — even when the backend has
