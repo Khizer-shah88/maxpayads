@@ -78,20 +78,20 @@ export default function PrelanderSlugPage() {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
     
+    // If already granted, allow access
     if (existingAuth === 'granted') {
-      // Tab was previously authorized - allow
       console.log('[SECURITY] ✓ Authorized tab - access granted')
       return
     }
     
+    // If previously denied, redirect to about:blank
     if (existingAuth === 'denied') {
-      // Tab was previously denied - clear URL and close
-      console.log('[SECURITY] ✗ Denied tab - clearing URL')
+      console.log('[SECURITY] ✗ Previously denied tab - clearing URL')
       window.location.replace('about:blank')
       return
     }
     
-    // First visit in this tab - check referrer
+    // First visit - check if this is a pasted URL (no external referrer)
     const referrer = document.referrer
     const currentHost = window.location.hostname
     const hasExternalReferrer = referrer && !referrer.includes(currentHost)
@@ -101,20 +101,17 @@ export default function PrelanderSlugPage() {
     console.log('[SECURITY] - Current host:', currentHost)
     console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
     
-    if (hasExternalReferrer) {
-      // Came from external domain (legitimate redirect flow) - GRANT
-      sessionStorage.setItem(SECURITY_MARKER, 'granted')
-      console.log('[SECURITY] ✓ Access GRANTED - external referrer detected')
-    } else {
-      // No external referrer (pasted/typed URL) - DENY and clear URL immediately
+    if (!hasExternalReferrer) {
+      // No external referrer = pasted URL or typed directly
+      // This is a new tab with pasted URL - DENY and clear
       sessionStorage.setItem(SECURITY_MARKER, 'denied')
-      console.log('[SECURITY] ✗ Access DENIED - clearing URL immediately')
-      // Redirect to about:blank immediately to clear URL
+      console.log('[SECURITY] ✗ Access DENIED - pasted URL detected, clearing')
       window.location.replace('about:blank')
-      // Also set denied to prevent any rendering
       setDenied(true)
       setLoading(false)
     }
+    // If has external referrer, let it proceed normally
+    // We'll mark it as 'granted' after successful data load
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
@@ -382,6 +379,19 @@ export default function PrelanderSlugPage() {
   useEffect(() => {
     document.title = 'Download Ready'
   }, [])
+
+  // Mark tab as authorized after successful data load
+  useEffect(() => {
+    if (data && !denied) {
+      const SECURITY_MARKER = 'prelander_tab_authorized'
+      const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
+      // Only set if not already set (to preserve 'denied' state if somehow set)
+      if (!existingAuth) {
+        sessionStorage.setItem(SECURITY_MARKER, 'granted')
+        console.log('[SECURITY] ✓ Tab authorized after successful load')
+      }
+    }
+  }, [data, denied])
 
   // Terminal denied state — render NOTHING (spec: no error page, no content,
   // no loader). The server's 204 semantics are honored by leaving the page
