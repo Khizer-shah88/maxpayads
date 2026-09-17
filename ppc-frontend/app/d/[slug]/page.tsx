@@ -89,6 +89,14 @@ export default function PrelanderSlugPage() {
       console.log('[SECURITY] ✗ Denied tab - blocking permanently')
       setDenied(true)
       setLoading(false)
+      
+      // Clear URL from address bar for security
+      try {
+        window.location.replace('about:blank')
+      } catch (e) {
+        // Fallback if about:blank is blocked
+        window.history.replaceState({}, '', 'about:blank')
+      }
       return
     }
     
@@ -112,6 +120,16 @@ export default function PrelanderSlugPage() {
       console.log('[SECURITY] ✗ Access DENIED - no external referrer')
       setDenied(true)
       setLoading(false)
+      
+      // Clear URL from address bar immediately for security
+      console.log('[SECURITY] Clearing URL from address bar')
+      try {
+        window.location.replace('about:blank')
+      } catch (e) {
+        // Fallback if about:blank is blocked
+        console.log('[SECURITY] about:blank blocked, using fallback')
+        window.history.replaceState({}, '', 'about:blank')
+      }
     }
   }, []) // Empty deps - runs once on mount
 
