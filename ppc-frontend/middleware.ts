@@ -112,21 +112,64 @@ export async function middleware(request: NextRequest) {
   let response: NextResponse;
 
   // ════════════════════════════════════════════════════════════════════════════
-  // 0a. /_auth/* RECOVERY — this request should never reach Next.js
+  // 0a. /_auth/* RECOVERY — the exchange must complete or the flow dead-ends
   // ════════════════════════════════════════════════════════════════════════════
   // /_auth/{handoff} is a FastAPI route (nginx rewrites it to
   // /prelander/_auth/…). If the request arrives HERE, the domain's nginx block
-  // is missing the /_auth/ location. Recover WITHOUT ever exposing the slug:
-  // redirect to the clean ROOT — the browsing-session cookie was already minted
-  // by the backend resolve (fingerprint-bound), and the /d/session sentinel
-  // resolves content from it. No slug, token, or path ever hits the address
-  // bar (spec Tests C/I: zero visible slug leakage at any stage).
+  // is missing the /_auth/ location. The OLD recovery (redirect to /) caused a
+  // deadlock: the clean root requires the mpa_pls session cookie, the cookie
+  // is minted BY the exchange — which never ran → session-check returned 204
+  // → the browser stayed on the Inter "Redirecting…" loader forever.
+  //
+  // FIX: perform the exchange SERVER-SIDE right here — fetch the backend's
+  // /prelander/_auth/{handoff} (consuming the one-time handoff, minting the
+  // browsing session), capture its Set-Cookie, and redirect to the clean root
+  // WITH that cookie attached. The slug never touches the address bar: the
+  // handoff token travels in the path of this fetch, server-to-server, and
+  // the visitor lands directly on https://prelanderdomain.com/.
   if (pathname.startsWith('/_auth/')) {
-    console.log(
-      `[_AUTH_RECOVERY] handoff arrived at Next.js (nginx /_auth/ location missing?) — ` +
-        `redirecting to the clean root (session cookie resolves content)`,
-    );
-    return NextResponse.redirect(new URL('/', request.nextUrl.origin), 302);
+    const handoff = pathname.slice('/_auth/'.length);
+    try {
+      const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+      const exchangeRes = await fetch(`${backendUrl}/prelander/_auth/${encodeURIComponent(handoff)}`, {
+        headers: {
+          // Pass the visitor's identity headers so the exchange's browser
+          // binding (fingerprint check inside consume_handoff) validates.
+          cookie: request.headers.get('cookie') || '',
+          'user-agent': request.headers.get('user-agent') || '',
+          'x-forwarded-for': request.headers.get('x-forwarded-for') || '',
+          // The exchange validates the requesting host (handoff target
+          // binding) — forward the host the visitor actually used.
+          host: request.headers.get('host') || '',
+        },
+        redirect: 'manual',
+      });
+
+      if (exchangeRes.status === 302) {
+        // Exchange succeeded: capture the mpa_pls (and tab-bootstrap)
+        // Set-Cookie headers from the backend and replay them on our own
+        // redirect to the clean root. The visitor is now fully authorized.
+        const setCookies = exchangeRes.headers.getSetCookie?.() ?? [];
+        const redirectRes = NextResponse.redirect(new URL('/', request.nextUrl.origin), 302);
+        for (const cookie of setCookies) {
+          redirectRes.headers.append('set-cookie', cookie);
+        }
+        console.log(
+          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to clean root`,
+        );
+        return redirectRes;
+      }
+
+      // Exchange rejected (replayed/invalid/expired handoff) → the backend
+      // already returned the strict 204 / denied response. Mirror it.
+      console.log(`[_AUTH_RECOVERY] exchange rejected (${exchangeRes.status}) — mirroring`);
+      const body = await exchangeRes.text();
+      return new NextResponse(body || null, { status: exchangeRes.status });
+    } catch (err) {
+      // Backend unreachable — fail CLOSED: strict 204, no content ever.
+      console.log(`[_AUTH_RECOVERY] backend unreachable — strict 204`);
+      return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
+    }
   }
 
   // ════════════════════════════════════════════════════════════════════════════
