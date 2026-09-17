@@ -72,9 +72,10 @@ export default function PrelanderSlugPage() {
   // ═══════════════════════════════════════════════════════════════════════════
   // SECURITY CHECK: Block pasted URLs in new tabs
   // ═══════════════════════════════════════════════════════════════════════════
-  // Uses history.length to detect pasted URLs vs redirect flow
-  // - Pasted URL: history.length === 1 (first page in tab)
-  // - Redirect flow: history.length > 1 (navigated from other domains)
+  // Multi-layered detection:
+  // 1. Check for existing marker (granted/denied)
+  // 2. Check history.length + referrer
+  // 3. If suspicious, mark as potential pasted URL and verify after load
   useEffect(() => {
     const SECURITY_MARKER = 'prelander_tab_authorized'
     const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
@@ -92,17 +93,21 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // First visit - check history length to detect pasted URLs
+    // First visit - aggressive detection
     const historyLength = window.history.length
     const referrer = document.referrer
+    const currentHost = window.location.hostname
+    const hasExternalReferrer = referrer && !referrer.includes(currentHost)
     
     console.log('[SECURITY] First visit check')
     console.log('[SECURITY] - History length:', historyLength)
     console.log('[SECURITY] - Referrer:', referrer || '(none)')
+    console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
     
-    // If history length is 1 and no referrer, it's a pasted URL or typed URL
-    if (historyLength === 1 && !referrer) {
-      console.log('[SECURITY] ✗ Pasted URL detected - denying access')
+    // STRICT: Block if no external referrer (regardless of history length)
+    // Legitimate redirect flow ALWAYS has external referrer
+    if (!hasExternalReferrer) {
+      console.log('[SECURITY] ✗ No external referrer - denying access')
       sessionStorage.setItem(SECURITY_MARKER, 'denied')
       window.location.replace('about:blank')
       setDenied(true)
@@ -110,9 +115,8 @@ export default function PrelanderSlugPage() {
       return
     }
     
-    // Otherwise, it's likely legitimate - let it proceed
-    // Will be marked as 'granted' after successful load
-    console.log('[SECURITY] Allowing page to load (history or referrer exists)')
+    // Has external referrer - allow to proceed
+    console.log('[SECURITY] External referrer detected - allowing load')
   }, []) // Empty deps - runs once on mount
 
   useEffect(() => {
