@@ -629,6 +629,51 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     )
 
 
+@router.get("/session-check")
+async def session_check(request: Request, db=Depends(get_db)):
+    """
+    SERVER-SIDE view-source shield (spec: hide source on prelander domains).
+
+    Called by the Next.js edge middleware for prelander-domain root requests.
+    Decides — BEFORE any page HTML is served — whether the visitor may see
+    the prelander:
+
+      valid mpa_pls session cookie  → 200 {authorized: true}
+                                     (middleware then rewrites to the
+                                     prelander page; nothing leaks)
+      no/invalid cookie             → the LEAST-REVEALING response with the
+                                     safe-source fallback (302 back to the
+                                     originating page when a safe external
+                                     Referer exists; else the neutral page).
+                                     The middleware proxies THIS response, so
+                                     view-source: on the domain shows nothing
+                                     but this — no app shell, no framework
+                                     HTML, no JS paths, no build metadata.
+
+    The decision is server-side (Redis session lookup) — frontend JS is never
+    the protection mechanism.
+    """
+    from app.services import prelander_auth_service as pas
+    from app.services.domain_service import normalize_domain
+
+    redis = get_redis_safe()
+    own_host = normalize_domain(request.headers.get("host", "") or "")
+    if redis is None:
+        # Fail closed for protected content.
+        logger.error("[PRELANDER] session-check: Redis unavailable — denying")
+        return await _denied_response(request)
+
+    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+    session = await pas.validate_prelander_session(pl_session_cookie, redis)
+    if session is None:
+        logger.info("[PRELANDER] session-check denied (no valid session cookie)")
+        return await _denied_response(request)
+
+    # The middleware only needs a yes/no — the prelander page re-validates on
+    # its own resolve call. No session internals in the response.
+    return {"authorized": True}
+
+
 @router.get("/data")
 async def get_prelander_data_legacy(
     request: Request,

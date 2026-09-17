@@ -155,16 +155,55 @@ export async function middleware(request: NextRequest) {
     pathname === '/favicon.ico';
 
   if (!isPortalHost(host) && !isInfraPath) {
-    // ── CLEAN PRELANDER URL (spec): the bare prelander root is the FINAL
-    // prelander page. Non-portal domains requesting "/" are rewritten to the
-    // /d/[slug] page with the "session" sentinel — content resolves entirely
-    // from the server-side browsing-session cookie (no slug, no ids in the
-    // URL). No valid session → the backend returns the denied fallback, so a
-    // Tab B direct-open of the domain shows nothing protected.
+    // ── CLEAN PRELANDER URL + SERVER-SIDE SOURCE SHIELD (spec §3/§7) ──────
+    // The bare prelander root is the FINAL prelander page — but the decision
+    // of whether this visitor may see ANY page source is made SERVER-SIDE
+    // before a single byte of the application shell is served. view-source:
+    // on the domain must never reveal the Next.js HTML, script paths, or
+    // build metadata to an unauthorized visitor.
     if (pathname === '/') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/d/session';
-      return NextResponse.rewrite(url);
+      // Ask the backend to validate the browsing-session cookie. The edge
+      // middleware can await fetches — this is a true server-side gate,
+      // not a frontend trick.
+      try {
+        const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+        const cookieHeader = request.headers.get('cookie') || '';
+        const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
+          headers: { cookie: cookieHeader },
+          redirect: 'manual',
+        });
+
+        if (checkRes.status === 200) {
+          const check = await checkRes.json().catch(() => null);
+          if (check?.authorized) {
+            const url = request.nextUrl.clone();
+            url.pathname = '/d/session';
+            return NextResponse.rewrite(url);
+          }
+        }
+        // UNAUTHORIZED (any status — 302 safe-source fallback, 404 neutral
+        // page, anything): proxy the backend's response VERBATIM. view-source
+        // on the domain shows exactly that response and nothing else — no
+        // app shell, no framework HTML, no source to read.
+        const body = await checkRes.text();
+        const shieldHeaders = new Headers();
+        checkRes.headers.forEach((value, key) => {
+          if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key.toLowerCase())) {
+            shieldHeaders.set(key, value);
+          }
+        });
+        return new NextResponse(body, {
+          status: checkRes.status,
+          headers: shieldHeaders,
+        });
+      } catch (err) {
+        // Backend unreachable — fail CLOSED (spec: never expose the shell).
+        console.log(`[PRELANDER_SHIELD] backend unreachable — serving blank, no source exposed`);
+        return new NextResponse(
+          '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>.</title></head><body></body></html>',
+          { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+        );
+      }
     }
     console.log(
       `[PORTAL_HOST_BLOCKED] host=${host} path=${pathname} — ` +
