@@ -38,14 +38,44 @@ const isAuthorized = sessionStorage.getItem('prelander_authorized') === 'yes'
 
 ### Legitimate Access (Original Tab):
 ```
-Click → /d/{slug} → Backend Auth ✓ → Set marker → Show content
-        ↓
-     Reload → Has marker → Backend Auth ✓ → Show content
+Anchor Click → Redirect Flow → /d/{slug} (with external referrer)
+                                    ↓
+                          Check sessionStorage marker
+                                    ↓
+                          No marker found (first visit)
+                                    ↓
+                          Check document.referrer
+                                    ↓
+                          Has external referrer ✓
+                                    ↓
+                          Set marker = 'granted' → Show content
+                                    ↓
+                          Page Reload (same tab)
+                                    ↓
+                          Check sessionStorage marker
+                                    ↓
+                          Marker = 'granted' ✓ → Show content
 ```
 
-###new Tab (URL Copy):
+### Blocked Access (New Tab with Pasted URL):
 ```
-Paste URL → /d/{slug} → No marker → Backend Auth ✗ → BLANK PAGE
+Copy URL → Paste in new tab → /d/{slug} (no external referrer)
+                                    ↓
+                          Check sessionStorage marker
+                                    ↓
+                          No marker found (new tab)
+                                    ↓
+                          Check document.referrer
+                                    ↓
+                          No external referrer (empty or self-referrer) ✗
+                                    ↓
+                          Set marker = 'denied' → BLANK PAGE
+                                    ↓
+                          Try to reload
+                                    ↓
+                          Check sessionStorage marker
+                                    ↓
+                          Marker = 'denied' ✗ → BLANK PAGE (permanent)
 ```
 
 ## Testing
@@ -68,12 +98,49 @@ PRELANDER_AUTH_REQUIRED=true
 PRELANDER_SESSION_TTL=300
 ```
 
-## Why This Works
+## How It Works
 
-1. **sessionStorage**: Per-tab storage, doesn't transfer to new tabs
-2. **Backend Auth**: Real security layer, validates every request  
-3. **No Marker in New Tab**: Even if somehow bypassed, backend still denies
-4. **Cookie HttpOnly**: Can't be accessed/copied by JavaScript
+### SessionStorage Marker System:
+
+The security uses a `sessionStorage` marker with three possible states:
+
+1. **`'granted'`**: Tab was authorized (came from redirect flow with external referrer)
+2. **`'denied'`**: Tab was blocked (direct access without external referrer)  
+3. **`null`**: No marker (first visit in this tab)
+
+### Decision Flow:
+
+```typescript
+// Check existing marker first (preserves state across reloads)
+if (marker === 'granted') {
+  // Previously authorized → Allow access
+}
+else if (marker === 'denied') {
+  // Previously denied → Block permanently
+}
+else {
+  // No marker → First visit → Check referrer
+  if (hasExternalReferrer) {
+    // Redirect flow → Set marker = 'granted' → Allow
+  } else {
+    // Direct access → Set marker = 'denied' → Block
+  }
+}
+```
+
+### Why This Works:
+
+1. **SessionStorage is per-tab**: Doesn't transfer to new tabs, but survives reloads
+2. **Check marker BEFORE referrer**: Preserves authorization state on reload
+3. **Permanent denial**: Once denied, always denied (even on reload)
+4. **External referrer validation**: Only grants access when coming from redirect flow
+
+### Key Behavior:
+
+- **First load from redirect**: External referrer → Grant → Set marker
+- **Reload in original tab**: Has `'granted'` marker → Allow (no referrer check)
+- **Copy to new tab**: No marker → Check referrer → Self/empty → Deny → Set marker
+- **Reload in blocked tab**: Has `'denied'` marker → Block permanently
 
 ## Limitations
 

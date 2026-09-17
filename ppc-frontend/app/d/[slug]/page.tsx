@@ -81,39 +81,44 @@ export default function PrelanderSlugPage() {
       }
 
       // ═══════════════════════════════════════════════════════════════════
-      // SECURITY: STRICT - Block pasted URLs permanently
+      // SECURITY: Referrer-based access control
       // ═══════════════════════════════════════════════════════════════════
-      // Logic: Marker is ONLY set if coming from external referrer
-      // Once denied (no marker), STAYS denied forever in that tab
-      const MARKER = 'pldr_ok'
-      const hasMarker = sessionStorage.getItem(MARKER)
+      // Strategy:
+      //  - First visit with external referrer → GRANT (mark tab as authorized)
+      //  - First visit WITHOUT external referrer (pasted URL) → DENY forever
+      //  - Subsequent visits in same tab → Use existing marker (survives reload)
+      //  - New tab → No marker → Check referrer → Will be denied (self-referrer)
+      const MARKER = 'pldr_security_ok'
+      const existingMarker = sessionStorage.getItem(MARKER)
       
-      if (hasMarker === 'granted') {
-        // This tab was authorized on first load - allow all future loads
-        console.log('[PRELANDER SECURITY] Authorized tab - access granted')
-      } else if (hasMarker === 'denied') {
-        // This tab was explicitly denied - block forever
-        console.log('[PRELANDER SECURITY] BLOCKED - This tab was denied access')
+      if (existingMarker === 'granted') {
+        // This tab was previously authorized - allow access
+        console.log('[PRELANDER SECURITY] Previously authorized tab - access granted')
+      } else if (existingMarker === 'denied') {
+        // This tab was previously denied - block permanently
+        console.log('[PRELANDER SECURITY] BLOCKED - Previously denied tab')
         setDenied(true)
         setLoading(false)
         return
       } else {
-        // First load in this tab - check referrer
+        // First visit in this tab - validate referrer
         const ref = document.referrer
-        const hasExternalReferrer = ref && !ref.includes(window.location.hostname)
+        const currentHost = window.location.hostname
+        const hasExternalReferrer = ref && !ref.includes(currentHost)
         
-        console.log('[PRELANDER SECURITY] First load - checking referrer')
-        console.log('[PRELANDER SECURITY] Referrer:', ref)
+        console.log('[PRELANDER SECURITY] First visit - validating access')
+        console.log('[PRELANDER SECURITY] Referrer:', ref || '(empty)')
+        console.log('[PRELANDER SECURITY] Current host:', currentHost)
         console.log('[PRELANDER SECURITY] Has external referrer:', hasExternalReferrer)
         
         if (hasExternalReferrer) {
-          // Came from external source (redirect flow) - GRANT permanently
+          // Legitimate redirect flow - GRANT access to this tab
           sessionStorage.setItem(MARKER, 'granted')
-          console.log('[PRELANDER SECURITY] Access GRANTED - external referrer')
+          console.log('[PRELANDER SECURITY] ✓ Access GRANTED - external referrer detected')
         } else {
-          // No external referrer (pasted URL) - DENY permanently
+          // Direct access (pasted URL / typed URL / bookmark) - DENY forever
           sessionStorage.setItem(MARKER, 'denied')
-          console.log('[PRELANDER SECURITY] Access DENIED - no external referrer')
+          console.log('[PRELANDER SECURITY] ✗ Access DENIED - no external referrer')
           setDenied(true)
           setLoading(false)
           return
