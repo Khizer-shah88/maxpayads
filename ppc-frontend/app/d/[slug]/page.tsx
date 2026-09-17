@@ -82,6 +82,23 @@ export default function PrelanderSlugPage() {
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
       const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
+      
+      // ═══════════════════════════════════════════════════════════════════
+      // SECURITY: Check if this tab has authorization
+      // ═══════════════════════════════════════════════════════════════════
+      // SessionStorage is per-tab: set on first successful load, checked on all loads
+      const AUTH_KEY = 'prelander_authorized'
+      const isAuthorized = sessionStorage.getItem(AUTH_KEY) === 'yes'
+      
+      if (!isAuthorized) {
+        // This is either:
+        // 1. First legitimate load (will set marker after backend auth succeeds)
+        // 2. New tab paste (backend will deny, we'll never set marker)
+        console.log('[PRELANDER SECURITY] No auth marker - will validate with backend')
+      } else {
+        // Has marker - this tab loaded content before (reload)
+        console.log('[PRELANDER SECURITY] Auth marker present - reload allowed')
+      }
 
       // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
       // slug == "session": mounted at the bare prelander root. No hop
@@ -304,9 +321,13 @@ export default function PrelanderSlugPage() {
 
         console.log('[PRELANDER SUCCESS] Setting prelander data')
         setData(json)
-        // THE FLOW'S OWN ARRIVAL: mark THIS tab (reload now works; a paste
-        // of this URL into a new tab has no marker and shows about:blank).
-        try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
+        // SECURITY: Mark this tab as authorized after successful backend validation
+        // SessionStorage is per-tab: survives reload but NOT in new tabs
+        // New tab paste will have no marker and backend will deny access
+        try { 
+          sessionStorage.setItem('prelander_authorized', 'yes')
+          console.log('[PRELANDER SECURITY] Authorization marker set for this tab')
+        } catch { /* storage blocked */ }
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
         // IMMEDIATELY (before this render paints the data) so the slug is
