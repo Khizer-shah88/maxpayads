@@ -24,6 +24,7 @@ from app.services.prelander_service import (
     get_template_for_domain,
     get_default_template,
     ALLOWED_PLACEHOLDERS,
+    _HARDENING_SCRIPT,
 )
 
 
@@ -629,7 +630,7 @@ class TestPrelanderEdgeCases:
     """Test edge cases and error handling."""
     
     def test_empty_template(self):
-        """Test rendering empty template."""
+        """Even an empty template receives the runtime hardening script."""
         engine = PrelanderTemplateEngine()
         context = RedirectContext(
             click_id="click123",
@@ -637,20 +638,31 @@ class TestPrelanderEdgeCases:
         )
         
         rendered = engine.render("", context)
-        assert rendered == ""
-    
-    def test_template_with_no_placeholders(self):
-        """Test template with no placeholders."""
+        assert rendered == _HARDENING_SCRIPT
+
+    @pytest.mark.parametrize(
+        ("prefix", "suffix"),
+        [
+            ("<html><body><h1>Static Content</h1>", "</body></html>"),
+            ("<HTML><BODY><h1>Static Content</h1>", "</BODY></HTML>"),
+            ("<html><h1>Static Content</h1>", "</html>"),
+            ("<HTML><h1>Static Content</h1>", "</HTML>"),
+            ("<h1>Static Content</h1>", ""),
+        ],
+        ids=["body", "uppercase-body", "html", "uppercase-html", "fragment"],
+    )
+    def test_template_with_no_placeholders(self, prefix, suffix):
+        """Preserve static content and inject hardening at the document boundary."""
         engine = PrelanderTemplateEngine()
         context = RedirectContext(
             click_id="click123",
             campaign_url="https://example.com/offer",
         )
         
-        template_html = "<html><body><h1>Static Content</h1></body></html>"
+        template_html = prefix + suffix
         rendered = engine.render(template_html, context)
         
-        assert rendered == template_html
+        assert rendered == prefix + _HARDENING_SCRIPT + suffix
     
     def test_context_with_special_characters(self):
         """Test context with special characters."""
