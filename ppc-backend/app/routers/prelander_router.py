@@ -228,14 +228,9 @@ async def get_authorized_session(
 
 
 async def _denied_response(request: Optional[Request] = None):
-    """Return a redirect to the main domain for unauthorized requests."""
-    # For unauthorized requests (pasted URLs, view-source, etc.), 
-    # redirect to the main domain to prevent content exposure
-    return RedirectResponse(
-        url="https://www.google.com",
-        status_code=302,
-        headers={"Referrer-Policy": "no-referrer"},
-    )
+    """Return a visible session-unavailable page without a referrer redirect."""
+    from app.services.prelander_auth_service import build_denied_response
+    return build_denied_response()
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
@@ -576,12 +571,37 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
     )
     if not auth_session or auth_session is True:
-        return await _denied_response(request)
+        # For direct browser requests (pasted URLs, view-source), redirect to Google
+        # API calls (X-Prelander-Host header present) get proper error responses
+        accept_header = request.headers.get("accept", "")
+        has_prelander_host_header = request.headers.get("x-prelander-host") is not None
+        
+        if not has_prelander_host_header and "text/html" in accept_header:
+            # Direct browser request - redirect to prevent content exposure
+            return RedirectResponse(
+                url="https://www.google.com",
+                status_code=302,
+                headers={"Referrer-Policy": "no-referrer"},
+            )
+        else:
+            # API call or other non-browser request - return proper error
+            return await _denied_response(request)
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
     if not decoded:
-        return await _denied_response(request)
+        # Same logic for invalid slug
+        accept_header = request.headers.get("accept", "")
+        has_prelander_host_header = request.headers.get("x-prelander-host") is not None
+        
+        if not has_prelander_host_header and "text/html" in accept_header:
+            return RedirectResponse(
+                url="https://www.google.com",
+                status_code=302,
+                headers={"Referrer-Policy": "no-referrer"},
+            )
+        else:
+            return await _denied_response(request)
 
     # STEP 10 — same hostname, different campaigns: the CONTENT comes from
     # the VALIDATED server-side session, never from the hostname. Two visitors
