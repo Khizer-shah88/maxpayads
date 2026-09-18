@@ -110,6 +110,45 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ════════════════════════════════════════════════════════════════════════════
+  // PRELANDER SECURITY: Block view-source and pasted URLs FIRST
+  // ════════════════════════════════════════════════════════════════════════════
+  
+  // Only apply security to prelander pages (/d/) and clean root (/)
+  const isPrelunderPage = pathname.startsWith('/d/') || pathname === '/';
+  const host = requestHostname(request);
+  const isPrelanderDomain = !isPortalHost(host);
+  
+  if (isPrelunderPage && isPrelanderDomain) {
+    const userAgent = request.headers.get('user-agent') || '';
+    const referrer = request.headers.get('referer') || '';
+    const accept = request.headers.get('accept') || '';
+    
+    // 1. Detect view-source requests
+    // View-source requests often have no referrer or specific patterns
+    const isViewSourceRequest = 
+      userAgent.toLowerCase().includes('view-source') ||
+      !referrer && accept.includes('text/plain') ||
+      !referrer && !accept.includes('text/html');
+    
+    if (isViewSourceRequest) {
+      console.log('[SECURITY] View-source request detected - redirecting');
+      const redirectUrl = referrer || 'https://www.google.com';
+      return NextResponse.redirect(redirectUrl, { status: 302 });
+    }
+    
+    // 2. Detect pasted URLs (no referrer + direct browser request)
+    const isPastedUrl = 
+      !referrer && 
+      accept.includes('text/html') && 
+      pathname.startsWith('/d/'); // Only block /d/ URLs, allow root /
+    
+    if (isPastedUrl) {
+      console.log('[SECURITY] Pasted URL detected - redirecting to fallback');
+      return NextResponse.redirect('https://www.google.com', { status: 302 });
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // Authorization uses server-side sessions for all browser navigations.
 
   // 0a. /_auth/* RECOVERY — the exchange must complete or the flow dead-ends
