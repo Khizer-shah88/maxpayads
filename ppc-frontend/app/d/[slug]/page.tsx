@@ -30,6 +30,15 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
  *    no preview of any kind (not even "not found").
  */
 
+// ─── CONSOLE BLACKOUT (anti-inspect) ─────────────────────────────────────────
+// Module-scoped shadow of the global console: this page must NEVER narrate
+// its flow into an open DevTools console (it previously printed handoff
+// tokens, prelander domains and campaign data there). Server-side logs are
+// unaffected. Kept as a shadow instead of deleting every call site so dev
+// debugging can be restored by removing this one block.
+const _noop = () => {}
+const console = { log: _noop, error: _noop, warn: _noop, info: _noop, debug: _noop } as unknown as Console
+
 // sessionStorage key marking THIS TAB as the one the flow opened the
 // prelander in. sessionStorage is PER-TAB: it survives reloads but is empty
 // in a new tab — exactly the same-tab-allowed / new-tab-denied distinction.
@@ -68,6 +77,73 @@ export default function PrelanderSlugPage() {
   // Prelander domain. We hold a loader on screen for a short fixed delay so the
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ANTI-INSPECT LAYER (defense-in-depth — the authorization gate stays
+  // server-side; this only removes the casual local inspection shortcuts)
+  // ═════════════════════════════════════════════════════════════════════════════
+  //  - right-click (context) menu disabled — no "View Page Source" entry
+  //  - F12 / Ctrl+Shift+I/J/C / Ctrl+U / Ctrl+S intercepted and swallowed
+  //  - DevTools-open detection (debugger-stall heuristic): when DevTools is
+  //    attached, the live DOM is wiped so the Elements panel shows nothing
+  //  - manual address-bar view-source: is wire-identical to a normal GET —
+  //    unauthorized visitors already receive the server's HTTP 204 shield
+  //    (nothing at all); authorized visitors view-source only the secret-
+  //    free loader shell (content arrives via session-validated JSON fetch,
+  //    never embedded in the served HTML).
+  useEffect(() => {
+    let wiped = false
+    const wipe = () => {
+      if (wiped) return
+      wiped = true
+      try { document.documentElement.innerHTML = '' } catch { /* ignore */ }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const k = (e.key || '').toLowerCase()
+      const mod = e.ctrlKey || e.metaKey
+      if (
+        e.key === 'F12' ||
+        (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')) ||
+        (mod && k === 'u') ||
+        (mod && k === 's')
+      ) {
+        e.preventDefault()
+        e.stopPropagation()
+        wipe()
+      }
+    }
+    const onContextMenu = (e: Event) => { e.preventDefault() }
+    // Attached at window/document level so the handlers survive the
+    // FullHtmlPrelander document.write() (the Document object is reused,
+    // the nodes are not).
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('contextmenu', onContextMenu, true)
+    document.addEventListener('contextmenu', onContextMenu, true)
+    // DevTools-open heuristics (best-effort, survives prod minification + CSP):
+    //  1. `debugger` stall — a no-op while DevTools is closed; when open,
+    //     execution pauses on it and the measurable delay is the tell. (SWC
+    //     may strip bare `debugger` statements in some builds — hence #2.)
+    //  2. window-dimension gap — docked DevTools makes outerWidth/Height
+    //     exceed innerWidth/Height by the panel size (>160px is far beyond
+    //     any scrollbar/zoom delta).
+    const timer = window.setInterval(() => {
+      if (wiped) { window.clearInterval(timer); return }
+      const t0 = performance.now()
+      // eslint-disable-next-line no-debugger
+      debugger
+      const stall = performance.now() - t0 > 120
+      const gap =
+        window.outerWidth - window.innerWidth > 160 ||
+        window.outerHeight - window.innerHeight > 160
+      if (stall || gap) wipe()
+    }, 1500)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('contextmenu', onContextMenu, true)
+      document.removeEventListener('contextmenu', onContextMenu, true)
+      window.clearInterval(timer)
+    }
+  }, [])
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SECURITY CHECK: Block pasted URLs in new tabs

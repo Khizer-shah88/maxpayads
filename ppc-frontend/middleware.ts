@@ -109,39 +109,24 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ════════════════════════════════════════════════════════════════════════════
-  // 0. BLOCK VIEW-SOURCE REQUESTS — prevent source code viewing
+  // 0. VIEW-SOURCE — why there is NO header-sniffing block here
   // ════════════════════════════════════════════════════════════════════════════
-  // Detect various patterns that indicate view-source: requests
-  const userAgent = request.headers.get('user-agent') || '';
-  const referer = request.headers.get('referer') || '';
-  const acceptHeader = request.headers.get('accept') || '';
-  
-  // Check for view-source patterns
-  const isViewSourceRequest = (
-    referer.includes('view-source:') ||
-    userAgent.toLowerCase().includes('view-source') ||
-    // Chrome/Firefox view-source requests often have specific accept headers
-    acceptHeader.includes('text/plain') ||
-    acceptHeader === 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' ||
-    // Additional patterns for source viewing
-    pathname.includes('view-source') ||
-    request.nextUrl.searchParams.has('view-source')
-  );
-  
-  if (isViewSourceRequest) {
-    console.log(`[VIEW_SOURCE_BLOCKED] user-agent=${userAgent} referer=${referer} accept=${acceptHeader}`);
-    // Return empty response - no content for view-source
-    return new NextResponse('', { 
-      status: 200,
-      headers: { 
-        'Content-Type': 'text/html',
-        'Content-Length': '0'
-      }
-    });
-  }
-
-  // Create response first (will be used throughout)
-  let response: NextResponse;
+  // A browser `view-source:` navigation sends the EXACT same HTTP request as a
+  // normal visit — there is no distinguishable User-Agent, Referer, Accept or
+  // Sec-Fetch marker. The header-sniffing block that used to live here could
+  // never fire for a real view-source request and only produced false
+  // positives (it blanked every Firefox visitor, whose standard navigation
+  // Accept header matched the old equality check). Do NOT re-add it.
+  //
+  // The REAL protection is the server-side session gate:
+  //  - UNAUTHORIZED visitor (view-source: or plain visit alike) → the root
+  //    shield below answers HTTP 204: no shell, no scripts, no metadata.
+  //  - AUTHORIZED visitor → view-source: shows only the secret-free loader
+  //    shell; the prelander content (campaign URL, password, template) is
+  //    fetched as JSON AFTER the server validates the session — it is never
+  //    embedded in the served HTML. Casual inspection shortcuts (right-click,
+  //    F12, Ctrl+U, Ctrl+Shift+I) are additionally blocked client-side by the
+  //    /d page's anti-inspect layer.
 
   // ════════════════════════════════════════════════════════════════════════════
   // 0a. /_auth/* RECOVERY — the exchange must complete or the flow dead-ends

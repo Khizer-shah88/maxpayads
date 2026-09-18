@@ -445,25 +445,16 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
     from app.services.domain_service import normalize_domain
 
-    # ── BLOCK VIEW-SOURCE REQUESTS ────────────────────────────────────────────
-    # Detect view-source: protocol requests and return empty response
-    referer = request.headers.get("referer", "")
-    user_agent = request.headers.get("user-agent", "")
-    
-    if "view-source:" in referer.lower() or "view-source:" in user_agent.lower():
-        logger.info("[PRELANDER] Blocked view-source request")
-        from fastapi.responses import Response
-        return Response(content="", media_type="text/html", status_code=200)
-    
-    # Check if request is for viewing source based on various indicators
-    if (referer.startswith("view-source:") or 
-        "view-source" in user_agent.lower() or
-        request.headers.get("sec-fetch-dest") == "document" and 
-        request.headers.get("sec-fetch-mode") == "navigate" and
-        not request.headers.get("sec-fetch-user")):
-        logger.info("[PRELANDER] Suspected view-source request blocked")
-        from fastapi.responses import Response
-        return Response(content="", media_type="text/html", status_code=200)
+    # ── VIEW-SOURCE NOTE ──────────────────────────────────────────────────────
+    # A browser `view-source:` navigation is wire-identical to a normal GET —
+    # there is NO header combination that identifies it. (The header-sniffing
+    # blocks that used to live here never fired for a real view-source request
+    # and risked blanking ordinary navigations via the sec-fetch heuristics.)
+    # The real protection is the authorization gate below: unauthorized
+    # visitors receive the least-revealing denied response for view-source:
+    # AND for normal visits alike, and authorized visitors can only ever view
+    # the source of a page whose secrets arrive via a session-validated JSON
+    # fetch — never embedded in served HTML.
 
     # Use X-Prelander-Host (sent by browser JS) OR Host header (sent by nginx).
     # X-Prelander-Host is the real browser domain even through the Next.js proxy.
