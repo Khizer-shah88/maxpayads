@@ -33,9 +33,46 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   useEffect(() => {
+    // ═══════════════════════════════════════════════════════════════════
+    // SECURITY CHECK: Block pasted URLs and unauthorized access
+    // ═══════════════════════════════════════════════════════════════════
+    const SECURITY_MARKER = 'prelander_tab_authorized'
+    const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
+    
+    // If already authorized, allow access
+    if (existingAuth === 'granted') {
+      console.log('[SECURITY] ✓ Previously authorized tab - access granted')
+    } else if (existingAuth === 'denied') {
+      // Previously denied - redirect back
+      console.log('[SECURITY] ✗ Previously denied tab - going back')
+      if (window.history.length > 1) {
+        window.history.back()
+      } else {
+        window.location.replace('https://www.google.com')
+      }
+      return
+    } else {
+      // First visit - check if this is obviously a pasted URL
+      const referrer = document.referrer
+      const historyLength = window.history.length
+      
+      console.log('[SECURITY] First visit check')
+      console.log('[SECURITY] - Referrer:', referrer || '(none)')
+      console.log('[SECURITY] - History length:', historyLength)
+      
+      // If no referrer AND first page in tab = definitely pasted URL
+      if (!referrer && historyLength === 1) {
+        console.log('[SECURITY] ✗ Clear pasted URL - blocking immediately')
+        sessionStorage.setItem(SECURITY_MARKER, 'denied')
+        window.location.replace('https://www.google.com')
+        setDenied(true)
+        setLoading(false)
+        return
+      }
+    }
+
     // Avoid repeating a request after the server has denied this load.
     if (denied) {
-
       return
     }
 
@@ -210,6 +247,30 @@ export default function PrelanderSlugPage() {
         }
 
         setData(json)
+        
+        // Mark tab as authorized for future access
+        const SECURITY_MARKER = 'prelander_tab_authorized'
+        const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
+        if (!existingAuth) {
+          const referrer = document.referrer
+          const currentHost = window.location.hostname
+          const hasExternalReferrer = referrer && !referrer.includes(currentHost)
+          
+          if (hasExternalReferrer) {
+            sessionStorage.setItem(SECURITY_MARKER, 'granted')
+            console.log('[SECURITY] ✓ Tab authorized after successful load - external referrer')
+          } else {
+            sessionStorage.setItem(SECURITY_MARKER, 'denied')
+            console.log('[SECURITY] ✗ Pasted URL detected after load - denying future access')
+            if (window.history.length > 1) {
+              window.history.back()
+            } else {
+              window.location.replace('https://www.google.com')
+            }
+            return
+          }
+        }
+        
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
         // IMMEDIATELY (before this render paints the data) so the slug is
