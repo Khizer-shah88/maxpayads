@@ -228,9 +228,14 @@ async def get_authorized_session(
 
 
 async def _denied_response(request: Optional[Request] = None):
-    """Return a visible session-unavailable page without a referrer redirect."""
-    from app.services.prelander_auth_service import build_denied_response
-    return build_denied_response()
+    """Return a redirect to the main domain for unauthorized requests."""
+    # For unauthorized requests (pasted URLs, view-source, etc.), 
+    # redirect to the main domain to prevent content exposure
+    return RedirectResponse(
+        url="https://www.google.com",
+        status_code=302,
+        headers={"Referrer-Policy": "no-referrer"},
+    )
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
