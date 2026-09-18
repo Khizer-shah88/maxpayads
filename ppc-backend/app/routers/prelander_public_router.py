@@ -22,6 +22,7 @@ from app.services.prelander_service import (
     get_template_for_domain,
     get_default_template,
     generate_fallback_html,
+    _inject_hardening,
 )
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ def _generate_simple_prelander(context: RedirectContext) -> str:
     Generate a simple default prelander when no template is configured.
     Uses safe placeholder substitution.
     """
-    return f"""<!DOCTYPE html>
+    return _inject_hardening(f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -282,4 +283,4 @@ def _generate_simple_prelander(context: RedirectContext) -> str:
         }}, 3000);
     </script>
 </body>
-</html>"""
+</html>""")

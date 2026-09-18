@@ -88,9 +88,11 @@ export default function PrelanderSlugPage() {
   //    attached, the live DOM is wiped so the Elements panel shows nothing
   //  - manual address-bar view-source: is wire-identical to a normal GET —
   //    unauthorized visitors already receive the server's HTTP 204 shield
-  //    (nothing at all); authorized visitors view-source only the secret-
-  //    free loader shell (content arrives via session-validated JSON fetch,
-  //    never embedded in the served HTML).
+  //    (nothing at all); authorized visitors view-source only the secret-free
+  //    bootstrap shell served by /clean-shell (the middleware rewrites the
+  //    clean root there instead of this React app) — the campaign URL,
+  //    password and template content arrive via session-validated JSON fetch
+  //    and are never embedded in the served HTML.
   useEffect(() => {
     let wiped = false
     const wipe = () => {
@@ -103,7 +105,8 @@ export default function PrelanderSlugPage() {
       const mod = e.ctrlKey || e.metaKey
       if (
         e.key === 'F12' ||
-        (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c')) ||
+        (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
+        (e.metaKey && e.altKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
         (mod && k === 'u') ||
         (mod && k === 's')
       ) {

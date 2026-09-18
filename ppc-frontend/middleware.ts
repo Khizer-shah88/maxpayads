@@ -236,9 +236,17 @@ export async function middleware(request: NextRequest) {
         if (checkRes.status === 200) {
           const check = await checkRes.json().catch(() => null);
           if (check?.authorized) {
+            // SERVE-SIDE SOURCE SHIELD (spec §3/§7): rewrite to the hand-crafted
+            // secret-free shell instead of the Next.js application. view-source:
+            // on the clean root now reveals ONLY the ~2KB bootstrap shell — no
+            // framework chunks, no build ids, no embedded content. All secrets
+            // arrive via the session-validated JSON fetch after this shell is
+            // already on screen.
             const url = request.nextUrl.clone();
-            url.pathname = '/d/session';
-            return NextResponse.rewrite(url);
+            url.pathname = '/clean-shell';
+            const shielded = NextResponse.rewrite(url);
+            addSecurityHeaders(shielded, '/d/shell');
+            return shielded;
           }
         }
         // UNAUTHORIZED → mirror the backend's HTTP 204 No Content verbatim.
