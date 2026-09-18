@@ -24,7 +24,6 @@ from app.services.prelander_service import (
     get_template_for_domain,
     get_default_template,
     ALLOWED_PLACEHOLDERS,
-    _HARDENING_SCRIPT,
 )
 
 
@@ -630,7 +629,7 @@ class TestPrelanderEdgeCases:
     """Test edge cases and error handling."""
     
     def test_empty_template(self):
-        """Even an empty template receives the runtime hardening script."""
+        """An empty template stays empty."""
         engine = PrelanderTemplateEngine()
         context = RedirectContext(
             click_id="click123",
@@ -638,7 +637,7 @@ class TestPrelanderEdgeCases:
         )
         
         rendered = engine.render("", context)
-        assert rendered == _HARDENING_SCRIPT
+        assert rendered == ""
 
     @pytest.mark.parametrize(
         ("prefix", "suffix"),
@@ -652,7 +651,7 @@ class TestPrelanderEdgeCases:
         ids=["body", "uppercase-body", "html", "uppercase-html", "fragment"],
     )
     def test_template_with_no_placeholders(self, prefix, suffix):
-        """Preserve static content and inject hardening at the document boundary."""
+        """Static templates are preserved without injected inspection blockers."""
         engine = PrelanderTemplateEngine()
         context = RedirectContext(
             click_id="click123",
@@ -662,7 +661,7 @@ class TestPrelanderEdgeCases:
         template_html = prefix + suffix
         rendered = engine.render(template_html, context)
         
-        assert rendered == prefix + _HARDENING_SCRIPT + suffix
+        assert rendered == template_html
     
     def test_context_with_special_characters(self):
         """Test context with special characters."""

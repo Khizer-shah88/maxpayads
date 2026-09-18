@@ -25,12 +25,13 @@ import logging
 import time
 from fastapi import APIRouter, Query, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.routing import APIRoute
 from typing import Optional
 from bson import ObjectId
 import base64
 from app.core.constants import DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
 from app.core.glossary import domain_type_filter, normalize_domain_type
-from app.dependencies import get_db
+from app.dependencies import get_db, get_current_admin
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,21 @@ def _decode_slug(slug: str) -> Optional[dict]:
         return None
 
 
-router = APIRouter(prefix="/prelander", tags=["Prelander"])
+class PrelanderRoute(APIRoute):
+    """Session responses must never be reused by a shared or browser cache."""
+
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def no_store(request: Request):
+            response = await handler(request)
+            response.headers["Cache-Control"] = "no-store, private"
+            return response
+
+        return no_store
+
+
+router = APIRouter(prefix="/prelander", tags=["Prelander"], route_class=PrelanderRoute)
 
 
 async def _resolve_bypass_destination(
@@ -213,21 +228,9 @@ async def get_authorized_session(
 
 
 async def _denied_response(request: Optional[Request] = None):
-    """
-    STEP 6 configurable safe fallback (never leaks protected info).
-
-    SOURCE FALLBACK (spec §4): with the request available, an unauthorized
-    visit that arrived from a SAFE external source is 302'd back to that
-    source page — no preview, no app error page, no loop. Without a safe
-    source the least-revealing configured response is served.
-    """
+    """Return a visible session-unavailable page without a referrer redirect."""
     from app.services.prelander_auth_service import build_denied_response
-    from app.services.domain_service import normalize_domain
-
-    own_host = ""
-    if request is not None:
-        own_host = normalize_domain(request.headers.get("host", "") or "")
-    return build_denied_response(request=request, own_host=own_host)
+    return build_denied_response()
 
 
 async def _host_in_chain_sequence(db, host: str) -> bool:
@@ -445,16 +448,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     """
     from app.services.domain_service import normalize_domain
 
-    # ── VIEW-SOURCE NOTE ──────────────────────────────────────────────────────
-    # A browser `view-source:` navigation is wire-identical to a normal GET —
-    # there is NO header combination that identifies it. (The header-sniffing
-    # blocks that used to live here never fired for a real view-source request
-    # and risked blanking ordinary navigations via the sec-fetch heuristics.)
-    # The real protection is the authorization gate below: unauthorized
-    # visitors receive the least-revealing denied response for view-source:
-    # AND for normal visits alike, and authorized visitors can only ever view
-    # the source of a page whose secrets arrive via a session-validated JSON
-    # fetch — never embedded in served HTML.
+    # Session authorization applies equally to all browser navigations.
 
     # Use X-Prelander-Host (sent by browser JS) OR Host header (sent by nginx).
     # X-Prelander-Host is the real browser domain even through the Next.js proxy.
@@ -474,21 +468,19 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     #    with NO slug/ids — the server associates the request internally) ──────
     # slug == "session" is a sentinel meaning "no route in the URL": identity
     # and campaign context come ENTIRELY from the prelander-domain browsing
-    # session cookie (mpa_pls) minted at the /_auth exchange. Tab B opening
-    # the bare domain carries no session → denied (image #2 requirement).
+    # session cookie (mpa_pls) minted at the /_auth exchange. Cookies are
+    # shared across tabs; a missing or expired session is denied.
     if slug == "session":
         from app.services import prelander_auth_service as pas
 
         redis = get_redis_safe()
         if redis is None:
-            # Fail closed — strict 204, never content, never the shell.
-            return pas.build_no_content_response()
+            return pas.build_session_unavailable_response(503, as_json=True)
 
         pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
         session = await pas.validate_prelander_session(pl_session_cookie, redis)
         if session is None:
-            logger.info("[PRELANDER] Clean-URL resolve denied (no valid session cookie) — 204")
-            return pas.build_no_content_response()
+            return pas.build_session_unavailable_response(as_json=True)
 
         # The session IS the authorization — content follows the session
         # context (same hostname, different campaigns per visitor, STEP 10).
@@ -601,8 +593,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     # rewrite, direct-hop arrival), nothing set it and the reload found no
     # cookie → blank page. The visitor just passed the FULL authorization gate
     # here, so minting the cookie NOW is equivalent to what /_auth does: from
-    # this point reloads of this tab ride the session. New-tab pastes still
-    # bounce (no tab marker) and other browsers still deny (no session at all).
+    # this point all tabs in this browser share the expiring session cookie.
     try:
         from app.services import prelander_auth_service as pas
         existing_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
@@ -624,7 +615,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                     response.set_cookie(
                         key=pas.PL_SESSION_COOKIE,
                         value=pl_session_id,
-                        max_age=max(auth_session.expires_at - int(time.time()), 60),
+                        max_age=max(auth_session.expires_at - int(time.time()), 0),
                         **pas.cookie_flags(),
                     )
                     return response
@@ -643,42 +634,16 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
 
 @router.get("/session-check")
 async def session_check(request: Request, db=Depends(get_db)):
-    """
-    SERVER-SIDE prelander access gate (spec: HTTP 204 for unauthorized).
-
-    Called by the Next.js edge middleware for prelander-domain root requests.
-    Decides — BEFORE any page HTML is served — whether the visitor may see
-    the prelander:
-
-      valid mpa_pls session cookie  → 200 {authorized: true}
-                                     (middleware then rewrites to the
-                                     prelander page; nothing leaks)
-      no/invalid/expired cookie     → HTTP 204 No Content. No HTML body, no
-                                     redirect, no error page, no client-side
-                                     fallback — the browser's native 204
-                                     handling terminates the request. The
-                                     middleware mirrors the 204 verbatim, so
-                                     view-source on the domain shows nothing.
-
-    The decision is server-side (Redis session lookup) — frontend JS is never
-    the protection mechanism.
-    """
+    """Validate the expiring server-side session before the frontend serves content."""
     from app.services import prelander_auth_service as pas
 
     redis = get_redis_safe()
     if redis is None:
-        # Fail closed for protected content — 204, never the shell.
-        logger.error("[PRELANDER] session-check: Redis unavailable — denying with 204")
-        return pas.build_no_content_response()
+        return pas.build_session_unavailable_response(503, as_json=True)
 
-    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
-    session = await pas.validate_prelander_session(pl_session_cookie, redis)
+    session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
     if session is None:
-        logger.info("[PRELANDER] session-check denied (no valid session cookie) — 204")
-        return pas.build_no_content_response()
-
-    # The middleware only needs a yes/no — the prelander page re-validates on
-    # its own resolve call. No session internals in the response.
+        return pas.build_session_unavailable_response(as_json=True)
     return {"authorized": True}
 
 
@@ -707,12 +672,12 @@ async def preview_prelander(
     request: Request,
     os: str = Query("windows", description="OS type: windows or mac"),
     db=Depends(get_db),
+    current_admin: dict = Depends(get_current_admin),
 ):
     """
-    Preview endpoint for testing prelander templates WITHOUT authorization.
+    Admin-only preview for testing prelander templates.
     
-    This endpoint bypasses the click-based authorization system to allow
-    direct testing of template assignments on prelander domains.
+    A valid admin access token is required before any template data is returned.
     
     Usage: Visit any prelander domain at /api/prelander/preview?os=windows
     """
@@ -857,22 +822,8 @@ async def prelander_bootstrap(
     response.set_cookie(
         key=pas.PL_SESSION_COOKIE,
         value=pl_session_id,
-        max_age=max(session.expires_at - int(time.time()), 60),
+        max_age=max(session.expires_at - int(time.time()), 0),
         **pas.cookie_flags(),
-    )
-    # ONE-TIME TAB BOOTSTRAP (spec: same-tab reload works, new-tab paste
-    # denied): cookies are shared across tabs, so the server alone can never
-    # distinguish them — sessionStorage (PER-TAB) can. This 60s cookie is the
-    # bridge: the FIRST session-mode load after the exchange consumes it to
-    # set the per-tab marker; after that, only a reload of THIS tab carries
-    # the marker. A URL pasted into a new tab has neither → bounced client-side.
-    response.set_cookie(
-        key=pas.TAB_BOOTSTRAP_COOKIE,
-        value="1",
-        max_age=60,
-        samesite="lax",
-        secure=True,
-        path="/",
     )
     logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
     return response

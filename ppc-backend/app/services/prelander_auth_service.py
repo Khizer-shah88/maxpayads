@@ -170,10 +170,6 @@ _PL_SESSION_PREFIX = "prelander_plsess:"  # prelander-domain browsing session id
 COOKIE_NAME = "mpa_pla"
 # Prelander-domain browsing-session cookie (set by the handoff exchange).
 PL_SESSION_COOKIE = "mpa_pls"
-# One-time 60s bridge cookie set ONLY by the /_auth exchange. The prelander
-# page consumes it once to mark the tab (sessionStorage is per-tab); after
-# that, same-tab reloads carry the marker and new-tab pastes do not.
-TAB_BOOTSTRAP_COOKIE = "mpa_tab_ok"
 
 
 def cookie_ttl_seconds() -> int:
@@ -1093,125 +1089,56 @@ async def validate_prelander_access(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# STEP 6 — CONFIGURABLE SAFE FALLBACK FOR DENIED ACCESS
+# STEP 6 — VISIBLE RESPONSE FOR DENIED ACCESS
 # ═════════════════════════════════════════════════════════════════════════════
 
+_DENIED_TITLE = "Session expired or unavailable"
+_DENIED_MESSAGE = (
+    "This link requires an active session. Return to the page where you started "
+    "and open a new link."
+)
 _DENIED_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Page Not Found</title>
+<title>Session expired or unavailable</title>
 <style>
-  body {{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#f0f2f5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }}
-  .box {{ text-align:center; }}
-  .icon {{ width:64px; height:64px; border-radius:50%; background:#e5e7eb; margin:0 auto 16px;
-           display:flex; align-items:center; justify-content:center; }}
-  p {{ color:#6b7280; font-size:14px; }}
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+    background:#f0f2f5; color:#111827; font-family:system-ui,sans-serif; }
+  main { max-width:440px; padding:32px; margin:24px; border-radius:16px; background:white; }
+  h1 { font-size:24px; line-height:1.3; }
+  p { color:#4b5563; line-height:1.6; }
 </style>
 </head>
-<body>
-  <div class="box">
-    <div class="icon">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2">
-        <path d="M12 15V9m0 0v6m-6-6h12" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
-        <path d="M12 15V9" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M12 15V9.5" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
-        <path d="M15 9h-6" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </div>
-    <p>This link is no longer available.</p>
-  </div>
-</body>
+<body><main><h1>Session expired or unavailable</h1>
+<p>This link requires an active session. Return to the page where you started and open a new link.</p>
+</main></body>
 </html>"""
 
 
-def _safe_source_fallback(request, own_host: str) -> Optional[str]:
-    """
-    SAFE SOURCE FALLBACK (spec §4): when an unauthorized request arrives, send
-    the visitor back to the page the request was initiated from — when that
-    source is safely available and valid.
+def build_session_unavailable_response(status_code: int = 403, *, as_json: bool = False):
+    """Explain failed authorization without serving protected data or redirecting."""
+    from fastapi.responses import HTMLResponse, JSONResponse
 
-    Open-redirect and loop prevention:
-      - ONLY the Referer header is used (never a query parameter — those are
-        attacker-controlled).
-      - The source must be a well-formed absolute http(s) URL.
-      - The source host must NOT be the protected domain itself (no loops).
-      - The path is preserved (https://source.com/page → back to that page).
-    Returns None when no safe source exists (the caller then serves the least
-    revealing response — no protected content, no app error page).
-    """
-    try:
-        referer = (request.headers.get("referer", "") or "").strip()
-        if not referer:
-            return None
-        if not referer.startswith(("http://", "https://")):
-            return None
-        from urllib.parse import urlparse
-        parsed = urlparse(referer)
-        source_host = (parsed.hostname or "").lower()
-        if not source_host or source_host == (own_host or "").lower():
-            return None  # loop guard: source IS the protected domain
-        if parsed.scheme not in ("http", "https"):
-            return None
-        # Rebuild from parsed components only — never echo the raw string.
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-        return f"{parsed.scheme}://{parsed.netloc}{path}"
-    except Exception:
-        return None
-
-
-def build_no_content_response():
-    """
-    HTTP 204 No Content — the strict unauthorized terminal response (spec).
-
-    No HTML body, no client-side fallback logic, no redirect, no error page:
-    the browser's NATIVE 204 handling terminates the request. Used for every
-    unauthorized direct Prelander access (missing / invalid / expired /
-    tampered authorization) — the least-revealing response the architecture
-    supports.
-    """
-    from fastapi.responses import Response
-
-    return Response(status_code=204, headers={"Content-Length": "0"})
+    headers = {"Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff"}
+    if as_json:
+        return JSONResponse(
+            status_code=status_code,
+            content={"authorized": False, "detail": _DENIED_TITLE},
+            headers=headers,
+        )
+    headers["Content-Security-Policy"] = (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
+    )
+    headers["Referrer-Policy"] = "no-referrer"
+    return HTMLResponse(content=_DENIED_PAGE, status_code=status_code, headers=headers)
 
 
 def build_denied_response(redis=None, request=None, own_host: str = ""):
+    """All denied visits show a clear session message, including legacy callers.
+
+    Legacy arguments and configuration are accepted for compatibility, but
+    no longer change the response into a redirect or a blank page.
     """
-    The configurable safe fallback for denied prelander access (STEP 6).
-
-    Mode (PRELANDER_DENIED_MODE): generic_page (default) | not_found |
-    forbidden | redirect. Never leaks campaign/publisher/internal info, never
-    a stack trace — the same neutral response whatever the failure was.
-
-    SOURCE FALLBACK (spec §4): when a request object is provided, a request
-    that arrived with a SAFE external Referer is 302'd back to that source
-    page instead of seeing anything from us — no preview, no error page, no
-    loop. Requests without a safe source (direct open, new tab, no referer,
-    source is the protected domain itself) get the least-revealing response.
-    """
-    from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-    from app.config import get_settings
-
-    # ── Safe source return (spec §4) — checked before anything renders ──────
-    if request is not None:
-        fallback = _safe_source_fallback(request, own_host)
-        if fallback:
-            return RedirectResponse(url=fallback, status_code=302)
-
-    mode = (getattr(get_settings(), "PRELANDER_DENIED_MODE", "generic_page") or "generic_page").strip().lower()
-
-    if mode == "not_found":
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
-    if mode == "forbidden":
-        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
-    if mode == "redirect":
-        target = (getattr(get_settings(), "PRELANDER_DENIED_FALLBACK_URL", "") or "").strip()
-        if target.startswith(("http://", "https://")):
-            return RedirectResponse(url=target, status_code=302)
-        # Misconfigured redirect target — fall through to the generic page
-        # rather than 302-ing somewhere unsafe.
-    return HTMLResponse(content=_DENIED_PAGE, status_code=404)
+    return build_session_unavailable_response()

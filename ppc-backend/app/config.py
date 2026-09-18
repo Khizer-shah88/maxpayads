@@ -66,13 +66,9 @@ class Settings(BaseSettings):
     # on the prelander domain for a browsing-session cookie. Short by design.
     PRELANDER_HANDOFF_TTL: int = 60
 
-    # Denied prelander access fallback (STEP 6). Modes:
-    #   generic_page - neutral "not available" HTML (default)
-    #   not_found    - controlled 404
-    #   forbidden    - controlled 403
-    #   redirect     - 302 to PRELANDER_DENIED_FALLBACK_URL
+    # Legacy options retained so existing environment files continue to parse.
+    # Denials now always show the session-unavailable message (HTTP 403).
     PRELANDER_DENIED_MODE: str = "generic_page"
-    # Target for redirect mode (a safe, public entry URL — never the campaign).
     PRELANDER_DENIED_FALLBACK_URL: str = ""
 
     # STEP 12 — IP-usage policy for prelander authorization. IP is an

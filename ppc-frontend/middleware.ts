@@ -18,6 +18,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { sessionUnavailableResponse } from '@/lib/prelander-session';
 import type { NextRequest } from 'next/server';
 import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
@@ -109,26 +110,8 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ════════════════════════════════════════════════════════════════════════════
-  // 0. VIEW-SOURCE — why there is NO header-sniffing block here
-  // ════════════════════════════════════════════════════════════════════════════
-  // A browser `view-source:` navigation sends the EXACT same HTTP request as a
-  // normal visit — there is no distinguishable User-Agent, Referer, Accept or
-  // Sec-Fetch marker. The header-sniffing block that used to live here could
-  // never fire for a real view-source request and only produced false
-  // positives (it blanked every Firefox visitor, whose standard navigation
-  // Accept header matched the old equality check). Do NOT re-add it.
-  //
-  // The REAL protection is the server-side session gate:
-  //  - UNAUTHORIZED visitor (view-source: or plain visit alike) → the root
-  //    shield below answers HTTP 204: no shell, no scripts, no metadata.
-  //  - AUTHORIZED visitor → view-source: shows only the secret-free loader
-  //    shell; the prelander content (campaign URL, password, template) is
-  //    fetched as JSON AFTER the server validates the session — it is never
-  //    embedded in the served HTML. Casual inspection shortcuts (right-click,
-  //    F12, Ctrl+U, Ctrl+Shift+I) are additionally blocked client-side by the
-  //    /d page's anti-inspect layer.
+  // Authorization uses server-side sessions for all browser navigations.
 
-  // ════════════════════════════════════════════════════════════════════════════
   // 0a. /_auth/* RECOVERY — the exchange must complete or the flow dead-ends
   // ════════════════════════════════════════════════════════════════════════════
   // /_auth/{handoff} is a FastAPI route (nginx rewrites it to
@@ -177,15 +160,9 @@ export async function middleware(request: NextRequest) {
         return redirectRes;
       }
 
-      // Exchange rejected (replayed/invalid/expired handoff) → the backend
-      // already returned the strict 204 / denied response. Mirror it.
-      console.log(`[_AUTH_RECOVERY] exchange rejected (${exchangeRes.status}) — mirroring`);
-      const body = await exchangeRes.text();
-      return new NextResponse(body || null, { status: exchangeRes.status });
+      return sessionUnavailableResponse(exchangeRes.status >= 500 ? 503 : 403);
     } catch (err) {
-      // Backend unreachable — fail CLOSED: strict 204, no content ever.
-      console.log(`[_AUTH_RECOVERY] backend unreachable — strict 204`);
-      return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
+      return sessionUnavailableResponse(503);
     }
   }
 
@@ -215,12 +192,7 @@ export async function middleware(request: NextRequest) {
     pathname === '/favicon.ico';
 
   if (!isPortalHost(host) && !isInfraPath) {
-    // ── CLEAN PRELANDER URL + SERVER-SIDE SOURCE SHIELD (spec §3/§7) ──────
-    // The bare prelander root is the FINAL prelander page — but the decision
-    // of whether this visitor may see ANY page source is made SERVER-SIDE
-    // before a single byte of the application shell is served. view-source:
-    // on the domain must never reveal the Next.js HTML, script paths, or
-    // build metadata to an unauthorized visitor.
+    // Validate the session before serving protected content.
     if (pathname === '/') {
       // Ask the backend to validate the browsing-session cookie. The edge
       // middleware can await fetches — this is a true server-side gate,
@@ -231,34 +203,24 @@ export async function middleware(request: NextRequest) {
         const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
           headers: { cookie: cookieHeader },
           redirect: 'manual',
+          cache: 'no-store',
         });
 
         if (checkRes.status === 200) {
           const check = await checkRes.json().catch(() => null);
           if (check?.authorized) {
-            // SERVE-SIDE SOURCE SHIELD (spec §3/§7): rewrite to the hand-crafted
-            // secret-free shell instead of the Next.js application. view-source:
-            // on the clean root now reveals ONLY the ~2KB bootstrap shell — no
-            // framework chunks, no build ids, no embedded content. All secrets
-            // arrive via the session-validated JSON fetch after this shell is
-            // already on screen.
+            // Content is fetched by the page with a second session check.
             const url = request.nextUrl.clone();
             url.pathname = '/clean-shell';
-            const shielded = NextResponse.rewrite(url);
-            addSecurityHeaders(shielded, '/d/shell');
-            return shielded;
+            const page = NextResponse.rewrite(url);
+            addSecurityHeaders(page, '/d/shell');
+            page.headers.set('Cache-Control', 'no-store, private');
+            return page;
           }
         }
-        // UNAUTHORIZED → mirror the backend's HTTP 204 No Content verbatim.
-        // Spec: no HTML body, no redirect, no about:blank, no JS navigation,
-        // no error page — the browser's NATIVE 204 handling terminates the
-        // request. view-source shows nothing: no app shell, no framework
-        // code, no metadata.
-        return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
+        return sessionUnavailableResponse(checkRes.status >= 500 ? 503 : 403);
       } catch (err) {
-        // Backend unreachable — fail CLOSED with 204 (never expose the shell).
-        console.log(`[PRELANDER_SHIELD] backend unreachable — strict 204, no content served`);
-        return new NextResponse(null, { status: 204, headers: { 'Content-Length': '0' } });
+        return sessionUnavailableResponse(503);
       }
     }
     console.log(

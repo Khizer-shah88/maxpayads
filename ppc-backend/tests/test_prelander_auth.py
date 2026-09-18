@@ -88,6 +88,116 @@ class FakePipeline:
                 await self.redis.setex(op[1], op[2], op[3])
 
 
+@pytest.fixture
+def session_api(monkeypatch, redis):
+    """Exercise HTTP session gates with real authorization and an in-memory store."""
+    from fastapi import FastAPI
+    from unittest.mock import AsyncMock
+    from app.routers import prelander_router as routes
+    from app.dependencies import get_db
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[get_db] = lambda: None
+    monkeypatch.setattr(routes, "get_redis_safe", lambda: redis)
+    content = AsyncMock(return_value={"success": True, "offer_url": "https://example.com/download"})
+    monkeypatch.setattr(routes, "_get_prelander_data", content)
+    return app, content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/prelander/session-check", "/prelander/resolve/session"])
+@pytest.mark.parametrize("state", ["missing", "unknown", "expired", "revoked"])
+async def test_http_session_denial_is_explicit(session_api, redis, path, state):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    cookies = {}
+    if state == "unknown":
+        cookies[pas.PL_SESSION_COOKIE] = "unknown-session"
+    elif state in ("expired", "revoked"):
+        session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+        cookies[pas.PL_SESSION_COOKIE] = await pas.establish_prelander_session(session, redis)
+        if state == "expired":
+            session.expires_at = int(time.time()) - pas.SESSION_SKEW_SECONDS - 1
+            # Keep the Redis entry alive to verify the authorization's own expiry check.
+            await redis.setex(pas._session_key(session.token), 60, json.dumps(session.to_json()))
+        else:
+            await pas.revoke_authorization(session.token, redis)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=cookies) as client:
+        response = await client.get(path)
+    assert response.status_code == 403
+    assert response.json()["authorized"] is False
+    assert response.json()["detail"] == "Session expired or unavailable"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert "location" not in response.headers
+    content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_http_valid_session_can_reload_then_expires(session_api, redis):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    pl_id = await pas.establish_prelander_session(session, redis)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", cookies={pas.PL_SESSION_COOKIE: pl_id},
+    ) as client:
+        for _ in range(2):
+            check = await client.get("/prelander/session-check")
+            assert check.status_code == 200
+            assert check.json() == {"authorized": True}
+            resolved = await client.get("/prelander/resolve/session")
+            assert resolved.status_code == 200
+            assert resolved.json()["success"] is True
+            assert resolved.headers["cache-control"] == "no-store, private"
+        await redis.delete(pas._pl_session_key(pl_id))
+        expired = await client.get("/prelander/resolve/session")
+        assert expired.status_code == 403
+    assert content.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_http_session_store_unavailable(session_api, monkeypatch):
+    from httpx import AsyncClient, ASGITransport
+    from app.routers import prelander_router as routes
+
+    app, content = session_api
+    monkeypatch.setattr(routes, "get_redis_safe", lambda: None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for path in ("/prelander/session-check", "/prelander/resolve/session"):
+            response = await client.get(path)
+            assert response.status_code == 503
+            assert response.json()["authorized"] is False
+    content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_handoff_shows_message_without_referrer_redirect(session_api):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/prelander/_auth/unknown", headers={"referer": "https://example.com/"})
+    assert response.status_code == 403
+    assert "Session expired or unavailable" in response.text
+    assert "location" not in response.headers
+    content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preview_requires_admin_authentication(session_api):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/prelander/preview")
+    assert response.status_code == 401
+    content.assert_not_awaited()
+
+
 # ── STEP 8 — duplicate tab / copied URL behavior ─────────────────────────────
 #
 # Documented browser reality: cookies belong to the BROWSER PROFILE, not the
@@ -686,18 +796,21 @@ def denied_settings(monkeypatch):
 def test_denied_response_default_is_generic_page(denied_settings):
     denied_settings("generic_page")
     response = pas.build_denied_response()
-    assert response.status_code == 404
+    assert response.status_code == 403
     body = response.body.decode()
     # Neutral — leaks nothing about campaigns, publishers, or internals
     for leak in ("campaign", "offer", "stack", "Traceback"):
         assert leak not in body
-    assert "no longer available" in body
+    assert "Session expired or unavailable" in body
+    assert "open a new link" in body
+    assert response.headers["cache-control"] == "no-store, private"
+    assert "location" not in response.headers
 
 
 def test_denied_response_not_found_mode(denied_settings):
     denied_settings("not_found")
     response = pas.build_denied_response()
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 def test_denied_response_forbidden_mode(denied_settings):
@@ -706,18 +819,19 @@ def test_denied_response_forbidden_mode(denied_settings):
     assert response.status_code == 403
 
 
-def test_denied_response_redirect_mode(denied_settings):
+def test_denied_response_legacy_redirect_mode_shows_message(denied_settings):
     denied_settings("redirect", "https://example.com/safe")
     response = pas.build_denied_response()
-    assert response.status_code == 302
-    assert response.headers["location"] == "https://example.com/safe"
+    assert response.status_code == 403
+    assert "location" not in response.headers
+    assert b"Session expired or unavailable" in response.body
 
 
 def test_denied_response_redirect_mode_falls_back_on_bad_url(denied_settings):
-    """Misconfigured redirect target → the generic page, never an unsafe 302."""
+    """Legacy redirect configuration cannot suppress the session message."""
     denied_settings("redirect", "javascript:alert(1)")
     response = pas.build_denied_response()
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 # ── STEP 5: access-middleware orchestrator ─────────────────────────────────────

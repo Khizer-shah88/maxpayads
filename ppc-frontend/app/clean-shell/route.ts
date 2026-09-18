@@ -1,25 +1,5 @@
-/**
- * Clean Prelander Shell — /clean-shell (internal route, rewrite-only)
- * ====================================================================
- * SERVE-SIDE SOURCE SHIELD for the bare prelander root (https://prelander-domain.com/).
- *
- * WHY THIS EXISTS — the view-source: contract (spec §3/§7):
- *   A browser `view-source:` navigation is wire-identical to a normal GET and
- *   scripts NEVER execute in view-source mode, so no client trick can detect
- *   or clear it once entered. The only real defense is to make the SERVED
- *   SOURCE ITSELF worthless: the middleware rewrites the authorized clean root
- *   to THIS handler instead of the Next.js application, so view-source reveals
- *   only this ~2KB secret-free bootstrap shell — no framework chunks, no build
- *   metadata, no campaign URL, no password, no template content. Every secret
- *   arrives via the session-validated JSON fetch AFTER this shell is already
- *   on screen; unauthorized visitors get the middleware's HTTP 204 shield and
- *   view-source shows literally nothing.
- *
- * The shell re-implements the /d/session resolution flow (tab-bootstrap
- * consumption, tab-marker stamping, resolve fetch, rendered_html passthrough
- * and the built-in Windows/Mac layouts) in plain HTML/JS so the React bundle
- * is never part of the served prelander source.
- */
+/** Lightweight prelander page. Protected content is fetched only after server validation. */
+import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,45 +63,23 @@ const SHELL_HTML = `<!DOCTYPE html>
   </div>
   <div id="pl-root" hidden></div>
   <script>
-  /* ── ANTI-INSPECT LAYER (runs first, survives document.write) ───────── */
-  (function () {
-    var w = window, d = document, noop = function () {}
-    try {
-      w.console = { log: noop, info: noop, warn: noop, error: noop, debug: noop, dir: noop, trace: noop, table: noop, clear: noop, group: noop, groupEnd: noop, time: noop, timeEnd: noop }
-    } catch (e) {}
-    var done = false
-    function wipe () { if (done) return; done = true; try { d.documentElement.innerHTML = '' } catch (e) {} }
-    function swallow (e) { e.preventDefault(); e.stopPropagation(); return false }
-    w.addEventListener('contextmenu', swallow, true)
-    d.addEventListener('contextmenu', swallow, true)
-    w.addEventListener('keydown', function (e) {
-      var k = (e.key || '').toLowerCase()
-      var mod = e.ctrlKey || e.metaKey
-      if (
-        e.key === 'F12' ||
-        (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-        (e.metaKey && e.altKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-        (mod && k === 'u') ||
-        (mod && k === 's')
-      ) {
-        e.preventDefault(); e.stopPropagation(); wipe()
-      }
-    }, true)
-    setInterval(function () {
-      if (done) return
-      var t0 = performance.now()
-      debugger // eslint-disable-line no-debugger
-      var stall = performance.now() - t0 > 120
-      var gap = (w.outerWidth - w.innerWidth > 160) || (w.outerHeight - w.innerHeight > 160)
-      if (stall || gap) wipe()
-    }, 1500)
-  })()
-
-  /* ── CONTENT BOOTSTRAP (session mode — mirrors /d/session) ──────────── */
   ;(async function () {
     var d = document
-    var TAB_MARKER = 'mpa_prelander_tab'
     function stop () { var l = d.getElementById('pl-loader'); if (l && l.parentNode) l.parentNode.removeChild(l) }
+    function deny () {
+      stop()
+      d.title = '${SESSION_UNAVAILABLE_TITLE}'
+      var root = d.getElementById('pl-root')
+      var heading = d.createElement('h1')
+      var message = d.createElement('p')
+      heading.textContent = '${SESSION_UNAVAILABLE_TITLE}'
+      message.textContent = '${SESSION_UNAVAILABLE_MESSAGE}'
+      root.replaceChildren(heading, message)
+      root.className = 'pl-wrap'
+      root.style.padding = '24px'
+      root.style.textAlign = 'center'
+      root.hidden = false
+    }
     function esc (s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -150,24 +108,15 @@ const SHELL_HTML = `<!DOCTYPE html>
       })
     }
     try {
-      var isSameTab = false
-      try { isSameTab = sessionStorage.getItem(TAB_MARKER) === '1' } catch (e) {}
-      if (!isSameTab) {
-        if (/(?:^|;\\s*)mpa_tab_ok=1(?:;|$)/.test(d.cookie)) {
-          d.cookie = 'mpa_tab_ok=; Max-Age=0; path=/'
-          try { sessionStorage.setItem(TAB_MARKER, '1') } catch (e) {}
-          isSameTab = true
-        }
-      }
       var res = await fetch('/api/prelander/resolve/session', {
+        cache: 'no-store',
+        credentials: 'same-origin',
         headers: { 'X-Prelander-Host': location.hostname }
       })
-      // HTTP 204 = server denied — render nothing (fail closed).
-      if (res.status === 204 || !res.ok) return stop()
+      // Handle both current denials and legacy empty responses during rollout.
+      if (res.status === 204 || !res.ok) return deny()
       var data = await res.json()
-      if (!data || !data.success) return stop()
-      try { sessionStorage.setItem(TAB_MARKER, '1') } catch (e) {}
-      try { d.cookie = 'mpa_tab_ok=; Max-Age=0; path=/' } catch (e) {}
+      if (!data || !data.success) return deny()
       // CLEAN FINAL URL: bare root, no slug, no ids, no params.
       if (location.pathname !== '/' || location.search) {
         try { history.replaceState({}, '', '/') } catch (e) {}
@@ -221,7 +170,7 @@ const SHELL_HTML = `<!DOCTYPE html>
       root.hidden = false
       wire(root)
       stop()
-    } catch (e) { stop() }
+    } catch (e) { deny() }
   })()
   </script>
 </body>

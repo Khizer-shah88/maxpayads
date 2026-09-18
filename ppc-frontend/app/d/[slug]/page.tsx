@@ -4,57 +4,18 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
-/**
- * Prelander page served on the last domain — /d/[slug]
- *
- * Access-control:
- *  - Slug encodes a timestamp (validated server-side). Expired → blocked.
- *  - Direct access without a valid slug → neutral "not available" page.
- *  - When called from an intermediate domain the backend returns a 302 to
- *    the last domain. The browser follows it transparently; if the hostname
- *    changes we detect it and hard-navigate (handles cross-origin 302s that
- *    fetch's opaque redirect mode would otherwise hide).
- *
- * Redirection flow (spec):
- *  - Bypass OFF: Anchor → Inter (timer dwell on the INTER domain only) → THIS landing page
- *  - Bypass ON:  Anchor → Inter (timer dwell) → Campaign URL (via
- *    bypass_redirect_url from /domain-type — this page never shows)
- *
- * PRELANDER-DOMAIN RULES (spec):
- *  - NO timer on the prelander domain — the dwell runs only on the Inter
- *    domain during its hop. This page never waits artificially.
- *  - NO slug visible EVER: the URL is rewritten to the bare root " /"
- *    immediately on mount, before any data loads.
- *  - SAME-TAB reload works (sessionStorage marker survives reload);
- *    a NEW TAB paste has no marker → about:blank (never a preview).
- *    no preview of any kind (not even "not found").
- */
+import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session'
 
-// ─── CONSOLE BLACKOUT (anti-inspect) ─────────────────────────────────────────
-// Module-scoped shadow of the global console: this page must NEVER narrate
-// its flow into an open DevTools console (it previously printed handoff
-// tokens, prelander domains and campaign data there). Server-side logs are
-// unaffected. Kept as a shadow instead of deleting every call site so dev
-// debugging can be restored by removing this one block.
-const _noop = () => {}
-const console = { log: _noop, error: _noop, warn: _noop, info: _noop, debug: _noop } as unknown as Console
-
-// sessionStorage key marking THIS TAB as the one the flow opened the
-// prelander in. sessionStorage is PER-TAB: it survives reloads but is empty
-// in a new tab — exactly the same-tab-allowed / new-tab-denied distinction.
-const TAB_MARKER = 'mpa_prelander_tab'
-
-// Terminal denial (spec: HTTP 204 — no client-side fallback logic).
-// The SERVER already answered unauthorized access with 204 No Content
-// (middleware shield + backend session-check/resolve). This function exists
-// only for paths where the shell somehow mounted anyway (e.g. a page already
-// in the browser's back/forward cache from a previously authorized visit,
-// or a race where the session expired between shield and mount): it performs
-// NO navigation — no about:blank, no history.back(), no window.close, no
-// redirects. The page simply renders nothing. The browser's own 204/back
-// behavior handles the navigation side.
-function denyWithNoPreview(): boolean {
-  return false
+// The server validates the session on each resolve. Cookies are shared across tabs.
+function SessionUnavailable() {
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-[#f0f2f5] p-6">
+      <section className="w-full max-w-md rounded-2xl bg-white p-8">
+        <h1 className="text-2xl font-semibold text-gray-900">{SESSION_UNAVAILABLE_TITLE}</h1>
+        <p className="mt-4 leading-relaxed text-gray-600">{SESSION_UNAVAILABLE_MESSAGE}</p>
+      </section>
+    </main>
+  )
 }
 
 export default function PrelanderSlugPage() {
@@ -65,157 +26,29 @@ export default function PrelanderSlugPage() {
   const slug = (params.slug as string) || 'session'
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [blocked, setBlocked] = useState(false)
-  // TERMINAL DENIED state (spec: HTTP 204 semantics — no client-side fallback
-  // logic, no error page, no navigation): when the server denies access, the
-  // page renders NOTHING. This state exists because the shell may already be
-  // mounted (the browser keeps the previous page / a bfcache entry) — we must
-  // never paint content or an error screen on top of it.
   const [denied, setDenied] = useState(false)
-  const [errorDetails, setErrorDetails] = useState<string>('')
   // True while the browser is transitioning from an Anchor/Inter domain to the
   // Prelander domain. We hold a loader on screen for a short fixed delay so the
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ANTI-INSPECT LAYER (defense-in-depth — the authorization gate stays
-  // server-side; this only removes the casual local inspection shortcuts)
-  // ═════════════════════════════════════════════════════════════════════════════
-  //  - right-click (context) menu disabled — no "View Page Source" entry
-  //  - F12 / Ctrl+Shift+I/J/C / Ctrl+U / Ctrl+S intercepted and swallowed
-  //  - DevTools-open detection (debugger-stall heuristic): when DevTools is
-  //    attached, the live DOM is wiped so the Elements panel shows nothing
-  //  - manual address-bar view-source: is wire-identical to a normal GET —
-  //    unauthorized visitors already receive the server's HTTP 204 shield
-  //    (nothing at all); authorized visitors view-source only the secret-free
-  //    bootstrap shell served by /clean-shell (the middleware rewrites the
-  //    clean root there instead of this React app) — the campaign URL,
-  //    password and template content arrive via session-validated JSON fetch
-  //    and are never embedded in the served HTML.
   useEffect(() => {
-    let wiped = false
-    const wipe = () => {
-      if (wiped) return
-      wiped = true
-      try { document.documentElement.innerHTML = '' } catch { /* ignore */ }
-    }
-    const onKey = (e: KeyboardEvent) => {
-      const k = (e.key || '').toLowerCase()
-      const mod = e.ctrlKey || e.metaKey
-      if (
-        e.key === 'F12' ||
-        (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-        (e.metaKey && e.altKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-        (mod && k === 'u') ||
-        (mod && k === 's')
-      ) {
-        e.preventDefault()
-        e.stopPropagation()
-        wipe()
-      }
-    }
-    const onContextMenu = (e: Event) => { e.preventDefault() }
-    // Attached at window/document level so the handlers survive the
-    // FullHtmlPrelander document.write() (the Document object is reused,
-    // the nodes are not).
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('contextmenu', onContextMenu, true)
-    document.addEventListener('contextmenu', onContextMenu, true)
-    // DevTools-open heuristics (best-effort, survives prod minification + CSP):
-    //  1. `debugger` stall — a no-op while DevTools is closed; when open,
-    //     execution pauses on it and the measurable delay is the tell. (SWC
-    //     may strip bare `debugger` statements in some builds — hence #2.)
-    //  2. window-dimension gap — docked DevTools makes outerWidth/Height
-    //     exceed innerWidth/Height by the panel size (>160px is far beyond
-    //     any scrollbar/zoom delta).
-    const timer = window.setInterval(() => {
-      if (wiped) { window.clearInterval(timer); return }
-      const t0 = performance.now()
-      // eslint-disable-next-line no-debugger
-      debugger
-      const stall = performance.now() - t0 > 120
-      const gap =
-        window.outerWidth - window.innerWidth > 160 ||
-        window.outerHeight - window.innerHeight > 160
-      if (stall || gap) wipe()
-    }, 1500)
-    return () => {
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('contextmenu', onContextMenu, true)
-      document.removeEventListener('contextmenu', onContextMenu, true)
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SECURITY CHECK: Block pasted URLs in new tabs
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Strategy: Check immediately for denied marker, allow first loads, validate after
-  useEffect(() => {
-    const SECURITY_MARKER = 'prelander_tab_authorized'
-    const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
-    
-    // If already authorized, allow access
-    if (existingAuth === 'granted') {
-      console.log('[SECURITY] ✓ Previously authorized tab - access granted')
-      return
-    }
-    
-    // If previously denied, go back to previous page immediately
-    if (existingAuth === 'denied') {
-      console.log('[SECURITY] ✗ Previously denied tab - going back')
-      if (window.history.length > 1) {
-        window.history.back()
-      } else {
-        // Fallback if no history - go to Google
-        window.location.replace('https://www.google.com')
-      }
-      return
-    }
-    
-    // First visit - check quickly for obvious pasted URLs
-    const referrer = document.referrer
-    const historyLength = window.history.length
-    
-    console.log('[SECURITY] Quick first visit check')
-    console.log('[SECURITY] - Referrer:', referrer || '(none)')
-    console.log('[SECURITY] - History length:', historyLength)
-    
-    // If it's clearly a pasted URL (no referrer AND history length = 1), block immediately
-    if (!referrer && historyLength === 1) {
-      console.log('[SECURITY] ✗ Clear pasted URL - blocking before load')
-      sessionStorage.setItem(SECURITY_MARKER, 'denied')
-      // Go to Google since there's no previous page
-      window.location.replace('https://www.google.com')
-      setDenied(true)
-      setLoading(false)
-      return
-    }
-    
-    // Otherwise allow to proceed - will be validated after load
-    console.log('[SECURITY] Allowing page to load for validation')
-  }, []) // Empty deps - runs once on mount
-
-  useEffect(() => {
-    // Skip data fetch if already denied by security check
+    // Avoid repeating a request after the server has denied this load.
     if (denied) {
-      console.log('[PRELANDER] Skipping fetch - access denied by security check')
+
       return
     }
 
     const fetchData = async () => {
-      console.log('[PRELANDER DEBUG] useEffect triggered')
-      
+
       if (!slug) { 
-        console.log('[PRELANDER ERROR] No slug provided')
+
         setDenied(true)
         setLoading(false)
         return 
       }
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
-      const fullUrl = typeof window !== 'undefined' ? window.location.href : ''
 
       // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
       // slug == "session": mounted at the bare prelander root. No hop
@@ -227,39 +60,10 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
 
-        // SAME-TAB vs NEW-TAB (spec): sessionStorage is PER-TAB. A reload of
-        // THIS tab keeps the marker; the same URL pasted into a NEW tab (or
-        // any request that never came through the flow) has no marker →
-        // show nothing with NO preview of any kind.
-        // NOTE: the marker/tab-bridge is DEFENSE-IN-DEPTH only — the SERVER
-        // already denies unauthorized visitors at session-check (204) and at
-        // the resolve (204). A missing marker therefore must NOT preempt the
-        // resolve: an authorized visitor whose bridge cookie was unreadable
-        // (e.g. HttpOnly hardening on an old instance) still gets their
-        // content from the server-side session. The marker check runs AFTER
-        // a successful resolve, purely to stamp the tab for reloads.
-        let isSameTab = false
-        try { isSameTab = sessionStorage.getItem(TAB_MARKER) === '1' } catch { /* storage blocked → treat as new tab */ }
-
-        // TAB BOOTSTRAP: the /_auth exchange set a one-time 60s bridge cookie.
-        // This is the flow's own arrival — consume it NOW and mark THIS tab,
-        // so reloads of this tab keep working while pastes elsewhere never do.
-        if (!isSameTab) {
-          const m = document.cookie.match(/(?:^|;\s*)mpa_tab_ok=1(?:;|$)/)
-          if (m) {
-            // Consume (expire immediately) — one-time bridge.
-            document.cookie = 'mpa_tab_ok=; Max-Age=0; path=/'
-            try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
-            isSameTab = true
-            console.log('[PRELANDER] Tab bootstrap consumed — this tab is now the flow tab')
-          }
-        }
-        // (isSameTab false here does NOT deny — see NOTE above. The resolve
-        // below is the authorization decision; the marker is stamped after it.)
-
+        // Session validity is decided by the backend, not client storage.
         try {
           const res = await fetch('/api/prelander/resolve/session', {
-            headers: { 'X-Prelander-Host': hostname },
+            headers: { 'X-Prelander-Host': hostname }, cache: 'no-store',
           })
           // HTTP 204 = server denied (missing/invalid/expired/tampered
           // authorization). NOTE: 204 is 2xx so res.ok is TRUE — the empty
@@ -273,13 +77,6 @@ export default function PrelanderSlugPage() {
             setDenied(true)
             return
           }
-          // Validated by the SERVER — stamp the tab so reloads of THIS tab
-          // are recognized; new-tab pastes of the clean root come through
-          // session-check/resolve with no cookie and are denied server-side.
-          try { sessionStorage.setItem(TAB_MARKER, '1') } catch { /* storage blocked */ }
-          // Also consume any lingering bridge cookie (one-time).
-          try { document.cookie = 'mpa_tab_ok=; Max-Age=0; path=/' } catch { /* ignore */ }
-          // Validated — refresh/reload of this tab keeps working.
           setData(json)
         } catch (error) {
           setDenied(true)
@@ -290,34 +87,25 @@ export default function PrelanderSlugPage() {
         return
       }
 
-      console.log('[PRELANDER DEBUG] Starting fetch')
-      console.log('[PRELANDER DEBUG] - slug:', slug)
-      console.log('[PRELANDER DEBUG] - hostname:', hostname)
-      console.log('[PRELANDER DEBUG] - full URL:', fullUrl)
-      console.log('[PRELANDER DEBUG] - pathname:', typeof window !== 'undefined' ? window.location.pathname : '')
+      try {
 
-      try{
-        console.log('[PRELANDER DEBUG] Step 1: Fetching domain-type')
         // Step 1: check if this hostname is the Prelander domain.
         // If not, redirect the browser to the Prelander domain with the same
         // slug. This avoids fetch() swallowing the 302 from the backend.
         // The slug is passed so the backend can also detect bypass mode and
         // return the Campaign URL directly (bypass ON spec).
         const dtUrl = `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}&slug=${encodeURIComponent(slug)}`
-        console.log('[PRELANDER DEBUG] Calling domain-type API:', dtUrl)
-        
+
         const dtRes = await fetch(dtUrl)
-        console.log('[PRELANDER DEBUG] domain-type response status:', dtRes.status, dtRes.ok)
-        
+
         if (dtRes.ok) {
           const dt = await dtRes.json()
-          console.log('[PRELANDER DEBUG] domain-type data:', JSON.stringify(dt, null, 2))
-          
+
           // Bypass ON (spec): Anchor → Inter (0.75s dwell) → Campaign URL.
           // We're on the Inter domain — hold the 0.75s loader, then go straight
           // to the Campaign URL. The landing page is never shown.
           if (dt.bypass_redirect_url) {
-            console.log('[PRELANDER DEBUG] Bypass mode detected, redirecting to:', dt.bypass_redirect_url)
+
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
             window.location.replace(dt.bypass_redirect_url)
@@ -325,8 +113,7 @@ export default function PrelanderSlugPage() {
           }
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
-          console.log('[PRELANDER DEBUG] Prelander domain from API:', prelanderDomain)
-          
+
           // The backend resolves the NEXT managed hop (chain-aware): the next
           // chain hop, the weighted Prelander pool pick, or the legacy
           // publisher/global Prelander domain. It only returns a URL when this
@@ -334,30 +121,25 @@ export default function PrelanderSlugPage() {
           // the domain_type (a prelander-typed domain positioned mid-chain must
           // keep hopping).
           if (prelanderDomain) {
-            console.log('[PRELANDER DEBUG] Need to hop to prelander domain:', prelanderDomain)
+
             // Cross-domain handoff (STEP 4): when leaving the Inter domain for
             // the prelander, mint a one-time handoff and exchange it at
             // /_auth/{handoff} on the prelander domain — the bootstrap consumes
             // it once, sets the prelander-domain HttpOnly session cookie, and
             // lands the visitor on the clean root. Refreshes then ride the
             // session cookie, never the handoff.
-            // AUTHORIZATION GATE (spec: no request outside the Anchor flow
-            // may see ANYTHING): the handoff mint runs the server-side
-            // authorization (click-time session + browser fingerprint + slug
-            // binding). A visitor without it — pasted URL, foreign referer,
-            // direct hit — gets NO preview, not even a "not found" page, and
-            // is sent back to where they came from.
+            // A failed handoff shows the same session-unavailable message.
             let handoffToken: string | null = null
             try {
-              console.log('[PRELANDER DEBUG] Requesting handoff token')
+
               const hRes = await fetch(
                 `/api/prelander/handoff?slug=${encodeURIComponent(slug)}&target_host=${encodeURIComponent(new URL(prelanderDomain).hostname)}`,
-                { headers: { 'X-Prelander-Host': hostname }, redirect: 'manual' }
+                { headers: { 'X-Prelander-Host': hostname }, cache: 'no-store', redirect: 'manual' }
               )
-              console.log('[PRELANDER DEBUG] Handoff response status:', hRes.status, hRes.ok)
+
               if (hRes.ok) {
                 const h = await hRes.json()
-                console.log('[PRELANDER DEBUG] Handoff data:', h)
+
                 handoffToken = h?.handoff || null
               } else if (hRes.status === 302 || hRes.status === 301 || hRes.status === 307) {
                 // POOL-PICK SELF-HEALING: the backend refused this target (the
@@ -367,7 +149,7 @@ export default function PrelanderSlugPage() {
                 // slug. Follow it: the correct domain mints the handoff there.
                 const hop = hRes.headers.get('location')
                 if (hop) {
-                  console.log('[PRELANDER DEBUG] Mint redirected to the recorded host — following')
+
                   setTransitioning(true)
                   await new Promise(r => setTimeout(r, 750))
                   window.location.replace(hop)
@@ -375,13 +157,11 @@ export default function PrelanderSlugPage() {
                 }
               }
             } catch (handoffError) {
-              console.log('[PRELANDER DEBUG] Handoff request failed:', handoffError)
+
             }
 
             if (!handoffToken) {
-              // NOT authorized (or the mint failed): no preview of any kind —
-              // terminal (renders nothing), per spec.
-              console.log('[PRELANDER] Unauthorized hop attempt — terminal, no preview')
+              // Authorization failed; keep protected data out of the page.
               setDenied(true)
               return
             }
@@ -394,49 +174,41 @@ export default function PrelanderSlugPage() {
             // server-side session binding, never in any public URL. The
             // address bar goes from interdomain/d/{slug} directly to
             // https://prelanderdomain.com/ with nothing in between.
-            console.log('[PRELANDER DEBUG] Got handoff token, redirecting after 0.75s dwell')
+
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
             const authUrl = `${prelanderDomain}/_auth/${handoffToken}`
-            console.log('[PRELANDER DEBUG] Redirecting to clean-root handoff:', authUrl.replace(/\/_auth\/\S+/, '/_auth/{token}'))
+
             window.location.replace(authUrl)
             return
           }
-          
-          console.log('[PRELANDER DEBUG] No prelander domain, staying on current host')
-        } else {
-          console.log('[PRELANDER DEBUG] domain-type API failed with status:', dtRes.status)
+
         }
 
         // Step 2: on the Prelander domain (or type unknown) — fetch prelander data
-        console.log('[PRELANDER DEBUG] Step 2: Fetching prelander data')
+
         const resolveUrl = `/api/prelander/resolve/${slug}`
-        console.log('[PRELANDER DEBUG] Calling resolve API:', resolveUrl)
-        
+
         const res = await fetch(resolveUrl, {
-          headers: { 'X-Prelander-Host': hostname },
+          headers: { 'X-Prelander-Host': hostname }, cache: 'no-store',
         })
-        
-        console.log('[PRELANDER DEBUG] Resolve response status:', res.status, res.ok)
 
         // HTTP 204 = server denied (204 is 2xx so res.ok is TRUE — handle it
         // BEFORE res.ok/json parsing, the empty body breaks res.json()).
         if (res.status === 204 || !res.ok) {
-          console.log('[PRELANDER ERROR] Resolve rejected — terminal, no preview')
+
           setDenied(true)
           return
         }
 
         const json = await res.json()
-        console.log('[PRELANDER DEBUG] Resolve data:', JSON.stringify(json, null, 2))
-        
+
         if (!json?.success) {
-          console.log('[PRELANDER ERROR] Resolve returned success=false — terminal')
+
           setDenied(true)
           return
         }
 
-        console.log('[PRELANDER SUCCESS] Setting prelander data')
         setData(json)
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
@@ -447,12 +219,12 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
       } catch (error) {
-        console.error('[PRELANDER ERROR] Exception in fetchData:', error)
-        // Terminal denied — render nothing, never the error page.
+
+        // Show the session message without exposing internal errors.
         setDenied(true)
-        setErrorDetails(error instanceof Error ? error.message : 'Unknown error')
+
       } finally {
-        console.log('[PRELANDER DEBUG] Fetch complete, loading=false')
+
         setLoading(false)
       }
     }
@@ -460,52 +232,10 @@ export default function PrelanderSlugPage() {
   }, [slug, denied])
 
   useEffect(() => {
-    document.title = 'Download Ready'
-  }, [])
+    document.title = denied ? SESSION_UNAVAILABLE_TITLE : 'Download Ready'
+  }, [denied])
 
-  // Post-load security check: Mark tab as authorized or deny based on referrer
-  useEffect(() => {
-    if (data && !denied) {
-      const SECURITY_MARKER = 'prelander_tab_authorized'
-      const existingAuth = sessionStorage.getItem(SECURITY_MARKER)
-      
-      if (!existingAuth) {
-        // First successful load - validate referrer
-        const referrer = document.referrer
-        const currentHost = window.location.hostname
-        const hasExternalReferrer = referrer && !referrer.includes(currentHost)
-        
-        console.log('[SECURITY] Post-load validation')
-        console.log('[SECURITY] - Referrer:', referrer || '(none)')
-        console.log('[SECURITY] - Has external referrer:', hasExternalReferrer)
-        
-        if (hasExternalReferrer) {
-          // Legitimate redirect flow - authorize this tab
-          sessionStorage.setItem(SECURITY_MARKER, 'granted')
-          console.log('[SECURITY] ✓ Tab authorized - legitimate redirect flow')
-        } else {
-          // Pasted URL that somehow loaded - deny and go back
-          sessionStorage.setItem(SECURITY_MARKER, 'denied')
-          console.log('[SECURITY] ✗ Pasted URL detected - going back to previous page')
-          
-          // Go back to previous page (e.g., Wikipedia)
-          if (window.history.length > 1) {
-            window.history.back()
-          } else {
-            // Fallback if no history
-            window.location.replace('https://www.google.com')
-          }
-        }
-      }
-    }
-  }, [data, denied])
-
-  // Terminal denied state — render NOTHING (spec: no error page, no content,
-  // no loader). The server's 204 semantics are honored by leaving the page
-  // empty; the browser's native handling takes care of the rest.
-  if (denied) {
-    return null
-  }
+  if (denied) return <SessionUnavailable />
 
   // Simple professional loader — shown during the data fetch and during the
   // 0.75s Inter-domain dwell. Nothing extra: one spinner, one line of text.
@@ -522,11 +252,7 @@ export default function PrelanderSlugPage() {
     )
   }
 
-  // Terminal denied (no data after a completed fetch) — render NOTHING.
-  // Spec: never an application error page, never content, never a loader.
-  if (!data) {
-    return null
-  }
+  if (!data) return <SessionUnavailable />
 
   // Note: Bypass OFF always shows the landing page — even when the backend has
   // no active template (the built-in layout renders as fallback). The visitor

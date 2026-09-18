@@ -238,77 +238,6 @@ def _normalise_shortcodes(html: str) -> str:
     return re.sub(r'(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)\}(?!\})', _replace, html)
 
 
-# ── ANTI-INSPECT HARDENING (injected into every rendered template) ──────
-# Admin-authored full-HTML templates are served verbatim, so this runtime
-# layer is injected server-side at render time. It:
-#   1. Blacks out window.console (no flow narration into open DevTools)
-#   2. Disables the right-click context menu (no "View Page Source" entry)
-#   3. Swallows the inspect shortcuts (F12, Ctrl/Cmd+Shift+I/J/C/K, Ctrl+U,
-#      Ctrl+S) and wipes the live DOM when they are pressed
-#   4. Detects an attached DevTools (debugger-stall + window-dimension gap
-#      heuristics) and wipes the live DOM so the Elements panel shows nothing
-# NOTE: manual address-bar view-source: navigations are wire-identical to a
-# normal GET and scripts never execute in source view — they cannot be
-# intercepted client-side. The real view-source defense stays server-side:
-# unauthorized visitors get the 204 shield and authorized visitors only ever
-# view the source of the secret-free shell (content arrives via the
-# session-validated JSON fetch, never embedded in the served HTML).
-_HARDENING_SCRIPT = """
-<script>
-(function () {
-  var w = window, d = document, noop = function () {};
-  try {
-    w.console = { log: noop, info: noop, warn: noop, error: noop, debug: noop,
-      dir: noop, trace: noop, table: noop, clear: noop, group: noop,
-      groupEnd: noop, time: noop, timeEnd: noop };
-  } catch (e) {}
-  var done = false;
-  function wipe () { if (done) return; done = true; try { d.documentElement.innerHTML = ''; } catch (e) {} }
-  function swallow (e) { e.preventDefault(); e.stopPropagation(); return false; }
-  w.addEventListener('contextmenu', swallow, true);
-  d.addEventListener('contextmenu', swallow, true);
-  w.addEventListener('keydown', function (e) {
-    var k = (e.key || '').toLowerCase();
-    var mod = e.ctrlKey || e.metaKey;
-    if (
-      e.key === 'F12' ||
-      (mod && e.shiftKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-      (e.metaKey && e.altKey && (k === 'i' || k === 'j' || k === 'c' || k === 'k')) ||
-      (mod && k === 'u') ||
-      (mod && k === 's')
-    ) { e.preventDefault(); e.stopPropagation(); wipe(); }
-  }, true);
-  setInterval(function () {
-    if (done) return;
-    var t0 = performance.now();
-    debugger;
-    var stall = performance.now() - t0 > 120;
-    var gap = (w.outerWidth - w.innerWidth > 160) || (w.outerHeight - w.innerHeight > 160);
-    if (stall || gap) wipe();
-  }, 1500);
-})();
-</script>"""
-
-
-def _inject_hardening(html: str) -> str:
-    """
-    Inject the anti-inspect hardening script into a rendered HTML document.
-
-    Placement priority:
-      1. Immediately before the first ``</body>`` (case-insensitive)
-      2. Immediately before the first ``</html>``
-      3. Appended to the end (fragment templates without a body tag)
-    """
-    lowered = html.lower()
-    idx = lowered.rfind("</body>")
-    if idx != -1:
-        return html[:idx] + _HARDENING_SCRIPT + html[idx:]
-    idx = lowered.rfind("</html>")
-    if idx != -1:
-        return html[:idx] + _HARDENING_SCRIPT + html[idx:]
-    return html + _HARDENING_SCRIPT
-
-
 class PrelanderTemplateEngine:
     """
     Secure template rendering engine with sandboxing.
@@ -368,10 +297,7 @@ class PrelanderTemplateEngine:
             template = self.env.from_string(normalised_html)
             rendered = template.render(**safe_context)
 
-            # Inject the anti-inspect hardening layer (console blackout,
-            # right-click/inspect-shortcut blocking, DevTools DOM wipe) into
-            # every served template — server-side, at render time.
-            return _inject_hardening(rendered)
+            return rendered
 
         except TemplateSyntaxError as e:
             logger.error(f"Template syntax error: {e}")
