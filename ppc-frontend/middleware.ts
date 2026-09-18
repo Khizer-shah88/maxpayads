@@ -108,6 +108,38 @@ function referrerHostname(referrer: string | undefined): string {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // 0. BLOCK VIEW-SOURCE REQUESTS — prevent source code viewing
+  // ════════════════════════════════════════════════════════════════════════════
+  // Detect various patterns that indicate view-source: requests
+  const userAgent = request.headers.get('user-agent') || '';
+  const referer = request.headers.get('referer') || '';
+  const acceptHeader = request.headers.get('accept') || '';
+  
+  // Check for view-source patterns
+  const isViewSourceRequest = (
+    referer.includes('view-source:') ||
+    userAgent.toLowerCase().includes('view-source') ||
+    // Chrome/Firefox view-source requests often have specific accept headers
+    acceptHeader.includes('text/plain') ||
+    acceptHeader === 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' ||
+    // Additional patterns for source viewing
+    pathname.includes('view-source') ||
+    request.nextUrl.searchParams.has('view-source')
+  );
+  
+  if (isViewSourceRequest) {
+    console.log(`[VIEW_SOURCE_BLOCKED] user-agent=${userAgent} referer=${referer} accept=${acceptHeader}`);
+    // Return empty response - no content for view-source
+    return new NextResponse('', { 
+      status: 200,
+      headers: { 
+        'Content-Type': 'text/html',
+        'Content-Length': '0'
+      }
+    });
+  }
+
   // Create response first (will be used throughout)
   let response: NextResponse;
 
