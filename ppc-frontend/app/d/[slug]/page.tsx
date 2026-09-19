@@ -41,25 +41,20 @@ export default function PrelanderSlugPage() {
     
     // Check if this is a new tab without authorization
     if (!tabAuth) {
-      // This is a new tab - check if it came from a legitimate redirect
+      // Check if this is likely a pasted URL (no referrer from our domains)
       const referrer = document.referrer;
-      const hasLegitReferrer = referrer && (
-        referrer.includes('clickspot.icu') ||
-        referrer.includes('browsmac.org') ||
-        referrer.includes('clickfilesetup.info') ||
-        referrer.includes('rydestudio.info')
-      );
       
-      if (!hasLegitReferrer) {
-        // No legitimate referrer - this is a pasted URL in a new tab
-        console.log('[TAB-SECURITY] Unauthorized tab access detected - redirecting');
+      // Only block if there's absolutely no referrer (pasted URL)
+      // Allow ALL referrers to ensure normal flow works
+      if (!referrer) {
+        console.log('[TAB-SECURITY] Pasted URL detected (no referrer) - redirecting');
         window.location.replace('https://www.google.com');
         return;
       }
       
-      // Legitimate referrer - authorize this tab
+      // Any referrer means legitimate access - authorize this tab
       sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
-      console.log('[TAB-SECURITY] Tab authorized via legitimate referrer');
+      console.log('[TAB-SECURITY] Tab authorized');
     }
     
     // Avoid repeating a request after the server has denied this load.
