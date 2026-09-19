@@ -3,6 +3,11 @@ const nextConfig = {
   // Enable standalone output for Docker
   output: 'standalone',
   
+  // Environment variables for source deterrent feature
+  env: {
+    ENABLE_SOURCE_DETERRENT: process.env.ENABLE_SOURCE_DETERRENT || 'true',
+  },
+  
   webpack: (config, { dev, isServer }) => {
     // Apply aggressive obfuscation in production client-side builds
     if (!dev && !isServer) {
@@ -107,7 +112,7 @@ const nextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';",
+            value: "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; worker-src 'self';",
           },
         ],
       },
