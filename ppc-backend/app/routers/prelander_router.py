@@ -24,7 +24,7 @@ Bypass ON (direct_redirect_mode):
 import logging
 import time
 from fastapi import APIRouter, Query, Depends, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.routing import APIRoute
 from typing import Optional
 from bson import ObjectId
@@ -446,6 +446,60 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     When the requesting host is a Prelander domain or any other host:
       → Returns prelander data JSON (offer_url, password, os, etc.)
     """
+    
+    # ═══ ENHANCED SECURITY: Block pasted URLs and view-source attempts ═══
+    referer = request.headers.get("referer", "")
+    user_agent = request.headers.get("user-agent", "")
+    request_url = str(request.url)
+    
+    # Block view-source attempts
+    if ("view-source:" in request_url or 
+        "view-source" in referer.lower() or
+        request.url.scheme == "view-source"):
+        logger.info(f"[SECURITY] Blocked view-source attempt: {request_url}")
+        
+        # Return obfuscated HTML instead of redirect to make view-source unreadable
+        obfuscated_html = """
+        <!DOCTYPE html><html><head><title>Access Denied</title></head><body>
+        <script>eval(atob('dmFyIF8weGE9Wydjb25zb2xlJywnbG9nJywnQWNjZXNzIERlbmllZCddO18weGFbMHhdW18weGFbMV1dKF8weGFbMl0pO3dpbmRvdy5sb2NhdGlvbi5ocmVmPSdodHRwczovL3d3dy5nb29nbGUuY29tJzs='));</script>
+        </body></html>"""
+        
+        return HTMLResponse(
+            content=obfuscated_html,
+            status_code=403,
+            headers={"Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
+        )
+    
+    # Enhanced pasted URL detection
+    is_pasted_url = (
+        not referer or  # No referrer = pasted URL
+        not referer.startswith(("http://", "https://")) or  # Invalid referrer
+        "google.com" in referer or  # Coming from search
+        "facebook.com" in referer or  # Social media
+        "twitter.com" in referer or
+        "linkedin.com" in referer or
+        len(referer) < 10  # Too short referrer
+    )
+    
+    # Block bots and tools
+    is_bot_or_tool = any(identifier in user_agent.lower() for identifier in [
+        "bot", "crawler", "spider", "scraper", "curl", "wget", 
+        "postman", "insomnia", "python", "go-http", "java"
+    ])
+    
+    # Allow legitimate redirect flow by checking for redirect domains
+    is_from_redirect_domain = any(domain in referer.lower() for domain in [
+        "trustedcloudmedia.com", "redirect", "inter", "anchor"
+    ]) if referer else False
+    
+    if (is_pasted_url or is_bot_or_tool) and not is_from_redirect_domain:
+        logger.info(f"[SECURITY] Blocked direct/pasted access: referer='{referer}', ua='{user_agent}'")
+        return RedirectResponse(
+            url="https://www.google.com",
+            status_code=302, 
+            headers={"Referrer-Policy": "no-referrer"},
+        )
+    
     from app.services.domain_service import normalize_domain
 
     # Session authorization applies equally to all browser navigations.
@@ -571,13 +625,26 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
     )
     if not auth_session or auth_session is True:
-        # For direct browser requests (pasted URLs, view-source), redirect to Google
-        # API calls (X-Prelander-Host header present) get proper error responses
+        # Enhanced security: Block pasted URLs, view-source, and direct access
         accept_header = request.headers.get("accept", "")
+        user_agent = request.headers.get("user-agent", "")
+        referer = request.headers.get("referer", "")
         has_prelander_host_header = request.headers.get("x-prelander-host") is not None
         
-        if not has_prelander_host_header and "text/html" in accept_header:
+        # Detect direct access attempts (pasted URLs, view-source, etc.)
+        is_direct_access = (
+            not referer or  # No referrer = pasted URL
+            "view-source:" in referer or  # View-source attempt
+            not has_prelander_host_header or  # Missing API header
+            "bot" in user_agent.lower() or  # Bot access
+            "curl" in user_agent.lower() or  # Command line tools
+            "wget" in user_agent.lower() or  # Download tools
+            not referer.startswith("http")  # Invalid referrer
+        )
+        
+        if is_direct_access and "text/html" in accept_header:
             # Direct browser request - redirect to prevent content exposure
+            logger.info(f"[SECURITY] Blocking direct access: referer={referer}, ua={user_agent}")
             return RedirectResponse(
                 url="https://www.google.com",
                 status_code=302,
