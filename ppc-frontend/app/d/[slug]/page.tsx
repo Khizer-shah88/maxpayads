@@ -4,8 +4,6 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
-import { guardTab } from '@/lib/tab-guard'
-
 import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
@@ -34,19 +32,6 @@ export default function PrelanderSlugPage() {
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // LIGHTER VIEW-SOURCE PROTECTION: Only redirect view-source, don't block everything
-  // ═══════════════════════════════════════════════════════════════════════
-  useEffect(() => {
-    // Detect view-source attempts and redirect them
-    if (window.location.protocol === 'view-source:' || 
-        document.referrer.includes('view-source:') ||
-        window.location.href.includes('view-source:')) {
-      window.location.replace('https://www.google.com');
-      return;
-    }
-  }, []);
-
   useEffect(() => {
     (async () => {
       // Avoid repeating a request after the server has denied this load.
@@ -73,7 +58,6 @@ export default function PrelanderSlugPage() {
         }
 
         try {
-          // 1) your existing call (slug route or "session"), unchanged
           const res = await fetch('/api/prelander/resolve/session', {
             credentials: "include",
             headers: { 'X-Prelander-Host': hostname },
@@ -92,10 +76,6 @@ export default function PrelanderSlugPage() {
             return
           }
           
-          // 2) NEW: claim AFTER resolve, BEFORE rendering
-          if (!(await guardTab())) return; // redirected to google, render nothing
-          
-          // 3) now it is safe to show the content
           setData(data)
           setLoading(false)
           return
@@ -163,10 +143,7 @@ export default function PrelanderSlugPage() {
           }
         }
 
-        // Step 2: on the Prelander domain - resolve data and apply tab guard
-        console.log('[PRELANDER] Resolving on prelander domain:', hostname)
-        
-        // 1) your existing call (slug route or "session"), unchanged
+        // Step 2: on the Prelander domain - resolve data
         const res = await fetch(`/api/prelander/resolve/${slug}`, {
           credentials: "include",
           headers: { "X-Prelander-Host": window.location.hostname },
@@ -185,21 +162,7 @@ export default function PrelanderSlugPage() {
           return
         }
 
-        console.log('[PRELANDER] Resolve successful, applying tab guard...')
-
-        // 2) NEW: claim AFTER resolve, BEFORE rendering
-        try {
-          if (!(await guardTab())) {
-            console.log('[PRELANDER] Tab guard blocked access')
-            return; // redirected to google, render nothing
-          }
-          console.log('[PRELANDER] Tab guard passed, rendering content')
-        } catch (guardError) {
-          console.error('[PRELANDER] Tab guard error:', guardError)
-          // If tab guard fails, still show content for now (debugging)
-        }
-
-        // 3) now it is safe to show the content
+        // Show the content
         setData(data)
         
         // CLEAN FINAL URL (spec)
