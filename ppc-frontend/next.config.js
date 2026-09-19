@@ -4,18 +4,18 @@ const nextConfig = {
   output: 'standalone',
   
   webpack: (config, { dev, isServer }) => {
-    // Only apply optimizations in production client-side builds
+    // Apply aggressive obfuscation in production client-side builds
     if (!dev && !isServer) {
-      // Remove source maps in production
+      // Remove source maps completely
       config.devtool = false
       
-      // Basic minification (less aggressive to avoid breaking functionality)
+      // Enhanced minification for obfuscation
       config.optimization = {
         ...config.optimization,
         minimize: true,
       }
       
-      // Find existing TerserPlugin and configure it with safer settings
+      // Configure existing TerserPlugin for better obfuscation
       const existingMinimizers = config.optimization.minimizer || []
       config.optimization.minimizer = existingMinimizers.map(minimizer => {
         if (minimizer.constructor.name === 'TerserPlugin') {
@@ -23,36 +23,67 @@ const nextConfig = {
             ...minimizer.options,
             terserOptions: {
               compress: {
-                drop_console: false, // Keep console logs for debugging
-                drop_debugger: true,
-                passes: 1, // Reduce passes to avoid breaking code
-                unsafe: false, // Disable unsafe transformations
+                drop_console: true, // Remove console logs in production
+                drop_debugger: true, // Remove debugger statements
+                passes: 3, // Multiple compression passes
+                unsafe: true, // Enable more aggressive optimizations
+                unsafe_comps: true,
+                unsafe_math: true,
+                conditionals: true,
+                dead_code: true,
+                evaluate: true,
+                if_return: true,
+                sequences: true,
+                unused: true,
               },
               mangle: {
-                toplevel: false, // Don't mangle top-level variables
-                properties: false, // Don't mangle properties
+                toplevel: true, // Mangle top-level names
+                properties: {
+                  regex: /^_/, // Mangle properties starting with underscore
+                },
               },
               format: {
-                comments: false,
-                beautify: false,
+                comments: false, // Remove all comments
+                ascii_only: true, // Use ASCII only
+                beautify: false, // No pretty formatting
               },
             },
           })
         }
         return minimizer
       })
+      
+      // Enable aggressive code splitting for obfuscation
+      config.optimization.splitChunks = {
+        chunks: 'all',
+        minSize: 10000, // Smaller chunks
+        maxSize: 50000, // Medium-sized chunks for better obfuscation
+        cacheGroups: {
+          default: {
+            minChunks: 1,
+            priority: -20,
+            reuseExistingChunk: true,
+          },
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            priority: -10,
+            chunks: 'all',
+          },
+        },
+      }
     }
     
     return config
   },
   
-  // Compress output
+  // Enable compression
   compress: true,
   
-  // Remove x-powered-by header
+  // Remove identifying headers
   poweredByHeader: false,
   
-  // Security headers for prelander pages only
+  // Enhanced security headers
   async headers() {
     return [
       {
@@ -73,6 +104,10 @@ const nextConfig = {
           {
             key: 'Referrer-Policy',
             value: 'no-referrer',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';",
           },
         ],
       },

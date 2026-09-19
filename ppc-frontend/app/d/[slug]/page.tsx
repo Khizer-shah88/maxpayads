@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
+import { guardTab } from '@/lib/tab-guard'
 import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
@@ -20,17 +21,63 @@ function SessionUnavailable() {
 
 export default function PrelanderSlugPage() {
   const params = useParams()
-  // slug == "session" is the CLEAN-URL sentinel: the page was mounted at the
-  // bare prelander domain root (https://prelander-domain.com/) and resolves
-  // its content entirely from the server-side browsing-session cookie.
   const slug = (params.slug as string) || 'session'
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
-  // True while the browser is transitioning from an Anchor/Inter domain to the
-  // Prelander domain. We hold a loader on screen for a short fixed delay so the
-  // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // VIEW-SOURCE PROTECTION: Detect and block view-source attempts
+  // ═══════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    // Detect view-source attempts and redirect them
+    if (window.location.protocol === 'view-source:' || 
+        document.referrer.includes('view-source:') ||
+        window.location.href.includes('view-source:')) {
+      window.location.replace('https://www.google.com');
+      return;
+    }
+
+    // Disable right-click context menu for view-source protection
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      return false;
+    };
+
+    // Block keyboard shortcuts for developer tools
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Block Ctrl+U (view source)
+      if (e.ctrlKey && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        window.location.replace('https://www.google.com');
+        return false;
+      }
+      // Block F12 (developer tools)  
+      if (e.key === 'F12') {
+        e.preventDefault();
+        return false;
+      }
+      // Block Ctrl+Shift+I (developer tools)
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        return false;
+      }
+      // Block Ctrl+Shift+C (inspect element)
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        return false;
+      }
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -47,12 +94,30 @@ export default function PrelanderSlugPage() {
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // PASTED URL PROTECTION: Detect direct navigation (pasted URLs)
+      // ═══════════════════════════════════════════════════════════════════════
+      const isDirectNavigation = !document.referrer || 
+        (!document.referrer.includes('trustedcloudmedia.com') && 
+         !document.referrer.includes('redirect') && 
+         !document.referrer.includes('inter') &&
+         performance.getEntriesByType && 
+         (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming)?.type === 'navigate');
+      
+      // Check if this tab has been authorized (via sessionStorage)
+      const tabAuth = sessionStorage.getItem('pl_tab_ok');
+      
+      // Block direct access (pasted URLs) for prelander domains
+      if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
+        if (!tabAuth && isDirectNavigation) {
+          console.log('[TAB-GUARD] Direct pasted URL detected - redirecting to Google');
+          window.location.replace('https://www.google.com');
+          return;
+        }
+      }
+
       // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
-      // slug == "session": mounted at the bare prelander root. No hop
-      // decisions apply — resolve content from the browsing-session cookie.
       if (slug === 'session') {
-        // NO SLUG VISIBLE, EVEN WHILE LOADING: scrub the path to the bare
-        // root immediately — before any fetch renders anything.
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
           window.history.replaceState({}, '', '/')
         }
@@ -74,6 +139,16 @@ export default function PrelanderSlugPage() {
             setDenied(true)
             setLoading(false)
             return
+          }
+          
+          // Apply tab-guard for session mode
+          try {
+            if (!(await guardTab())) {
+              console.log('[TAB-GUARD] Session access blocked');
+              return; // redirected to google
+            }
+          } catch (guardError) {
+            console.error('[TAB-GUARD] Session guard error:', guardError);
           }
           
           setData(data)
@@ -107,6 +182,9 @@ export default function PrelanderSlugPage() {
 
           // Handle redirect flow
           if (prelanderDomain) {
+            // Authorize this tab since it came through legitimate redirect flow
+            sessionStorage.setItem('pl_tab_ok', '1');
+            
             let handoffToken: string | null = null
             try {
               const hRes = await fetch(
@@ -161,6 +239,22 @@ export default function PrelanderSlugPage() {
           setDenied(true)
           return
         }
+
+        // Apply tab-guard protection for prelander content
+        if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
+          try {
+            if (!(await guardTab())) {
+              console.log('[TAB-GUARD] Prelander access blocked');
+              return; // redirected to google
+            }
+          } catch (guardError) {
+            console.error('[TAB-GUARD] Guard error:', guardError);
+            // For debugging, continue but log the error
+          }
+        }
+
+        // Authorize legitimate access
+        sessionStorage.setItem('pl_tab_ok', '1');
 
         // Show the content
         setData(data)
