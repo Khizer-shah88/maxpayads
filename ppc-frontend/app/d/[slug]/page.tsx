@@ -34,6 +34,36 @@ export default function PrelanderSlugPage() {
 
   useEffect(() => {
     // ═══════════════════════════════════════════════════════════════════════
+    // ANTI-VIEW-SOURCE PROTECTION: Detect and block view-source attempts
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    // Detect if page was opened via view-source:
+    if (window.location.protocol === 'view-source:' || 
+        document.referrer.includes('view-source:') ||
+        window.location.href.includes('view-source:')) {
+      // Redirect view-source attempts away
+      window.location.replace('https://www.google.com');
+      return;
+    }
+    
+    // Detect developer tools opening (additional protection)
+    let devtools = {open: false, orientation: null}
+    const threshold = 160;
+    
+    setInterval(() => {
+      if (window.outerHeight - window.innerHeight > threshold || 
+          window.outerWidth - window.innerWidth > threshold) {
+        if (!devtools.open) {
+          devtools.open = true;
+          console.clear();
+          console.log('%cDeveloper tools detected', 'color: red; font-size: 20px; font-weight: bold;');
+        }
+      } else {
+        devtools.open = false;
+      }
+    }, 500);
+    
+    // ═══════════════════════════════════════════════════════════════════════
     // TAB-SPECIFIC SECURITY: Only apply to prelander domains, not redirect flow
     // ═══════════════════════════════════════════════════════════════════════
     
@@ -205,15 +235,23 @@ export default function PrelanderSlugPage() {
         if (!tabAuth) {
           const referrer = document.referrer;
           
-          // ONLY block if there's absolutely NO referrer (pasted prelander URL)
-          // ANY referrer means legitimate redirect flow - allow it
-          if (!referrer) {
-            console.log('[TAB-SECURITY] Pasted prelander URL detected (no referrer) - redirecting');
+          // Enhanced security: Block if no referrer OR if referrer doesn't contain our redirect domains
+          // Also check if tab was opened directly vs through redirect flow
+          const isDirectAccess = !referrer || 
+                               (!referrer.includes('trustedcloudmedia.com') && 
+                                !referrer.includes('redirect') && 
+                                !referrer.includes('inter') &&
+                                !referrer.includes('anchor') &&
+                                performance.navigation?.type === 1); // 1 = TYPE_RELOAD or direct navigation
+          
+          if (isDirectAccess) {
+            console.log('[TAB-SECURITY] Direct/pasted prelander URL detected - redirecting');
+            // Redirect to a safe page instead of showing content
             window.location.replace('https://www.google.com');
             return;
           }
           
-          // Any referrer means legitimate access - authorize this tab
+          // Legitimate redirect flow - authorize this tab
           sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
           console.log('[TAB-SECURITY] Prelander tab authorized via referrer:', referrer);
         }
