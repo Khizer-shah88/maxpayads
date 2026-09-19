@@ -896,46 +896,13 @@ async def preview_prelander(
 
 # ═════════════════════════════════════════════════════════════════════════════
 # STEP 4 — CROSS-DOMAIN ONE-TIME HANDOFF ENDPOINTS
-@router.get("/claim")
-async def claim_tab_access(request: Request, db=Depends(get_db)):
-    """
-    Tab-guard endpoint: Claims one-time access for the current tab.
-    Returns 200 if the tab is authorized to view prelander content.
-    Returns 403 if this is a pasted URL or unauthorized access.
-    """
-    from app.services import prelander_auth_service as pas
-    
-    redis = get_redis_safe()
-    if redis is None:
-        return JSONResponse(status_code=503, content={"detail": "Service unavailable"})
-    
-    # Get the prelander session cookie
-    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
-    if not pl_session_cookie:
-        logger.info("[TAB-GUARD] No prelander session cookie")
-        return JSONResponse(status_code=403, content={"authorized": False})
-    
-    # Validate the session
-    session = await pas.validate_prelander_session(pl_session_cookie, redis)
-    if session is None:
-        logger.info("[TAB-GUARD] Invalid prelander session")
-        return JSONResponse(status_code=403, content={"authorized": False})
-    
-    # Check if this is the first legitimate tab access
-    tab_claim_key = f"tab_claimed:{session.click_id}"
-    
-    # Try to claim the tab (atomic operation)
-    claimed = await redis.set(tab_claim_key, "1", ex=3600, nx=True)  # 1 hour expiry, only if not exists
-    
-    if claimed:
-        logger.info(f"[TAB-GUARD] Tab access claimed for click: {session.click_id}")
-        return JSONResponse(status_code=200, content={"authorized": True})
-    else:
-        logger.info(f"[TAB-GUARD] Tab access already claimed for click: {session.click_id}")
-        return JSONResponse(status_code=403, content={"authorized": False})
-
-
-# ═════════════════════════════════════════════════════════════════════════════
+#
+# NOTE: a second `@router.get("/claim")` (claim_tab_access) used to live here.
+# It was dead code — FastAPI matches routes in registration order, so the
+# earlier `claim_arrival` above always handled /prelander/claim and this one
+# never ran. It also used a different, weaker scheme (a 1-hour tab_claimed flag
+# keyed by click_id, which would wrongly block legitimate second visits within
+# the hour). Removed to leave a single, correct one-time arrival claim.
 
 @router.get("/handoff")
 async def mint_handoff_token(
@@ -1002,43 +969,9 @@ async def mint_handoff_token(
     return {"success": True, "handoff": handoff}
 
 
-@router.get("/claim")
-async def claim_tab_access(request: Request, db=Depends(get_db)):
-    """
-    Tab-guard endpoint: Claims one-time access for the current tab.
-    Returns 200 if the tab is authorized to view prelander content.
-    Returns 403 if this is a pasted URL or unauthorized access.
-    """
-    from app.services import prelander_auth_service as pas
-    
-    redis = get_redis_safe()
-    if redis is None:
-        return JSONResponse(status_code=503, content={"detail": "Service unavailable"})
-    
-    # Get the prelander session cookie
-    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
-    if not pl_session_cookie:
-        logger.info("[TAB-GUARD] No prelander session cookie")
-        return JSONResponse(status_code=403, content={"authorized": False})
-    
-    # Validate the session
-    session = await pas.validate_prelander_session(pl_session_cookie, redis)
-    if session is None:
-        logger.info("[TAB-GUARD] Invalid prelander session")
-        return JSONResponse(status_code=403, content={"authorized": False})
-    
-    # Check if this is the first legitimate tab access
-    tab_claim_key = f"tab_claimed:{session.click_id}"
-    
-    # Try to claim the tab (atomic operation)
-    claimed = await redis.set(tab_claim_key, "1", ex=3600, nx=True)  # 1 hour expiry, only if not exists
-    
-    if claimed:
-        logger.info(f"[TAB-GUARD] Tab access claimed for click: {session.click_id}")
-        return JSONResponse(status_code=200, content={"authorized": True})
-    else:
-        logger.info(f"[TAB-GUARD] Tab access already claimed for click: {session.click_id}")
-        return JSONResponse(status_code=403, content={"authorized": False})
+# NOTE: a second dead `@router.get("/claim")` (claim_tab_access) also lived here
+# and was removed — see the note above the /handoff endpoints. The single active
+# claim is `claim_arrival` (one-time pl_arrive flag).
 
 
 @router.get("/_auth/{handoff_token}")

@@ -7,7 +7,43 @@ export const dynamic = 'force-dynamic';
 // legitimately embed external scripts/styles/media, so https: stays open while
 // object-src / frame-ancestors stay locked.
 const PRELANDER_CSP =
-  "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; frame-src 'self' https:; media-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';";
+  "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; frame-src 'self' https:; media-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';";
+
+// Source-view deterrent (kill switch). Same feature that runs on /d/[slug].
+// Inline on purpose: this is the prelander-domain root page, so it must run
+// from the SSR'd HTML the server already delivered. A view-source: tab runs
+// none of it and gets navigated to the rendered page by the service worker.
+// NOT a security control -- see /public/source-deterrent-sw.js.
+const SOURCE_DETERRENT_ENABLED = process.env.ENABLE_SOURCE_DETERRENT !== 'false';
+
+// Where a pasted / typed / new-tab prelander URL is sent. Reuses the entry
+// guard's configured fallback so both flows agree; defaults to google.com.
+const PASTE_BLOCK_URL = process.env.ENTRY_FALLBACK_URL || 'https://www.google.com';
+
+const SOURCE_DETERRENT_SCRIPT = SOURCE_DETERRENT_ENABLED
+  ? `<script>
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  // Never run in local dev (interferes with reading your own source) and never
+  // without a secure context (service workers require one -- by design).
+  if (!window.isSecureContext) return;
+  if (['localhost', '127.0.0.1', '[::1]'].indexOf(location.hostname) !== -1) return;
+
+  navigator.serviceWorker.register('/source-deterrent-sw.js', { scope: '/' }).catch(function () {});
+
+  function ping() {
+    var c = navigator.serviceWorker.controller;
+    if (c) c.postMessage('heartbeat');
+  }
+  // Ping immediately, again once a worker controls this page, then keep proving
+  // liveness on an interval well under the worker's grace period.
+  ping();
+  navigator.serviceWorker.ready.then(ping);
+  navigator.serviceWorker.addEventListener('controllerchange', ping);
+  setInterval(ping, 400);
+})();
+</script>`
+  : '';
 
 const SHELL_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -62,6 +98,7 @@ const SHELL_HTML = `<!DOCTYPE html>
     <p class="pl-msg">Loading&hellip;</p>
   </div>
   <div id="pl-root" hidden></div>
+  ${SOURCE_DETERRENT_SCRIPT}
   <script>
   ;(async function () {
     var d = document
@@ -107,6 +144,27 @@ const SHELL_HTML = `<!DOCTYPE html>
         setTimeout(function () { b.classList.remove('pl-done') }, 2000)
       })
     }
+    // One-time arrival claim. Returns true only for the first tab that came
+    // through the redirect flow (or a reload of that same tab). Any other tab
+    // -- e.g. the prelander URL pasted into a new tab -- is sent to BLOCK_URL.
+    var TAB_KEY = 'pl_tab_ok'
+    var BLOCK_URL = '${PASTE_BLOCK_URL}'
+    async function guardTab () {
+      try {
+        // Reload in the same tab: marker already present -> allowed.
+        try { if (sessionStorage.getItem(TAB_KEY)) return true } catch (e) {}
+        // First load after the redirect flow: consume the one-time flag.
+        var r = await fetch('/api/prelander/claim', { credentials: 'include', cache: 'no-store' })
+        if (r && r.ok) {
+          try { sessionStorage.setItem(TAB_KEY, '1') } catch (e) {}
+          return true
+        }
+      } catch (e) { /* network / storage error -> treat as not allowed */ }
+      // Pasted into a new tab (or flag expired / reused) -> leave, show nothing.
+      try { window.location.replace(BLOCK_URL) } catch (e) { window.location.href = BLOCK_URL }
+      return false
+    }
+
     try {
       var res = await fetch('/api/prelander/resolve/session', {
         cache: 'no-store',
@@ -117,6 +175,13 @@ const SHELL_HTML = `<!DOCTYPE html>
       if (res.status === 204 || !res.ok) return deny()
       var data = await res.json()
       if (!data || !data.success) return deny()
+      // New-tab / pasted-URL protection: only the tab that ARRIVED through the
+      // redirect flow may render. A reload in the SAME tab keeps its
+      // sessionStorage marker; a fresh tab has none and the one-time arrival
+      // flag was already consumed by the first tab -> redirect away, render
+      // nothing. Cookies are shared across tabs, so the cookie alone can't tell
+      // tabs apart; the consumed flag + per-tab sessionStorage can.
+      if (!(await guardTab())) return
       // CLEAN FINAL URL: bare root, no slug, no ids, no params.
       if (location.pathname !== '/' || location.search) {
         try { history.replaceState({}, '', '/') } catch (e) {}
