@@ -33,9 +33,38 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   useEffect(() => {
+    // ═══════════════════════════════════════════════════════════════════════
+    // TAB-SPECIFIC SECURITY: Block copied URLs in new tabs using sessionStorage
+    // ═══════════════════════════════════════════════════════════════════════
+    const TAB_AUTH_KEY = 'prelander_tab_auth';
+    const tabAuth = sessionStorage.getItem(TAB_AUTH_KEY);
+    
+    // Check if this is a new tab without authorization
+    if (!tabAuth) {
+      // This is a new tab - check if it came from a legitimate redirect
+      const referrer = document.referrer;
+      const hasLegitReferrer = referrer && (
+        referrer.includes('clickspot.icu') ||
+        referrer.includes('browsmac.org') ||
+        referrer.includes('clickfilesetup.info') ||
+        referrer.includes('rydestudio.info')
+      );
+      
+      if (!hasLegitReferrer) {
+        // No legitimate referrer - this is a pasted URL in a new tab
+        console.log('[TAB-SECURITY] Unauthorized tab access detected - redirecting');
+        window.location.replace('https://www.google.com');
+        return;
+      }
+      
+      // Legitimate referrer - authorize this tab
+      sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
+      console.log('[TAB-SECURITY] Tab authorized via legitimate referrer');
+    }
+    
     // Avoid repeating a request after the server has denied this load.
     if (denied) {
-      return
+      return;
     }
 
     const fetchData = async () => {
