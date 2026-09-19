@@ -108,68 +108,7 @@ function referrerHostname(referrer: string | undefined): string {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // PRELANDER SECURITY: Block view-source and pasted URLs FIRST
-  // ════════════════════════════════════════════════════════════════════════════
-  
   const host = requestHostname(request);
-  
-  // IMPORTANT: Only apply security to FINAL prelander domains, not redirect/inter domains
-  // The security should only block direct access to prelander content, not the redirect flow
-  const isPrelunderPage = pathname.startsWith('/d/');
-  const isPrelanderDomain = !isPortalHost(host);
-  
-  // Check if this is a known prelander domain (not inter/redirect domain)
-  // Only apply security to domains that serve final prelander content
-  const knownPrelanderDomains = ['clickfilesetup.info', 'rydestudio.info'];
-  const isActualPrelanderDomain = knownPrelanderDomains.some(domain => 
-    host.includes(domain)
-  );
-  
-  if (isPrelunderPage && isPrelanderDomain && isActualPrelanderDomain) {
-    const userAgent = request.headers.get('user-agent') || '';
-    const referrer = request.headers.get('referer') || '';
-    const accept = request.headers.get('accept') || '';
-    
-    console.log(`[SECURITY] Checking prelander security - Host: ${host}, Path: ${pathname}, Referrer: ${referrer || '(none)'}`);
-    
-    // 1. Detect view-source requests
-    const isViewSourceRequest = 
-      userAgent.toLowerCase().includes('view-source') ||
-      (!referrer && accept.includes('text/plain')) ||
-      (!referrer && !accept.includes('text/html'));
-    
-    if (isViewSourceRequest) {
-      console.log('[SECURITY] View-source request detected - redirecting');
-      const redirectUrl = referrer || 'https://www.google.com';
-      return NextResponse.redirect(redirectUrl, { status: 302 });
-    }
-    
-    // 2. Detect pasted URLs - but be more careful to not block legitimate redirects
-    // Only block if:
-    // - No referrer (pasted URL)
-    // - AND it's a direct /d/ access (not root /)
-    // - AND the referrer doesn't contain known redirect domains
-    const hasLegitimateReferrer = referrer && (
-      referrer.includes('clickspot.icu') ||
-      referrer.includes('browsmac.org') ||
-      new URL(referrer).hostname !== host
-    );
-    
-    const isPastedUrl = 
-      !referrer && 
-      accept.includes('text/html') && 
-      pathname.startsWith('/d/') &&
-      !hasLegitimateReferrer;
-    
-    if (isPastedUrl) {
-      console.log('[SECURITY] Pasted URL detected - redirecting to fallback');
-      return NextResponse.redirect('https://www.google.com', { status: 302 });
-    }
-    
-    console.log('[SECURITY] Access allowed - legitimate request');
-  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // Authorization uses server-side sessions for all browser navigations.
