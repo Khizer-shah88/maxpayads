@@ -27,58 +27,6 @@ export default function PrelanderSlugPage() {
   const [denied, setDenied] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // VIEW-SOURCE PROTECTION: Detect and block view-source attempts
-  // ═══════════════════════════════════════════════════════════════════════
-  useEffect(() => {
-    // Detect view-source attempts and redirect them
-    if (window.location.protocol === 'view-source:' || 
-        document.referrer.includes('view-source:') ||
-        window.location.href.includes('view-source:')) {
-      window.location.replace('https://www.google.com');
-      return;
-    }
-
-    // Disable right-click context menu for view-source protection
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      return false;
-    };
-
-    // Block keyboard shortcuts for developer tools
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Block Ctrl+U (view source)
-      if (e.ctrlKey && e.key.toLowerCase() === 'u') {
-        e.preventDefault();
-        window.location.replace('https://www.google.com');
-        return false;
-      }
-      // Block F12 (developer tools)  
-      if (e.key === 'F12') {
-        e.preventDefault();
-        return false;
-      }
-      // Block Ctrl+Shift+I (developer tools)
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i') {
-        e.preventDefault();
-        return false;
-      }
-      // Block Ctrl+Shift+C (inspect element)
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
-        e.preventDefault();
-        return false;
-      }
-    };
-
-    document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
-
   useEffect(() => {
     (async () => {
       // Avoid repeating a request after the server has denied this load.

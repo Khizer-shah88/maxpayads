@@ -6,13 +6,6 @@ export const metadata: Metadata = {
 }
 
 export default function PrelanderLayout({ children }: { children: React.ReactNode }) {
-  // Check if we're in a secure context and not in development
-  const shouldEnableSourceDeterrent = 
-    typeof window !== 'undefined' && 
-    window.isSecureContext && 
-    !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) &&
-    process.env.ENABLE_SOURCE_DETERRENT !== 'false';
-
   return (
     <html lang="en">
       <head>
@@ -28,14 +21,12 @@ export default function PrelanderLayout({ children }: { children: React.ReactNod
   // Feature kill switch and environment checks
   const ENABLE_SOURCE_DETERRENT = ${process.env.ENABLE_SOURCE_DETERRENT !== 'false'};
   
-  // Bail out conditions
-  if (!ENABLE_SOURCE_DETERRENT || 
-      !window.isSecureContext ||
-      ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
-    return;
+  // Bail out conditions - check after page loads to access window
+  function shouldBailOut() {
+    return !ENABLE_SOURCE_DETERRENT || 
+           !window.isSecureContext ||
+           ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   }
-
-  console.log('[SOURCE-DETERRENT] Initializing page script');
 
   let serviceWorker = null;
   let heartbeatInterval = null;
@@ -43,8 +34,12 @@ export default function PrelanderLayout({ children }: { children: React.ReactNod
   // Send heartbeat to service worker
   function sendHeartbeat() {
     if (serviceWorker) {
-      serviceWorker.postMessage('heartbeat');
-      console.log('[SOURCE-DETERRENT] Heartbeat sent');
+      try {
+        serviceWorker.postMessage('heartbeat');
+        console.log('[SOURCE-DETERRENT] Heartbeat sent');
+      } catch (error) {
+        console.error('[SOURCE-DETERRENT] Failed to send heartbeat:', error);
+      }
     }
   }
 
@@ -54,40 +49,67 @@ export default function PrelanderLayout({ children }: { children: React.ReactNod
     sendHeartbeat();
     
     // Send every 400ms (well under grace period)
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
     heartbeatInterval = setInterval(sendHeartbeat, 400);
   }
 
   // Register service worker and start heartbeat
   async function initializeSourceDeterrent() {
+    // Check bail out conditions now that window is available
+    if (shouldBailOut()) {
+      console.log('[SOURCE-DETERRENT] Feature disabled or not in secure context');
+      return;
+    }
+
+    // Check for service worker support
+    if (!('serviceWorker' in navigator)) {
+      console.log('[SOURCE-DETERRENT] Service worker not supported');
+      return;
+    }
+
     try {
+      console.log('[SOURCE-DETERRENT] Initializing page script');
+
       // Register the service worker
       const registration = await navigator.serviceWorker.register('/source-deterrent-sw.js', {
         scope: '/'
       });
       
-      console.log('[SOURCE-DETERRENT] Service worker registered');
+      console.log('[SOURCE-DETERRENT] Service worker registered:', registration.scope);
       
       // Get the active service worker
-      serviceWorker = registration.active || registration.waiting || registration.installing;
-      
-      if (serviceWorker) {
+      if (registration.active) {
+        serviceWorker = registration.active;
         startHeartbeat();
+      } else if (registration.waiting) {
+        serviceWorker = registration.waiting;
+        startHeartbeat();
+      } else if (registration.installing) {
+        registration.installing.addEventListener('statechange', function() {
+          if (this.state === 'activated') {
+            serviceWorker = this;
+            startHeartbeat();
+          }
+        });
       }
       
-      // Handle service worker ready event
-      navigator.serviceWorker.ready.then(() => {
-        serviceWorker = navigator.serviceWorker.controller;
-        if (serviceWorker && !heartbeatInterval) {
+      // Handle service worker ready event - send heartbeat immediately when ready
+      navigator.serviceWorker.ready.then((reg) => {
+        serviceWorker = navigator.serviceWorker.controller || reg.active;
+        if (serviceWorker) {
           startHeartbeat();
+          console.log('[SOURCE-DETERRENT] Service worker ready and heartbeat started');
         }
-        console.log('[SOURCE-DETERRENT] Service worker ready');
       });
       
       // Handle controller change
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         serviceWorker = navigator.serviceWorker.controller;
         if (serviceWorker) {
-          sendHeartbeat();
+          startHeartbeat();
+          console.log('[SOURCE-DETERRENT] Controller changed, restarted heartbeat');
         }
       });
       
