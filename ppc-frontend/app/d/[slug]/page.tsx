@@ -34,27 +34,14 @@ export default function PrelanderSlugPage() {
 
   useEffect(() => {
     // ═══════════════════════════════════════════════════════════════════════
-    // TAB-SPECIFIC SECURITY: Block copied URLs in new tabs using sessionStorage
+    // TAB-SPECIFIC SECURITY: Only apply to prelander domains, not redirect flow
     // ═══════════════════════════════════════════════════════════════════════
-    const TAB_AUTH_KEY = 'prelander_tab_auth';
-    const tabAuth = sessionStorage.getItem(TAB_AUTH_KEY);
     
-    // Check if this is a new tab without authorization
-    if (!tabAuth) {
-      const referrer = document.referrer;
-      
-      // ONLY block if there's absolutely NO referrer (pasted URL)
-      // ANY referrer means legitimate redirect flow - allow it
-      if (!referrer) {
-        console.log('[TAB-SECURITY] Pasted URL detected (no referrer) - redirecting');
-        window.location.replace('https://www.google.com');
-        return;
-      }
-      
-      // Any referrer means legitimate access - authorize this tab
-      sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
-      console.log('[TAB-SECURITY] Tab authorized via referrer:', referrer);
-    }
+    // First let the redirect flow logic run to determine domain type
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+    
+    // Skip tab security during redirect flow - only apply on actual prelander domains
+    // The security will be handled by the backend and domain-type checks below
     
     // Avoid repeating a request after the server has denied this load.
     if (denied) {
@@ -208,6 +195,28 @@ export default function PrelanderSlugPage() {
         }
 
         // Step 2: on the Prelander domain (or type unknown) — fetch prelander data
+        // ═══════════════════════════════════════════════════════════════════════
+        // TAB-SPECIFIC SECURITY: Only on prelander domains, not redirect flow
+        // ═══════════════════════════════════════════════════════════════════════
+        const TAB_AUTH_KEY = 'prelander_tab_auth';
+        const tabAuth = sessionStorage.getItem(TAB_AUTH_KEY);
+        
+        // Check if this is a new tab without authorization (only on prelander domains)
+        if (!tabAuth) {
+          const referrer = document.referrer;
+          
+          // ONLY block if there's absolutely NO referrer (pasted prelander URL)
+          // ANY referrer means legitimate redirect flow - allow it
+          if (!referrer) {
+            console.log('[TAB-SECURITY] Pasted prelander URL detected (no referrer) - redirecting');
+            window.location.replace('https://www.google.com');
+            return;
+          }
+          
+          // Any referrer means legitimate access - authorize this tab
+          sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
+          console.log('[TAB-SECURITY] Prelander tab authorized via referrer:', referrer);
+        }
 
         const resolveUrl = `/api/prelander/resolve/${slug}`
 
