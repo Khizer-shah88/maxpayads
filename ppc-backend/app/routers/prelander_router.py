@@ -830,6 +830,7 @@ async def prelander_bootstrap(
     )
     if session is None:
         logger.info("[PRELANDER-AUTH] Handoff exchange rejected (token consumed or invalid)")
+        # For _auth endpoint, always return proper 403 response, never redirect
         return await _denied_response(request)
 
     # Establish the prelander-domain browsing session (STEP 7 part B).

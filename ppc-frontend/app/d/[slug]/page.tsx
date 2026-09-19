@@ -32,6 +32,13 @@ export default function PrelanderSlugPage() {
   // visitor sees a clean "redirecting…" state rather than a jarring hop.
   const [transitioning, setTransitioning] = useState(false)
 
+  // Helper function to check if referrer is from a publisher domain
+  const isFromPublisherDomain = (referrer: string): boolean => {
+    // Add logic to check against known publisher domains if needed
+    // For now, allow any HTTPS referrer as a basic check
+    return referrer.startsWith('https://');
+  }
+
   useEffect(() => {
     // ═══════════════════════════════════════════════════════════════════════
     // TAB-SPECIFIC SECURITY: Block copied URLs in new tabs using sessionStorage
@@ -41,18 +48,23 @@ export default function PrelanderSlugPage() {
     
     // Check if this is a new tab without authorization
     if (!tabAuth) {
-      // Check if this is likely a pasted URL (no referrer from our domains)
       const referrer = document.referrer;
       
-      // Only block if there's absolutely no referrer (pasted URL)
-      // Allow ALL referrers to ensure normal flow works
-      if (!referrer) {
-        console.log('[TAB-SECURITY] Pasted URL detected (no referrer) - redirecting');
-        window.location.replace('https://www.google.com');
+      // If NO referrer (pasted URL) OR referrer is not from our trusted domains
+      if (!referrer || (!referrer.includes(window.location.hostname) && 
+                       !referrer.includes('.google.com') && 
+                       !referrer.includes('.facebook.com') &&
+                       !referrer.includes('.bing.com') &&
+                       !referrer.includes('.yahoo.com') &&
+                       !isFromPublisherDomain(referrer))) {
+        console.log('[TAB-SECURITY] Unauthorized tab access detected - redirecting');
+        // Redirect to the previous page if it exists and is safe, otherwise Google
+        const fallbackUrl = document.referrer || 'https://www.google.com';
+        window.location.replace(fallbackUrl);
         return;
       }
       
-      // Any referrer means legitimate access - authorize this tab
+      // Legitimate access - authorize this tab
       sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
       console.log('[TAB-SECURITY] Tab authorized');
     }

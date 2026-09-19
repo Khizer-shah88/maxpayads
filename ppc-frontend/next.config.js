@@ -1,34 +1,48 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Enable standalone output for Docker
+  output: 'standalone',
+  
   webpack: (config, { dev, isServer }) => {
     // Only obfuscate in production client-side builds
     if (!dev && !isServer) {
-      // Minimize and obfuscate JavaScript
+      // Remove source maps in production (prevents readable debugging)
+      config.devtool = false
+      
+      // Additional minification and obfuscation
       config.optimization = {
         ...config.optimization,
         minimize: true,
+        // Mangle variable names for obfuscation
         minimizer: [
           ...config.optimization.minimizer,
-          // Additional obfuscation for view-source protection
         ],
       }
       
-      // Rename variables and functions to make code unreadable
+      // Enable aggressive chunk splitting and minification
       config.optimization.splitChunks = {
-        ...config.optimization.splitChunks,
+        chunks: 'all',
+        minSize: 0,
         cacheGroups: {
-          default: {
-            name: false, // Remove readable chunk names
+          framework: {
+            chunks: 'all',
+            name: 'framework',
+            test: /(?<!node_modules.*)[\\/]node_modules[\\/](react|react-dom|scheduler|prop-types|use-subscription)[\\/]/,
+            priority: 40,
+            enforce: true,
           },
         },
       }
-      
-      // Remove source maps in production (prevents readable debugging)
-      config.devtool = false
     }
     
     return config
   },
+  
+  // Compress output for smaller bundles
+  compress: true,
+  
+  // Remove x-powered-by header for security
+  poweredByHeader: false,
   
   // Additional security headers
   async headers() {
@@ -48,16 +62,14 @@ const nextConfig = {
             key: 'X-Frame-Options',
             value: 'DENY',
           },
+          {
+            key: 'Referrer-Policy',
+            value: 'no-referrer',
+          },
         ],
       },
     ]
   },
-  
-  // Compress output
-  compress: true,
-  
-  // Remove x-powered-by header
-  poweredByHeader: false,
 }
 
 module.exports = nextConfig
