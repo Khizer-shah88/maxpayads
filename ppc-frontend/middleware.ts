@@ -113,9 +113,10 @@ export async function middleware(request: NextRequest) {
   // PRELANDER SECURITY: Block view-source and pasted URLs FIRST
   // ════════════════════════════════════════════════════════════════════════════
   
+  const host = requestHostname(request);
+  
   // Only apply security to prelander pages (/d/) and clean root (/)
   const isPrelunderPage = pathname.startsWith('/d/') || pathname === '/';
-  const host = requestHostname(request);
   const isPrelanderDomain = !isPortalHost(host);
   
   if (isPrelunderPage && isPrelanderDomain) {
@@ -215,7 +216,6 @@ export async function middleware(request: NextRequest) {
   //   /click, /go, /ad.js, /health, /docs — backend endpoints (served by nginx)
   //   /api/*     — API routes (proxied by nginx to FastAPI or rewritten here)
   //   /_next/*   — static assets
-  const host = requestHostname(request);
   const isInfraPath =
     pathname.startsWith('/d/') ||
     pathname.startsWith('/api/') ||
