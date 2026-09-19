@@ -16,43 +16,113 @@ const nextConfig = {
       }
       
       // Find the existing TerserPlugin and configure it for maximum obfuscation
-      const existingMinimizers = config.optimization.minimizer || []
-      config.optimization.minimizer = existingMinimizers.map(minimizer => {
-        if (minimizer.constructor.name === 'TerserPlugin') {
-          return new minimizer.constructor({
-            ...minimizer.options,
-            terserOptions: {
-              compress: {
-                drop_console: true, // Remove console.log statements
-                drop_debugger: true, // Remove debugger statements
-                pure_funcs: ['console.log'], // Remove console.log calls
-                passes: 3, // Multiple passes for better compression
-                unsafe: true, // Enable unsafe transformations
-                unsafe_comps: true,
-                unsafe_math: true,
-                unsafe_proto: true,
-              },
-              mangle: {
-                toplevel: true, // Mangle top-level variable names
-                properties: {
-                  regex: /^_/, // Mangle properties starting with _
-                },
-              },
-              format: {
-                comments: false, // Remove all comments
-                ascii_only: true, // Escape Unicode characters
+      const TerserPlugin = require('terser-webpack-plugin')
+      const CssMinimizerPlugin = require('css-minimizer-webpack-plugin')
+      
+      config.optimization.minimizer = [
+        // Aggressive JavaScript obfuscation
+        new TerserPlugin({
+          terserOptions: {
+            parse: {
+              ecma: 8,
+            },
+            compress: {
+              ecma: 5,
+              drop_console: true, // Remove all console statements
+              drop_debugger: true, // Remove debugger statements
+              pure_funcs: ['console.log', 'console.info', 'console.warn'], // Remove specific console calls
+              passes: 5, // Multiple passes for maximum compression
+              unsafe: true, // Enable unsafe transformations
+              unsafe_comps: true,
+              unsafe_math: true,
+              unsafe_proto: true,
+              unsafe_regexp: true,
+              unsafe_undefined: true,
+              conditionals: true,
+              dead_code: true,
+              evaluate: true,
+              if_return: true,
+              join_vars: true,
+              reduce_vars: true,
+              sequences: true,
+              side_effects: true,
+              switches: true,
+              top_retain: false,
+              typeofs: false,
+              booleans: true,
+              collapse_vars: true,
+              comparisons: true,
+              computed_props: true,
+            },
+            mangle: {
+              safari10: true,
+              toplevel: true, // Mangle top-level variable names
+              eval: true,
+              properties: {
+                regex: /^_|^[A-Z_]+$/, // Mangle more properties
               },
             },
-          })
-        }
-        return minimizer
-      })
+            format: {
+              ecma: 5,
+              comments: false, // Remove ALL comments
+              ascii_only: true, // Escape Unicode characters
+              beautify: false,
+              braces: false,
+              indent_level: 0,
+              keep_numbers: false,
+              quote_style: 3, // Use shortest quotes
+              semicolons: false,
+            },
+            nameCache: {},
+          },
+          extractComments: false, // Don't extract comments to separate files
+        }),
+        // Aggressive CSS minification
+        new CssMinimizerPlugin({
+          minimizerOptions: {
+            preset: [
+              'default',
+              {
+                discardComments: { removeAll: true }, // Remove all CSS comments
+                normalizeWhitespace: true,
+                colormin: true,
+                convertValues: true,
+                discardDuplicates: true,
+                discardEmpty: true,
+                discardOverridden: true,
+                discardUnused: true,
+                mergeIdents: true,
+                mergeLonghand: true,
+                mergeRules: true,
+                minifyFontValues: true,
+                minifyGradients: true,
+                minifyParams: true,
+                minifySelectors: true,
+                normalizeCharset: true,
+                normalizeDisplayValues: true,
+                normalizePositions: true,
+                normalizeRepeatStyle: true,
+                normalizeString: true,
+                normalizeTimingFunctions: true,
+                normalizeUnicode: true,
+                normalizeUrl: true,
+                orderedValues: true,
+                reduceIdents: true,
+                reduceInitial: true,
+                reduceTransforms: true,
+                svgo: true,
+                uniqueSelectors: true,
+              },
+            ],
+          },
+        }),
+      ]
       
-      // Enable aggressive chunk splitting
+      // Enable aggressive chunk splitting for better obfuscation
       config.optimization.splitChunks = {
         chunks: 'all',
         minSize: 0,
-        maxSize: 30000, // Smaller chunks for better obfuscation
+        maxSize: 20000, // Very small chunks
         cacheGroups: {
           default: {
             minChunks: 1,
