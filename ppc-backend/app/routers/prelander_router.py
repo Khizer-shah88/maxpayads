@@ -451,49 +451,37 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     referer = request.headers.get("referer", "")
     user_agent = request.headers.get("user-agent", "")
     request_url = str(request.url)
+    accept_header = request.headers.get("accept", "")
     
-    # Block view-source attempts
-    if ("view-source:" in request_url or 
-        "view-source" in referer.lower() or
-        request.url.scheme == "view-source"):
+    # Only apply security to actual browser requests with HTML accept headers
+    is_browser_request = ("text/html" in accept_header and 
+                         "Mozilla" in user_agent and
+                         not any(api_indicator in user_agent.lower() for api_indicator in 
+                                ["python", "java", "curl", "wget", "httpx"]))
+    
+    # Block view-source attempts (only for clear browser requests)
+    if (is_browser_request and 
+        ("view-source:" in request_url or 
+         "view-source" in referer.lower())):
         logger.info(f"[SECURITY] Blocked view-source attempt: {request_url}")
         
-        # Return obfuscated HTML instead of redirect to make view-source unreadable
-        obfuscated_html = """
-        <!DOCTYPE html><html><head><title>Access Denied</title></head><body>
+        # Return obfuscated HTML for view-source
+        obfuscated_html = """<!DOCTYPE html><html><head><title>Access Denied</title></head><body>
         <script>eval(atob('dmFyIF8weGE9Wydjb25zb2xlJywnbG9nJywnQWNjZXNzIERlbmllZCddO18weGFbMHhdW18weGFbMV1dKF8weGFbMl0pO3dpbmRvdy5sb2NhdGlvbi5ocmVmPSdodHRwczovL3d3dy5nb29nbGUuY29tJzs='));</script>
         </body></html>"""
         
         return HTMLResponse(
             content=obfuscated_html,
             status_code=403,
-            headers={"Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow"}
+            headers={"Referrer-Policy": "no-referrer"}
         )
     
-    # Enhanced pasted URL detection
-    is_pasted_url = (
-        not referer or  # No referrer = pasted URL
-        not referer.startswith(("http://", "https://")) or  # Invalid referrer
-        "google.com" in referer or  # Coming from search
-        "facebook.com" in referer or  # Social media
-        "twitter.com" in referer or
-        "linkedin.com" in referer or
-        len(referer) < 10  # Too short referrer
-    )
-    
-    # Block bots and tools
-    is_bot_or_tool = any(identifier in user_agent.lower() for identifier in [
-        "bot", "crawler", "spider", "scraper", "curl", "wget", 
-        "postman", "insomnia", "python", "go-http", "java"
-    ])
-    
-    # Allow legitimate redirect flow by checking for redirect domains
-    is_from_redirect_domain = any(domain in referer.lower() for domain in [
-        "trustedcloudmedia.com", "redirect", "inter", "anchor"
-    ]) if referer else False
-    
-    if (is_pasted_url or is_bot_or_tool) and not is_from_redirect_domain:
-        logger.info(f"[SECURITY] Blocked direct/pasted access: referer='{referer}', ua='{user_agent}'")
+    # Enhanced pasted URL detection (only for browser requests with no legitimate referrer)
+    if (is_browser_request and 
+        not referer and 
+        slug != "session"):  # Allow session endpoint for API calls
+        
+        logger.info(f"[SECURITY] Blocked pasted URL: no referrer, ua='{user_agent}'")
         return RedirectResponse(
             url="https://www.google.com",
             status_code=302, 
@@ -625,34 +613,35 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         expected_campaign_id=decoded_pre.get("campaign_id") if decoded_pre else None,
     )
     if not auth_session or auth_session is True:
-        # Enhanced security: Block pasted URLs, view-source, and direct access
+        # Enhanced security for browser requests only
         accept_header = request.headers.get("accept", "")
         user_agent = request.headers.get("user-agent", "")
         referer = request.headers.get("referer", "")
         has_prelander_host_header = request.headers.get("x-prelander-host") is not None
         
-        # Detect direct access attempts (pasted URLs, view-source, etc.)
-        is_direct_access = (
-            not referer or  # No referrer = pasted URL
-            "view-source:" in referer or  # View-source attempt
-            not has_prelander_host_header or  # Missing API header
-            "bot" in user_agent.lower() or  # Bot access
-            "curl" in user_agent.lower() or  # Command line tools
-            "wget" in user_agent.lower() or  # Download tools
-            not referer.startswith("http")  # Invalid referrer
-        )
+        # Only apply security redirects to browser requests seeking HTML
+        is_browser_request = ("text/html" in accept_header and 
+                             "Mozilla" in user_agent and
+                             not has_prelander_host_header)
         
-        if is_direct_access and "text/html" in accept_header:
-            # Direct browser request - redirect to prevent content exposure
-            logger.info(f"[SECURITY] Blocking direct access: referer={referer}, ua={user_agent}")
-            return RedirectResponse(
-                url="https://www.google.com",
-                status_code=302,
-                headers={"Referrer-Policy": "no-referrer"},
+        if is_browser_request:
+            # Check for direct access (pasted URL or view-source)
+            is_direct_access = (
+                not referer or  # No referrer = pasted URL
+                "view-source:" in referer or  # View-source attempt
+                not referer.startswith("http")  # Invalid referrer
             )
-        else:
-            # API call or other non-browser request - return proper error
-            return await _denied_response(request)
+            
+            if is_direct_access:
+                logger.info(f"[SECURITY] Blocking browser direct access: referer={referer}, ua={user_agent}")
+                return RedirectResponse(
+                    url="https://www.google.com",
+                    status_code=302,
+                    headers={"Referrer-Policy": "no-referrer"},
+                )
+        
+        # API call or other non-browser request - return proper error
+        return await _denied_response(request)
 
     # ── Normal resolve ─────────────────────────────────────────────────────────
     decoded = _decode_slug(slug)
