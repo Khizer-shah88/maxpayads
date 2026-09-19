@@ -1,19 +1,34 @@
-# Prelander Security Implementation - Complete Fix
+# Prelander Security Implementation - FIXED NORMAL FLOW
 
 ## Issues Fixed
 
 ### 1. ✅ Pasted URLs in New Tabs - BLOCKED
 **Problem**: When users copied prelander URLs and pasted them in new tabs, they could still access the content.
 
-**Solution**: Enhanced tab-specific security in `ppc-frontend/app/d/[slug]/page.tsx`:
+**Solution**: Simple and effective tab-specific security in `ppc-frontend/app/d/[slug]/page.tsx`:
 - Uses `sessionStorage` to track legitimate tabs (tab-specific, not shared across tabs)
-- Checks `document.referrer` to identify pasted URLs (no referrer = pasted URL)
-- Added smart referrer validation that allows legitimate redirect flows
-- Redirects unauthorized access to previous page or Google
+- **ONLY blocks if there's NO referrer** (`document.referrer` is empty)
+- **ANY referrer means legitimate redirect flow** - always allowed
 
 **How it works**:
-- Normal flow: Publisher → Redirect → Prelander (referrer exists) → ✅ Authorized
-- Pasted URL: No referrer → ❌ Blocked and redirected
+```javascript
+if (!tabAuth) {
+  const referrer = document.referrer;
+  
+  // ONLY block if there's absolutely NO referrer (pasted URL)
+  if (!referrer) {
+    window.location.replace('https://www.google.com');
+    return;
+  }
+  
+  // Any referrer means legitimate access - authorize this tab
+  sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
+}
+```
+
+**Result**: 
+- ✅ Normal flow: Publisher → Redirect → Prelander (has referrer) → **ALLOWED**
+- ❌ Pasted URL: No referrer → **BLOCKED**
 
 ### 2. ✅ View-Source Protection - IMPLEMENTED
 **Problem**: Users could view readable source code using `view-source:` URLs.
@@ -46,13 +61,19 @@
 
 ### Tab-Level Protection
 ```javascript
-// Each tab gets independent authorization via sessionStorage
-const TAB_AUTH_KEY = 'prelander_tab_auth';
-const tabAuth = sessionStorage.getItem(TAB_AUTH_KEY);
+// Simple and effective: Only block if NO referrer (pasted URL)
+const tabAuth = sessionStorage.getItem('prelander_tab_auth');
 
-if (!tabAuth && !document.referrer) {
+if (!tabAuth) {
+  const referrer = document.referrer;
+  
+  if (!referrer) {
     // Pasted URL detected - redirect away
     window.location.replace('https://www.google.com');
+  } else {
+    // Any referrer = legitimate redirect flow - allow it
+    sessionStorage.setItem('prelander_tab_auth', 'authorized');
+  }
 }
 ```
 
