@@ -35,69 +35,16 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   // ═══════════════════════════════════════════════════════════════════════
-  // VIEW-SOURCE PROTECTION: Block view-source attempts immediately
+  // LIGHTER VIEW-SOURCE PROTECTION: Only redirect view-source, don't block everything
   // ═══════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    // Detect view-source attempts
+    // Detect view-source attempts and redirect them
     if (window.location.protocol === 'view-source:' || 
         document.referrer.includes('view-source:') ||
         window.location.href.includes('view-source:')) {
-      // Replace entire page with redirect
-      document.open();
-      document.write('<!DOCTYPE html><html><head><title>Redirecting...</title></head><body><script>window.location.replace("https://www.google.com");</script></body></html>');
-      document.close();
+      window.location.replace('https://www.google.com');
       return;
     }
-
-    // Additional protection: detect if opened in view-source context
-    try {
-      if (window.name === 'view-source' || 
-          window.location.toString().includes('view-source') ||
-          document.referrer.includes('view-source')) {
-        window.location.replace('https://www.google.com');
-        return;
-      }
-    } catch (e) {
-      // Ignore errors, continue with normal execution
-    }
-
-    // Block right-click context menu to prevent "View Source"
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      return false;
-    };
-
-    // Block common keyboard shortcuts for view source
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Block Ctrl+U (view source)
-      if (e.ctrlKey && e.key === 'u') {
-        e.preventDefault();
-        return false;
-      }
-      // Block F12 (developer tools)
-      if (e.key === 'F12') {
-        e.preventDefault();
-        return false;
-      }
-      // Block Ctrl+Shift+I (developer tools)
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        return false;
-      }
-      // Block Ctrl+Shift+C (inspect element)
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        return false;
-      }
-    };
-
-    document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
   }, []);
 
   useEffect(() => {
@@ -115,26 +62,6 @@ export default function PrelanderSlugPage() {
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // IMMEDIATE TAB-GUARD PROTECTION: Block pasted URLs before any processing
-      // ═══════════════════════════════════════════════════════════════════════
-      
-      // Check if this is a direct navigation (pasted URL, typed URL, bookmark)
-      const isDirectNavigation = !document.referrer || 
-                                (!document.referrer.includes('trustedcloudmedia.com') && 
-                                 !document.referrer.includes('redirect') && 
-                                 !document.referrer.includes('inter') &&
-                                 (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming)?.type === 'navigate');
-      
-      // Check sessionStorage for existing tab authorization
-      const tabAuth = sessionStorage.getItem('pl_tab_ok');
-      
-      if (!tabAuth && isDirectNavigation) {
-        console.log('[TAB-GUARD] Direct access detected - blocking');
-        window.location.replace('https://www.google.com');
-        return;
-      }
-
       // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
       // slug == "session": mounted at the bare prelander root. No hop
       // decisions apply — resolve content from the browsing-session cookie.
@@ -145,32 +72,39 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
 
-        // 1) your existing call (slug route or "session"), unchanged
-        const res = await fetch('/api/prelander/resolve/session', {
-          credentials: "include",
-          headers: { 'X-Prelander-Host': hostname },
-        });
-        
-        if (res.status === 204 || !res.ok) {
+        try {
+          // 1) your existing call (slug route or "session"), unchanged
+          const res = await fetch('/api/prelander/resolve/session', {
+            credentials: "include",
+            headers: { 'X-Prelander-Host': hostname },
+          });
+          
+          if (res.status === 204 || !res.ok) {
+            setDenied(true)
+            setLoading(false)
+            return
+          }
+          
+          const data = await res.json()
+          if (!data?.success) {
+            setDenied(true)
+            setLoading(false)
+            return
+          }
+          
+          // 2) NEW: claim AFTER resolve, BEFORE rendering
+          if (!(await guardTab())) return; // redirected to google, render nothing
+          
+          // 3) now it is safe to show the content
+          setData(data)
+          setLoading(false)
+          return
+        } catch (error) {
+          console.error('[PRELANDER] Session resolve error:', error)
           setDenied(true)
           setLoading(false)
           return
         }
-        
-        const data = await res.json()
-        if (!data?.success) {
-          setDenied(true)
-          setLoading(false)
-          return
-        }
-        
-        // 2) NEW: claim AFTER resolve, BEFORE rendering
-        if (!(await guardTab())) return; // redirected to google, render nothing
-        
-        // 3) now it is safe to show the content
-        setData(data)
-        setLoading(false)
-        return
       }
 
       try {
@@ -213,7 +147,7 @@ export default function PrelanderSlugPage() {
                 }
               }
             } catch (handoffError) {
-              // Handle error
+              console.error('[PRELANDER] Handoff error:', handoffError)
             }
 
             if (!handoffToken) {
@@ -230,6 +164,8 @@ export default function PrelanderSlugPage() {
         }
 
         // Step 2: on the Prelander domain - resolve data and apply tab guard
+        console.log('[PRELANDER] Resolving on prelander domain:', hostname)
+        
         // 1) your existing call (slug route or "session"), unchanged
         const res = await fetch(`/api/prelander/resolve/${slug}`, {
           credentials: "include",
@@ -237,18 +173,31 @@ export default function PrelanderSlugPage() {
         });
         
         if (res.status === 204 || !res.ok) {
+          console.error('[PRELANDER] Resolve failed:', res.status, res.statusText)
           setDenied(true)
           return
         }
 
         const data = await res.json()
         if (!data?.success) {
+          console.error('[PRELANDER] Resolve data invalid:', data)
           setDenied(true)
           return
         }
 
+        console.log('[PRELANDER] Resolve successful, applying tab guard...')
+
         // 2) NEW: claim AFTER resolve, BEFORE rendering
-        if (!(await guardTab())) return; // redirected to google, render nothing
+        try {
+          if (!(await guardTab())) {
+            console.log('[PRELANDER] Tab guard blocked access')
+            return; // redirected to google, render nothing
+          }
+          console.log('[PRELANDER] Tab guard passed, rendering content')
+        } catch (guardError) {
+          console.error('[PRELANDER] Tab guard error:', guardError)
+          // If tab guard fails, still show content for now (debugging)
+        }
 
         // 3) now it is safe to show the content
         setData(data)
@@ -258,6 +207,7 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
       } catch (error) {
+        console.error('[PRELANDER] Main flow error:', error)
         setDenied(true)
       } finally {
         setLoading(false)
