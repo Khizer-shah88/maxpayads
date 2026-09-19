@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
+import { guardTab } from '@/lib/tab-guard'
+
 import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
@@ -33,55 +35,13 @@ export default function PrelanderSlugPage() {
   const [transitioning, setTransitioning] = useState(false)
 
   useEffect(() => {
-    // ═══════════════════════════════════════════════════════════════════════
-    // ANTI-VIEW-SOURCE PROTECTION: Detect and block view-source attempts
-    // ═══════════════════════════════════════════════════════════════════════
-    
-    // Detect if page was opened via view-source:
-    if (window.location.protocol === 'view-source:' || 
-        document.referrer.includes('view-source:') ||
-        window.location.href.includes('view-source:')) {
-      // Redirect view-source attempts away
-      window.location.replace('https://www.google.com');
-      return;
-    }
-    
-    // Detect developer tools opening (additional protection)
-    let devtools = {open: false, orientation: null}
-    const threshold = 160;
-    
-    setInterval(() => {
-      if (window.outerHeight - window.innerHeight > threshold || 
-          window.outerWidth - window.innerWidth > threshold) {
-        if (!devtools.open) {
-          devtools.open = true;
-          console.clear();
-          console.log('%cDeveloper tools detected', 'color: red; font-size: 20px; font-weight: bold;');
-        }
-      } else {
-        devtools.open = false;
+    (async () => {
+      // Avoid repeating a request after the server has denied this load.
+      if (denied) {
+        return;
       }
-    }, 500);
-    
-    // ═══════════════════════════════════════════════════════════════════════
-    // TAB-SPECIFIC SECURITY: Only apply to prelander domains, not redirect flow
-    // ═══════════════════════════════════════════════════════════════════════
-    
-    // First let the redirect flow logic run to determine domain type
-    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-    
-    // Skip tab security during redirect flow - only apply on actual prelander domains
-    // The security will be handled by the backend and domain-type checks below
-    
-    // Avoid repeating a request after the server has denied this load.
-    if (denied) {
-      return;
-    }
-
-    const fetchData = async () => {
 
       if (!slug) { 
-
         setDenied(true)
         setLoading(false)
         return 
@@ -99,35 +59,36 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
 
-        // Session validity is decided by the backend, not client storage.
-        try {
-          const res = await fetch('/api/prelander/resolve/session', {
-            headers: { 'X-Prelander-Host': hostname }, cache: 'no-store',
-          })
-          // HTTP 204 = server denied (missing/invalid/expired/tampered
-          // authorization). NOTE: 204 is 2xx so res.ok is TRUE — the empty
-          // body makes res.json() throw unless we short-circuit here.
-          if (res.status === 204 || !res.ok) {
-            setDenied(true)
-            return
-          }
-          const json = await res.json()
-          if (!json?.success) {
-            setDenied(true)
-            return
-          }
-          setData(json)
-        } catch (error) {
+        // 1) your existing call (slug route or "session"), unchanged
+        const res = await fetch('/api/prelander/resolve/session', {
+          credentials: "include",
+          headers: { 'X-Prelander-Host': hostname },
+        });
+        
+        if (res.status === 204 || !res.ok) {
           setDenied(true)
-          return
-        } finally {
           setLoading(false)
+          return
         }
+        
+        const data = await res.json()
+        if (!data?.success) {
+          setDenied(true)
+          setLoading(false)
+          return
+        }
+        
+        // 2) NEW: claim AFTER resolve (so the cookie-mint fallback path, which
+        //    sets the arrival flag inside resolve, also works), BEFORE rendering
+        if (!(await guardTab())) return;      // redirected to google, render nothing
+        
+        // 3) now it is safe to show the content
+        setData(data)
+        setLoading(false)
         return
       }
 
       try {
-
         // Step 1: check if this hostname is the Prelander domain.
         // If not, redirect the browser to the Prelander domain with the same
         // slug. This avoids fetch() swallowing the 302 from the backend.
@@ -144,12 +105,12 @@ export default function PrelanderSlugPage() {
           // We're on the Inter domain — hold the 0.75s loader, then go straight
           // to the Campaign URL. The landing page is never shown.
           if (dt.bypass_redirect_url) {
-
             setTransitioning(true)
             await new Promise(r => setTimeout(r, 750))
             window.location.replace(dt.bypass_redirect_url)
             return
           }
+          
           // `last_domain` is the pre-glossary name the API still mirrors.
           const prelanderDomain = dt.prelander_domain ?? dt.last_domain
 
@@ -160,7 +121,6 @@ export default function PrelanderSlugPage() {
           // the domain_type (a prelander-typed domain positioned mid-chain must
           // keep hopping).
           if (prelanderDomain) {
-
             // Cross-domain handoff (STEP 4): when leaving the Inter domain for
             // the prelander, mint a one-time handoff and exchange it at
             // /_auth/{handoff} on the prelander domain — the bootstrap consumes
@@ -170,7 +130,6 @@ export default function PrelanderSlugPage() {
             // A failed handoff shows the same session-unavailable message.
             let handoffToken: string | null = null
             try {
-
               const hRes = await fetch(
                 `/api/prelander/handoff?slug=${encodeURIComponent(slug)}&target_host=${encodeURIComponent(new URL(prelanderDomain).hostname)}`,
                 { headers: { 'X-Prelander-Host': hostname }, cache: 'no-store', redirect: 'manual' }
@@ -178,7 +137,6 @@ export default function PrelanderSlugPage() {
 
               if (hRes.ok) {
                 const h = await hRes.json()
-
                 handoffToken = h?.handoff || null
               } else if (hRes.status === 302 || hRes.status === 301 || hRes.status === 307) {
                 // POOL-PICK SELF-HEALING: the backend refused this target (the
@@ -188,7 +146,6 @@ export default function PrelanderSlugPage() {
                 // slug. Follow it: the correct domain mints the handoff there.
                 const hop = hRes.headers.get('location')
                 if (hop) {
-
                   setTransitioning(true)
                   await new Promise(r => setTimeout(r, 750))
                   window.location.replace(hop)
@@ -196,7 +153,7 @@ export default function PrelanderSlugPage() {
                 }
               }
             } catch (handoffError) {
-
+              // Handle handoff error
             }
 
             if (!handoffToken) {
@@ -221,64 +178,35 @@ export default function PrelanderSlugPage() {
             window.location.replace(authUrl)
             return
           }
-
         }
 
         // Step 2: on the Prelander domain (or type unknown) — fetch prelander data
-        // ═══════════════════════════════════════════════════════════════════════
-        // TAB-SPECIFIC SECURITY: Only on prelander domains, not redirect flow
-        // ═══════════════════════════════════════════════════════════════════════
-        const TAB_AUTH_KEY = 'prelander_tab_auth';
-        const tabAuth = sessionStorage.getItem(TAB_AUTH_KEY);
+        // 1) your existing call (slug route or "session"), unchanged
+        const res = await fetch(`/api/prelander/resolve/${slug}`, {
+          credentials: "include",
+          headers: { "X-Prelander-Host": window.location.hostname },
+        });
         
-        // Check if this is a new tab without authorization (only on prelander domains)
-        if (!tabAuth) {
-          const referrer = document.referrer;
-          
-          // Enhanced security: Block if no referrer OR if referrer doesn't contain our redirect domains
-          // Also check if tab was opened directly vs through redirect flow
-          const isDirectAccess = !referrer || 
-                               (!referrer.includes('trustedcloudmedia.com') && 
-                                !referrer.includes('redirect') && 
-                                !referrer.includes('inter') &&
-                                !referrer.includes('anchor') &&
-                                performance.navigation?.type === 1); // 1 = TYPE_RELOAD or direct navigation
-          
-          if (isDirectAccess) {
-            console.log('[TAB-SECURITY] Direct/pasted prelander URL detected - redirecting');
-            // Redirect to a safe page instead of showing content
-            window.location.replace('https://www.google.com');
-            return;
-          }
-          
-          // Legitimate redirect flow - authorize this tab
-          sessionStorage.setItem(TAB_AUTH_KEY, 'authorized');
-          console.log('[TAB-SECURITY] Prelander tab authorized via referrer:', referrer);
-        }
-
-        const resolveUrl = `/api/prelander/resolve/${slug}`
-
-        const res = await fetch(resolveUrl, {
-          headers: { 'X-Prelander-Host': hostname }, cache: 'no-store',
-        })
-
         // HTTP 204 = server denied (204 is 2xx so res.ok is TRUE — handle it
         // BEFORE res.ok/json parsing, the empty body breaks res.json()).
         if (res.status === 204 || !res.ok) {
-
           setDenied(true)
           return
         }
 
-        const json = await res.json()
+        const data = await res.json()
 
-        if (!json?.success) {
-
+        if (!data?.success) {
           setDenied(true)
           return
         }
 
-        setData(json)
+        // 2) NEW: claim AFTER resolve (so the cookie-mint fallback path, which
+        //    sets the arrival flag inside resolve, also works), BEFORE rendering
+        if (!(await guardTab())) return;      // redirected to google, render nothing
+
+        // 3) now it is safe to show the content
+        setData(data)
         
         // CLEAN FINAL URL (spec): the visible prelander address must be
         // https://prelander-domain.com/ — no slug, no ids, and rewritten
@@ -289,16 +217,12 @@ export default function PrelanderSlugPage() {
           window.history.replaceState({}, '', '/')
         }
       } catch (error) {
-
         // Show the session message without exposing internal errors.
         setDenied(true)
-
       } finally {
-
         setLoading(false)
       }
-    }
-    fetchData()
+    })();
   }, [slug, denied])
 
   useEffect(() => {

@@ -20,6 +20,21 @@ Two-step flow (bypass OFF, only Prelander OR only Inter configured):
 
 Bypass ON (direct_redirect_mode):
   1. /click  →  campaign URL directly (no prelander at all)
+
+PASTED-URL PROTECTION (new-tab paste → google.com):
+  The prelander content may only be shown in the tab that ARRIVED through the
+  redirect flow. Two layers enforce this:
+    1. _is_direct_navigation(): a typed / pasted / bookmarked URL reaches the
+       server with `Sec-Fetch-Site: none` (browsers add it; it is NOT affected
+       by Referrer-Policy, unlike the Referer header). Such navigations to this
+       API are redirected to google.com.
+    2. One-time ARRIVAL CLAIM: when the flow completes (/_auth exchange, or the
+       cookie-mint fallback in resolve_slug) a short-lived Redis flag
+       `pl_arrive:{session_id}` is set. The prelander page calls
+       GET /prelander/claim once; the flag is consumed (getdel) and the tab
+       remembers it in sessionStorage (per-tab). A new tab has no
+       sessionStorage and the flag is already consumed → /claim returns 403 →
+       the page redirects to google.com instead of rendering content.
 """
 import logging
 import time
@@ -37,6 +52,14 @@ logger = logging.getLogger(__name__)
 
 _XOR_KEY = "mxp2026"
 
+# Where pasted / typed / re-opened prelander URLs are sent. Change to any domain.
+PASTE_REDIRECT_URL = "https://www.google.com"
+
+# How long the "arrival" flag lives after the redirect flow completes. The
+# prelander page claims it within a second or two of loading.
+ARRIVAL_TTL_SECONDS = 20
+_ARRIVAL_KEY = "pl_arrive:{}"
+
 
 def get_redis_safe():
     """Redis client for the authorization gate; None when not yet connected."""
@@ -45,6 +68,49 @@ def get_redis_safe():
         return get_redis()
     except Exception:
         return None
+
+
+def _is_direct_navigation(request: Request) -> bool:
+    """
+    True when the request is a top-level document navigation started by the
+    browser UI itself: a typed, pasted or bookmarked URL.
+
+    Browsers label such requests `Sec-Fetch-Site: none`. Visitors that came
+    through the redirect flow (Inter → Prelander) are labelled cross-site /
+    same-site / same-origin instead. Unlike the Referer header this is not
+    affected by `Referrer-Policy: no-referrer`, which our own redirects send.
+
+    Very old browsers do not send Sec-Fetch-* at all → False (fail open here;
+    the /claim one-time flag is the second layer that still covers them).
+    """
+    h = request.headers
+    return (
+        h.get("sec-fetch-site") == "none"
+        and h.get("sec-fetch-mode") == "navigate"
+        and h.get("sec-fetch-dest") == "document"
+    )
+
+
+def _paste_redirect() -> RedirectResponse:
+    """302 to PASTE_REDIRECT_URL without leaking a referrer or being cached."""
+    return RedirectResponse(
+        url=PASTE_REDIRECT_URL,
+        status_code=302,
+        headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"},
+    )
+
+
+async def _mark_arrival(redis, pl_session_id: str) -> None:
+    """
+    Flag "the redirect flow just completed for this browsing session". The
+    page's first /claim call consumes it. Never breaks the caller.
+    """
+    if not redis or not pl_session_id:
+        return
+    try:
+        await redis.set(_ARRIVAL_KEY.format(pl_session_id), "1", ex=ARRIVAL_TTL_SECONDS)
+    except Exception as e:
+        logger.warning("[PRELANDER] Could not set arrival flag (non-fatal): %s", e)
 
 
 def _decode_slug(slug: str) -> Optional[dict]:
@@ -446,48 +512,48 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     When the requesting host is a Prelander domain or any other host:
       → Returns prelander data JSON (offer_url, password, os, etc.)
     """
-    
+
     # ═══ ENHANCED SECURITY: Block pasted URLs and view-source attempts ═══
     referer = request.headers.get("referer", "")
     user_agent = request.headers.get("user-agent", "")
     request_url = str(request.url)
     accept_header = request.headers.get("accept", "")
-    
+
     # Only apply security to actual browser requests with HTML accept headers
-    is_browser_request = ("text/html" in accept_header and 
+    is_browser_request = ("text/html" in accept_header and
                          "Mozilla" in user_agent and
-                         not any(api_indicator in user_agent.lower() for api_indicator in 
+                         not any(api_indicator in user_agent.lower() for api_indicator in
                                 ["python", "java", "curl", "wget", "httpx"]))
-    
+
     # Block view-source attempts (only for clear browser requests)
-    if (is_browser_request and 
-        ("view-source:" in request_url or 
+    if (is_browser_request and
+        ("view-source:" in request_url or
          "view-source" in referer.lower())):
         logger.info(f"[SECURITY] Blocked view-source attempt: {request_url}")
-        
+
         # Return obfuscated HTML for view-source
         obfuscated_html = """<!DOCTYPE html><html><head><title>Access Denied</title></head><body>
         <script>eval(atob('dmFyIF8weGE9Wydjb25zb2xlJywnbG9nJywnQWNjZXNzIERlbmllZCddO18weGFbMHhdW18weGFbMV1dKF8weGFbMl0pO3dpbmRvdy5sb2NhdGlvbi5ocmVmPSdodHRwczovL3d3dy5nb29nbGUuY29tJzs='));</script>
         </body></html>"""
-        
+
         return HTMLResponse(
             content=obfuscated_html,
             status_code=403,
             headers={"Referrer-Policy": "no-referrer"}
         )
-    
-    # Enhanced pasted URL detection (only for browser requests with no legitimate referrer)
-    if (is_browser_request and 
-        not referer and 
-        slug != "session"):  # Allow session endpoint for API calls
-        
-        logger.info(f"[SECURITY] Blocked pasted URL: no referrer, ua='{user_agent}'")
-        return RedirectResponse(
-            url="https://www.google.com",
-            status_code=302, 
-            headers={"Referrer-Policy": "no-referrer"},
-        )
-    
+
+    # PASTED / TYPED URL (fix): the old check relied on an empty Referer, but our
+    # own redirects send `Referrer-Policy: no-referrer`, so legitimate visitors
+    # have an empty Referer too — and it only fired for text/html requests, which
+    # the page's fetch() calls never are. `Sec-Fetch-Site: none` is set by the
+    # browser only when the user typed / pasted / bookmarked the address, so a
+    # browser navigating straight to this endpoint goes to PASTE_REDIRECT_URL.
+    # (Applies to slug == "session" too: pasting the session API URL in a tab
+    # must not show the JSON.)
+    if _is_direct_navigation(request):
+        logger.info("[SECURITY] Blocked pasted/typed URL (Sec-Fetch-Site: none), ua='%s'", user_agent)
+        return _paste_redirect()
+
     from app.services.domain_service import normalize_domain
 
     # Session authorization applies equally to all browser navigations.
@@ -501,7 +567,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
 
     # Prefer X-Prelander-Host; fall back to Host; normalize both
     prelander_host = normalize_domain(xph or host_header)
-    
+
     # Also check the raw host without port stripping (normalize_domain already strips port)
     if not prelander_host:
         prelander_host = normalize_domain(host_header)
@@ -511,7 +577,8 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     # slug == "session" is a sentinel meaning "no route in the URL": identity
     # and campaign context come ENTIRELY from the prelander-domain browsing
     # session cookie (mpa_pls) minted at the /_auth exchange. Cookies are
-    # shared across tabs; a missing or expired session is denied.
+    # shared across tabs; a missing or expired session is denied. (Tab-level
+    # protection — new-tab paste — is enforced by the one-time /claim below.)
     if slug == "session":
         from app.services import prelander_auth_service as pas
 
@@ -618,12 +685,12 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         user_agent = request.headers.get("user-agent", "")
         referer = request.headers.get("referer", "")
         has_prelander_host_header = request.headers.get("x-prelander-host") is not None
-        
+
         # Only apply security redirects to browser requests seeking HTML
-        is_browser_request = ("text/html" in accept_header and 
+        is_browser_request = ("text/html" in accept_header and
                              "Mozilla" in user_agent and
                              not has_prelander_host_header)
-        
+
         if is_browser_request:
             # Check for direct access (pasted URL or view-source)
             is_direct_access = (
@@ -631,7 +698,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                 "view-source:" in referer or  # View-source attempt
                 not referer.startswith("http")  # Invalid referrer
             )
-            
+
             if is_direct_access:
                 logger.info(f"[SECURITY] Blocking browser direct access: referer={referer}, ua={user_agent}")
                 return RedirectResponse(
@@ -639,7 +706,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
                     status_code=302,
                     headers={"Referrer-Policy": "no-referrer"},
                 )
-        
+
         # API call or other non-browser request - return proper error
         return await _denied_response(request)
 
@@ -649,7 +716,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
         # Same logic for invalid slug
         accept_header = request.headers.get("accept", "")
         has_prelander_host_header = request.headers.get("x-prelander-host") is not None
-        
+
         if not has_prelander_host_header and "text/html" in accept_header:
             return RedirectResponse(
                 url="https://www.google.com",
@@ -683,6 +750,9 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
             if redis is not None:
                 pl_session_id = await pas.establish_prelander_session(auth_session, redis)
                 if pl_session_id:
+                    # The redirect flow just completed for this visitor: allow
+                    # THIS tab to claim its one-time arrival (see /claim).
+                    await _mark_arrival(redis, pl_session_id)
                     response_data = await _get_prelander_data(
                         request, decoded["os"], db,
                         offer_id=session_offer or decoded.get("offer_id"),
@@ -728,6 +798,58 @@ async def session_check(request: Request, db=Depends(get_db)):
     return {"authorized": True}
 
 
+@router.get("/claim")
+async def claim_arrival(request: Request):
+    """
+    ONE-TIME ARRIVAL CLAIM — shows the prelander only in the tab that arrived
+    through the redirect flow.
+
+    The prelander page calls this once on load (before rendering content):
+      • 200 {"ok": true}  → the flag set when the flow completed was consumed
+        by THIS call. The page stores a marker in sessionStorage (per-tab), so
+        a reload in the same tab skips the claim and still works.
+      • 403 {"ok": false} → nothing to claim: the URL was pasted / typed into a
+        new tab (or the flag expired / was already used). The page must
+        redirect to google.com (or any domain) and render nothing.
+
+    Cookies are shared by every tab of the browser, so the cookie alone cannot
+    tell tabs apart; the consumed flag + per-tab sessionStorage can.
+    """
+    from app.services import prelander_auth_service as pas
+
+    # A document navigation straight to this endpoint (someone pasted the API
+    # URL) never claims anything.
+    if _is_direct_navigation(request):
+        return _paste_redirect()
+
+    redis = get_redis_safe()
+    if redis is None:
+        return JSONResponse(status_code=503, content={"ok": False})
+
+    sid = request.cookies.get(pas.PL_SESSION_COOKIE)
+    if not sid:
+        return JSONResponse(status_code=403, content={"ok": False})
+
+    # Session must still be a valid, unexpired browsing session.
+    session = await pas.validate_prelander_session(sid, redis)
+    if session is None:
+        return JSONResponse(status_code=403, content={"ok": False})
+
+    # getdel = atomic read + delete → only the FIRST caller wins.
+    try:
+        claimed = await redis.getdel(_ARRIVAL_KEY.format(sid))
+    except Exception as e:
+        logger.error("[PRELANDER] Arrival claim failed (denying): %s", e)
+        return JSONResponse(status_code=503, content={"ok": False})
+
+    if not claimed:
+        logger.info("[SECURITY] Arrival claim rejected (new-tab paste / reused) ip=%s",
+                    request.client.host if request.client else "?")
+        return JSONResponse(status_code=403, content={"ok": False})
+
+    return {"ok": True}
+
+
 @router.get("/data")
 async def get_prelander_data_legacy(
     request: Request,
@@ -743,6 +865,8 @@ async def get_prelander_data_legacy(
     validate. An empty slug never matches any session, so unauthenticated
     direct calls get the STEP 6 denied fallback — revealing nothing.
     """
+    if _is_direct_navigation(request):
+        return _paste_redirect()
     if not await _request_is_authorized(request, "", db):
         return await _denied_response(request)
     return await _get_prelander_data(request, os, db)
@@ -757,14 +881,14 @@ async def preview_prelander(
 ):
     """
     Admin-only preview for testing prelander templates.
-    
+
     A valid admin access token is required before any template data is returned.
-    
+
     Usage: Visit any prelander domain at /api/prelander/preview?os=windows
     """
     return await _get_prelander_data(
-        request, 
-        os, 
+        request,
+        os,
         db,
         skip_auth=True
     )
@@ -772,6 +896,45 @@ async def preview_prelander(
 
 # ═════════════════════════════════════════════════════════════════════════════
 # STEP 4 — CROSS-DOMAIN ONE-TIME HANDOFF ENDPOINTS
+@router.get("/claim")
+async def claim_tab_access(request: Request, db=Depends(get_db)):
+    """
+    Tab-guard endpoint: Claims one-time access for the current tab.
+    Returns 200 if the tab is authorized to view prelander content.
+    Returns 403 if this is a pasted URL or unauthorized access.
+    """
+    from app.services import prelander_auth_service as pas
+    
+    redis = get_redis_safe()
+    if redis is None:
+        return JSONResponse(status_code=503, content={"detail": "Service unavailable"})
+    
+    # Get the prelander session cookie
+    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+    if not pl_session_cookie:
+        logger.info("[TAB-GUARD] No prelander session cookie")
+        return JSONResponse(status_code=403, content={"authorized": False})
+    
+    # Validate the session
+    session = await pas.validate_prelander_session(pl_session_cookie, redis)
+    if session is None:
+        logger.info("[TAB-GUARD] Invalid prelander session")
+        return JSONResponse(status_code=403, content={"authorized": False})
+    
+    # Check if this is the first legitimate tab access
+    tab_claim_key = f"tab_claimed:{session.click_id}"
+    
+    # Try to claim the tab (atomic operation)
+    claimed = await redis.set(tab_claim_key, "1", ex=3600, nx=True)  # 1 hour expiry, only if not exists
+    
+    if claimed:
+        logger.info(f"[TAB-GUARD] Tab access claimed for click: {session.click_id}")
+        return JSONResponse(status_code=200, content={"authorized": True})
+    else:
+        logger.info(f"[TAB-GUARD] Tab access already claimed for click: {session.click_id}")
+        return JSONResponse(status_code=403, content={"authorized": False})
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 
 @router.get("/handoff")
@@ -839,6 +1002,45 @@ async def mint_handoff_token(
     return {"success": True, "handoff": handoff}
 
 
+@router.get("/claim")
+async def claim_tab_access(request: Request, db=Depends(get_db)):
+    """
+    Tab-guard endpoint: Claims one-time access for the current tab.
+    Returns 200 if the tab is authorized to view prelander content.
+    Returns 403 if this is a pasted URL or unauthorized access.
+    """
+    from app.services import prelander_auth_service as pas
+    
+    redis = get_redis_safe()
+    if redis is None:
+        return JSONResponse(status_code=503, content={"detail": "Service unavailable"})
+    
+    # Get the prelander session cookie
+    pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+    if not pl_session_cookie:
+        logger.info("[TAB-GUARD] No prelander session cookie")
+        return JSONResponse(status_code=403, content={"authorized": False})
+    
+    # Validate the session
+    session = await pas.validate_prelander_session(pl_session_cookie, redis)
+    if session is None:
+        logger.info("[TAB-GUARD] Invalid prelander session")
+        return JSONResponse(status_code=403, content={"authorized": False})
+    
+    # Check if this is the first legitimate tab access
+    tab_claim_key = f"tab_claimed:{session.click_id}"
+    
+    # Try to claim the tab (atomic operation)
+    claimed = await redis.set(tab_claim_key, "1", ex=3600, nx=True)  # 1 hour expiry, only if not exists
+    
+    if claimed:
+        logger.info(f"[TAB-GUARD] Tab access claimed for click: {session.click_id}")
+        return JSONResponse(status_code=200, content={"authorized": True})
+    else:
+        logger.info(f"[TAB-GUARD] Tab access already claimed for click: {session.click_id}")
+        return JSONResponse(status_code=403, content={"authorized": False})
+
+
 @router.get("/_auth/{handoff_token}")
 async def prelander_bootstrap(
     handoff_token: str,
@@ -854,8 +1056,9 @@ async def prelander_bootstrap(
       GET /_auth/{opaque-token}
         → validate + CONSUME the handoff (getdel — replay impossible)
         → establish the server-side browsing session
+        → flag the arrival (one-time /claim for the tab that just arrived)
         → set the HttpOnly SameSite=Lax prelander-domain cookie
-        → 302 → clean /d/{slug} (token gone from the visible URL)
+        → 302 → clean / (token gone from the visible URL)
 
     A second use of the same handoff (back button, shared link, retry) finds
     nothing and gets the STEP 6 denied fallback.
@@ -894,6 +1097,11 @@ async def prelander_bootstrap(
     if not pl_session_id:
         return await _denied_response(request)
 
+    # The redirect flow is complete: the tab that follows this 302 to "/" may
+    # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
+    # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
+    await _mark_arrival(redis, pl_session_id)
+
     # CLEAN FINAL URL (spec): the visible prelander URL must be
     # https://prelander-domain.com/ — no slug, no ids, no routing info, at
     # every stage including this redirect. The slug param is legacy and
@@ -921,7 +1129,7 @@ async def _get_prelander_data(
     skip_auth: bool = False,
 ):
     """Core prelander data resolution logic.
-    
+
     Args:
         skip_auth: If True, bypasses authorization for testing/preview purposes
     """
@@ -1025,7 +1233,7 @@ async def _get_prelander_data(
                 if not campaign_name:
                     campaign_name = camp.get("name")
                     logger.info(f"[PRELANDER] Found campaign: {campaign_name} (ID: {campaign_id})")
-                
+
                 # Extract campaign URL when no more specific offer URL was found
                 if not offer_url:
                     offer_url = (
@@ -1037,7 +1245,7 @@ async def _get_prelander_data(
                         logger.info(f"[PRELANDER] Using campaign URL from slug: {offer_url}")
                     else:
                         logger.warning(f"[PRELANDER] Campaign {campaign_name} has no URL configured")
-                
+
                 if password is None:
                     password = camp.get("password")
             else:
@@ -1087,19 +1295,19 @@ async def _get_prelander_data(
         if campaign:
             campaign_name = campaign.get("name")
             logger.info(f"[PRELANDER] Resolved campaign: {campaign_name} (ID: {campaign.get('_id')})")
-            
+
             # Try multiple field names for the campaign URL (different schemas used different names)
             offer_url = (
                 campaign.get("default_offer_url")
                 or campaign.get("offer_url")
                 or campaign.get("url")
             )
-            
+
             if offer_url:
                 logger.info(f"[PRELANDER] Campaign URL before cleaning: {offer_url}")
             else:
                 logger.warning(f"[PRELANDER] Campaign {campaign_name} has no URL in any field (default_offer_url, offer_url, url)")
-            
+
             if not password:
                 password = campaign.get("password")
 
