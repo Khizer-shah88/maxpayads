@@ -58,8 +58,9 @@ export default function PrelanderSlugPage() {
       // Block direct access (pasted URLs) for prelander domains
       if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
         if (!tabAuth && isDirectNavigation) {
-          console.log('[TAB-GUARD] Direct pasted URL detected - redirecting to Google');
-          window.location.replace('https://www.google.com');
+          console.log('[TAB-GUARD] Direct pasted URL detected - redirecting to previous URL');
+          const previousUrl = document.referrer || 'https://www.google.com';
+          window.location.replace(previousUrl);
           return;
         }
       }
