@@ -71,15 +71,20 @@ if [ "$FIRST_ARG" = "celery" ]; then
 fi
 
 # ── API server: seed database and train model ─────────────────────────────────
-echo "--- Seeding database ---"
-python scripts/seed_admin.py    2>&1 | grep -v "^$" | tail -3
-python scripts/seed_campaigns.py 2>&1 | grep -v "^$" | tail -4
-echo "Database ready"
+# Skip heavy initialization in production deployment for faster startup
+if [ "${SKIP_INIT:-false}" = "true" ]; then
+    echo "--- Skipping database seeding and ML training (SKIP_INIT=true) ---"
+else
+    echo "--- Seeding database ---"
+    python scripts/seed_admin.py    2>&1 | grep -v "^$" | tail -3
+    python scripts/seed_campaigns.py 2>&1 | grep -v "^$" | tail -4
+    echo "Database ready"
 
-# Train ML model if not present
-if [ ! -f "app/ml/models/fraud_model.pkl" ]; then
-    echo "--- Training fraud model ---"
-    python scripts/train_fraud_model.py 2>&1 | tail -3
+    # Train ML model if not present
+    if [ ! -f "app/ml/models/fraud_model.pkl" ]; then
+        echo "--- Training fraud model ---"
+        python scripts/train_fraud_model.py 2>&1 | tail -3
+    fi
 fi
 
 echo "--- Starting FastAPI ---"

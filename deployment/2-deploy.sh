@@ -114,7 +114,8 @@ fi
 
 # ── Wait for services to be fully ready ────────────────────────────────────────
 echo "Waiting for services to initialize..."
-sleep 10
+echo "FastAPI initialization can take up to 60 seconds due to database seeding and ML model training..."
+sleep 30
 
 # ── HTTP health check ─────────────────────────────────────────────────────────
 wait_for_http() {
@@ -162,11 +163,17 @@ wait_for_http() {
   echo "Container status:"
   docker compose -f docker-compose.prod.yml ps | head -10
   echo ""
-  echo "nginx error logs:"
+  echo "  nginx error logs:"
   docker logs ppc_nginx --tail 5 2>/dev/null || echo "Cannot fetch nginx logs"
   echo ""
-  echo "FastAPI logs:"  
-  docker logs ppc_fastapi --tail 5 2>/dev/null || echo "Cannot fetch FastAPI logs"
+  echo "  FastAPI logs:"  
+  docker logs ppc_fastapi --tail 10 2>/dev/null || echo "Cannot fetch FastAPI logs"
+  echo ""
+  echo "  FastAPI container inspection:"
+  docker exec ppc_fastapi ps aux 2>/dev/null || echo "Cannot inspect FastAPI container"
+  echo ""
+  echo "  FastAPI port check:"
+  docker exec ppc_fastapi netstat -tlnp 2>/dev/null | grep :8000 || echo "Port 8000 not listening"
   echo ""
   echo "Direct health check tests:"
   echo "  FastAPI direct: $(docker exec ppc_fastapi curl -s -m 5 http://localhost:8000/health 2>/dev/null || echo 'TIMEOUT')"
