@@ -121,32 +121,46 @@ sleep 30
 wait_for_http() {
   local url="$1"
   local label="$2"
-  local attempts=24  # Reduced from 36 (2 minutes instead of 3)
+  local attempts=30  # Increased to 2.5 minutes for initial deployment
   local i=1
 
   echo "Waiting for $label..."
   echo "Testing URL: $url"
+  echo "SKIP_INIT is set to: ${SKIP_INIT:-false} (should bypass heavy initialization)"
 
   while [ "$i" -le "$attempts" ]; do
     echo "  Attempt $i/$attempts..."
     
     # Test with verbose output for first few attempts
-    if [ "$i" -le 3 ]; then
+    if [ "$i" -le 5 ]; then
       if curl -fsS -m 10 "$url" >/dev/null; then
-        echo "$label: OK"
+        echo "$label: OK (took $(($i * 5)) seconds)"
         return 0
       else
-        echo "  Test failed, checking nginx and fastapi status..."
+        echo "  Test failed, running diagnostics..."
         
-        # Quick diagnostic checks
-        echo "  nginx status: $(docker exec ppc_nginx ps aux | grep nginx | wc -l) processes"
-        echo "  fastapi response: $(docker exec ppc_fastapi curl -s http://localhost:8000/health 2>/dev/null | head -c 50 || echo 'FAILED')"
-        echo "  nginx -> fastapi: $(docker exec ppc_nginx curl -s http://fastapi:8000/health 2>/dev/null | head -c 50 || echo 'FAILED')"
+        # Enhanced diagnostic checks
+        echo "  FastAPI container status: $(docker inspect ppc_fastapi --format='{{.State.Status}}' 2>/dev/null || echo 'NOT_FOUND')"
+        echo "  FastAPI ports: $(docker exec ppc_fastapi netstat -tlnp 2>/dev/null | grep :8000 || echo 'Port 8000 not listening')"
+        echo "  FastAPI process: $(docker exec ppc_fastapi ps aux | grep uvicorn | grep -v grep | wc -l) uvicorn processes"
+        echo "  nginx processes: $(docker exec ppc_nginx ps aux | grep nginx | wc -l) nginx processes"
+        
+        # Test individual components
+        fastapi_direct=$(docker exec ppc_fastapi curl -s -m 5 http://localhost:8000/health 2>/dev/null | head -c 50 || echo 'TIMEOUT')
+        nginx_proxy=$(docker exec ppc_nginx curl -s -m 5 http://fastapi:8000/health 2>/dev/null | head -c 50 || echo 'TIMEOUT')
+        
+        echo "  FastAPI direct test: $fastapi_direct"
+        echo "  nginx->FastAPI test: $nginx_proxy"
+        
+        if [ "$i" -eq 5 ]; then
+          echo "  === FastAPI Startup Logs (last 15 lines) ==="
+          docker logs ppc_fastapi --tail 15
+        fi
       fi
     else
-      # Silent attempts after first 3
+      # Silent attempts after first 5
       if curl -fsS -m 10 "$url" >/dev/null 2>&1; then
-        echo "$label: OK"
+        echo "$label: OK (took $(($i * 5)) seconds)"
         return 0
       fi
     fi
@@ -155,7 +169,7 @@ wait_for_http() {
     sleep 5
   done
 
-  echo "$label: NOT READY after $(($attempts * 5)) seconds (2 minutes)"
+  echo "$label: NOT READY after $(($attempts * 5)) seconds (2.5 minutes)"
   
   # Final diagnostic on failure
   echo ""
