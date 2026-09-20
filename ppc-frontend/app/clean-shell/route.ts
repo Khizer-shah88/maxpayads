@@ -1,5 +1,6 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session';
+import { sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,41 +10,15 @@ export const dynamic = 'force-dynamic';
 const PRELANDER_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; frame-src 'self' https:; media-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';";
 
-// Source-view deterrent (kill switch). Same feature that runs on /d/[slug].
-// Inline on purpose: this is the prelander-domain root page, so it must run
-// from the SSR'd HTML the server already delivered. A view-source: tab runs
-// none of it and gets navigated to the rendered page by the service worker.
-// NOT a security control -- see /public/source-deterrent-sw.js.
-const SOURCE_DETERRENT_ENABLED = process.env.ENABLE_SOURCE_DETERRENT !== 'false';
+// Source-view deterrent. One shared definition of the page script lives in
+// lib/source-deterrent-script.ts; see SOURCE_DETERRENT.md for the ceiling.
+// Read at module load, which is per container start -- the same moment a
+// docker-compose flip of the flag takes effect.
+const SOURCE_DETERRENT_SCRIPT = sourceDeterrentScriptTag();
 
 // Where a pasted / typed / new-tab prelander URL is sent. Reuses the entry
 // guard's configured fallback so both flows agree; defaults to google.com.
 const PASTE_BLOCK_URL = process.env.ENTRY_FALLBACK_URL || 'https://www.google.com';
-
-const SOURCE_DETERRENT_SCRIPT = SOURCE_DETERRENT_ENABLED
-  ? `<script>
-(function () {
-  if (!('serviceWorker' in navigator)) return;
-  // Never run in local dev (interferes with reading your own source) and never
-  // without a secure context (service workers require one -- by design).
-  if (!window.isSecureContext) return;
-  if (['localhost', '127.0.0.1', '[::1]'].indexOf(location.hostname) !== -1) return;
-
-  navigator.serviceWorker.register('/source-deterrent-sw.js', { scope: '/' }).catch(function () {});
-
-  function ping() {
-    var c = navigator.serviceWorker.controller;
-    if (c) c.postMessage('heartbeat');
-  }
-  // Ping immediately, again once a worker controls this page, then keep proving
-  // liveness on an interval well under the worker's grace period.
-  ping();
-  navigator.serviceWorker.ready.then(ping);
-  navigator.serviceWorker.addEventListener('controllerchange', ping);
-  setInterval(ping, 400);
-})();
-</script>`
-  : '';
 
 const SHELL_HTML = `<!DOCTYPE html>
 <html lang="en">
