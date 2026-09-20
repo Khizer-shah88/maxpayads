@@ -21,8 +21,13 @@ export default function PublisherDashboard() {
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
-  const user = getUser()
+  // Read AFTER mount, never during render. getUser() reads a cookie via
+  // js-cookie, which is browser-only: the server render sees no cookie and
+  // falls back to 'Publisher', the client sees the real name, and React throws
+  // a hydration mismatch. Same pattern Sidebar/PublisherSidebar already use.
+  const [user, setUser] = useState<ReturnType<typeof getUser>>(null)
 
+  useEffect(() => { setUser(getUser()) }, [])
   useEffect(() => { initialize() }, [])
 
   const fetchData = useCallback(async (showLoader = false) => {
