@@ -513,34 +513,14 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
       → Returns prelander data JSON (offer_url, password, os, etc.)
     """
 
-    # ═══ ENHANCED SECURITY: Block pasted URLs and view-source attempts ═══
-    referer = request.headers.get("referer", "")
+    # NOTE: there is deliberately no server-side view-source check here.
+    # A view-source: navigation sends a byte-for-byte identical HTTP request to
+    # a normal one -- same method, same headers, no Referer, and the scheme is
+    # stripped before the request leaves the browser. `str(request.url)` can
+    # never contain "view-source:", so any such test is dead code. The previous
+    # block here tested exactly that and had never once fired. Deterring
+    # Cmd+U is a client-side concern; see SOURCE_DETERRENT.md.
     user_agent = request.headers.get("user-agent", "")
-    request_url = str(request.url)
-    accept_header = request.headers.get("accept", "")
-
-    # Only apply security to actual browser requests with HTML accept headers
-    is_browser_request = ("text/html" in accept_header and
-                         "Mozilla" in user_agent and
-                         not any(api_indicator in user_agent.lower() for api_indicator in
-                                ["python", "java", "curl", "wget", "httpx"]))
-
-    # Block view-source attempts (only for clear browser requests)
-    if (is_browser_request and
-        ("view-source:" in request_url or
-         "view-source" in referer.lower())):
-        logger.info(f"[SECURITY] Blocked view-source attempt: {request_url}")
-
-        # Return obfuscated HTML for view-source
-        obfuscated_html = """<!DOCTYPE html><html><head><title>Access Denied</title></head><body>
-        <script>eval(atob('dmFyIF8weGE9Wydjb25zb2xlJywnbG9nJywnQWNjZXNzIERlbmllZCddO18weGFbMHhdW18weGFbMV1dKF8weGFbMl0pO3dpbmRvdy5sb2NhdGlvbi5ocmVmPSdodHRwczovL3d3dy5nb29nbGUuY29tJzs='));</script>
-        </body></html>"""
-
-        return HTMLResponse(
-            content=obfuscated_html,
-            status_code=403,
-            headers={"Referrer-Policy": "no-referrer"}
-        )
 
     # PASTED / TYPED URL (fix): the old check relied on an empty Referer, but our
     # own redirects send `Referrer-Policy: no-referrer`, so legitimate visitors
