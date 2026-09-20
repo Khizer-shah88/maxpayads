@@ -16,9 +16,9 @@ const PRELANDER_CSP =
 // docker-compose flip of the flag takes effect.
 const SOURCE_DETERRENT_SCRIPT = sourceDeterrentScriptTag();
 
-// Where a pasted / typed / new-tab prelander URL is sent. Reuses the entry
-// guard's configured fallback so both flows agree; defaults to google.com.
-const PASTE_BLOCK_URL = process.env.ENTRY_FALLBACK_URL || 'https://www.google.com';
+// Where a pasted / typed / new-tab prelander URL is sent. Uses browser history
+// back instead of forcing an external URL, providing natural navigation behavior.
+const PASTE_BLOCK_BEHAVIOR = 'history-back'; // Options: 'history-back' | 'close-tab' | url string
 
 const SHELL_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -121,9 +121,9 @@ const SHELL_HTML = `<!DOCTYPE html>
     }
     // One-time arrival claim. Returns true only for the first tab that came
     // through the redirect flow (or a reload of that same tab). Any other tab
-    // -- e.g. the prelander URL pasted into a new tab -- is sent to BLOCK_URL.
+    // -- e.g. the prelander URL pasted into a new tab -- uses browser history
+    // to navigate back to the previous page instead of forcing Google redirect.
     var TAB_KEY = 'pl_tab_ok'
-    var BLOCK_URL = '${PASTE_BLOCK_URL}'
     async function guardTab () {
       try {
         // Reload in the same tab: marker already present -> allowed.
@@ -135,8 +135,48 @@ const SHELL_HTML = `<!DOCTYPE html>
           return true
         }
       } catch (e) { /* network / storage error -> treat as not allowed */ }
-      // Pasted into a new tab (or flag expired / reused) -> leave, show nothing.
-      try { window.location.replace(BLOCK_URL) } catch (e) { window.location.href = BLOCK_URL }
+      
+      // Pasted into a new tab (or flag expired / reused) -> smart redirect
+      // Priority: referrer -> history.back() -> close tab -> about:blank
+      try {
+        // Try referrer first (when pasting over existing page)
+        if (document.referrer && document.referrer !== location.href) {
+          try {
+            var refUrl = new URL(document.referrer)
+            var currUrl = new URL(location.href)
+            // Don't redirect to same domain (avoid loops)
+            if (refUrl.hostname !== currUrl.hostname) {
+              console.log('[TAB-GUARD] Redirecting to referrer:', document.referrer)
+              location.replace(document.referrer)
+              return false
+            }
+          } catch (e) {}
+        }
+        
+        // No valid referrer - use browser history back
+        console.log('[TAB-GUARD] Using browser history back')
+        if (window.history.length > 1) {
+          window.history.back()
+          // Fallback: close tab if back doesn't work
+          setTimeout(function() {
+            window.close()
+            setTimeout(function() {
+              if (!document.hidden) {
+                location.replace('about:blank')
+              }
+            }, 200)
+          }, 1000)
+        } else {
+          // No history - try to close tab
+          window.close()
+          setTimeout(function() {
+            location.replace('about:blank')
+          }, 200)
+        }
+      } catch (e) {
+        // Fallback to about:blank on any error
+        try { location.replace('about:blank') } catch (e2) {}
+      }
       return false
     }
 
