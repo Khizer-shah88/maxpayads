@@ -126,7 +126,10 @@ wait_for_http() {
 
   echo "Waiting for $label..."
   echo "Testing URL: $url"
-  echo "SKIP_INIT is set to: ${SKIP_INIT:-false} (should bypass heavy initialization)"
+  
+  # Check SKIP_INIT from container environment
+  container_skip_init=$(docker exec ppc_fastapi env 2>/dev/null | grep '^SKIP_INIT=' | cut -d= -f2 || echo 'false')
+  echo "SKIP_INIT is set to: $container_skip_init (should bypass heavy initialization)"
 
   while [ "$i" -le "$attempts" ]; do
     echo "  Attempt $i/$attempts..."
