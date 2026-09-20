@@ -2,36 +2,16 @@
 //
 // Shows the prelander only in the tab that ARRIVED through the redirect flow.
 // A URL pasted into a new tab has no sessionStorage marker and the server-side
-// one-time "arrival" flag is already used, so it is sent back to the previous URL
-// (or FALLBACK_URL if no referrer exists) and no content is rendered.
+// one-time "arrival" flag is already used, so it is sent to BLOCK_URL and no
+// content is rendered.
 
 const CLAIM_URL = "/api/prelander/claim";
 const TAB_KEY = "pl_tab_ok";                    // per-tab (sessionStorage)
-const FALLBACK_URL = "https://www.google.com";  // fallback when no referrer exists
+const BLOCK_URL = "https://www.google.com";     // any domain you like
 
 // Module-level promise: React strict mode / double effects must NOT claim twice
 // (the second claim would fail and wrongly redirect a real visitor).
 let pending: Promise<boolean> | null = null;
-
-/**
- * Gets the best URL to redirect to when blocking access.
- * Priority: referrer (previous page) > browser history back > fallback (Google)
- */
-function getBlockRedirectUrl(): string {
-  // If there's a referrer and it's not from our own domain, use it
-  if (document.referrer && document.referrer !== window.location.href) {
-    const referrerUrl = new URL(document.referrer);
-    const currentUrl = new URL(window.location.href);
-    
-    // Don't redirect to the same domain (avoid loops)
-    if (referrerUrl.hostname !== currentUrl.hostname) {
-      return document.referrer;
-    }
-  }
-  
-  // Fallback to Google if no valid referrer
-  return FALLBACK_URL;
-}
 
 export function guardTab(): Promise<boolean> {
   if (pending) return pending;
@@ -51,9 +31,8 @@ export function guardTab(): Promise<boolean> {
       /* network / storage error → treat as not allowed */
     }
     
-    // Pasted into a new tab (or flag expired / reused) → redirect back to previous page.
-    const redirectUrl = getBlockRedirectUrl();
-    window.location.replace(redirectUrl);
+    // Pasted into a new tab (or flag expired / reused) → leave, show nothing.
+    window.location.replace(BLOCK_URL);
     return false;
   })();
   
