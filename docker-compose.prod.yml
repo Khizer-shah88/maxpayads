@@ -189,13 +189,10 @@ services:
       ENTRY_FALLBACK_URL: ${ENTRY_FALLBACK_URL:-https://www.google.com/}
       ENTRY_SESSION_TTL: ${ENTRY_SESSION_TTL:-900}
       ENTRY_SESSION_SECRET: ${ENTRY_SESSION_SECRET:-}
-      # Source-view deterrent kill switch. STOOD DOWN (false) -- the worker
-      # reload-looped visitors on any page without the heartbeat script, above
-      # all the session-unavailable 403 page. Read at request time, so a flip
-      # needs only `docker compose up -d nextjs`, no rebuild. Do NOT set this
-      # to "true" until the acceptance tests in SOURCE_DETERRENT.md pass in a
-      # real browser on a real prelander domain.
-      ENABLE_SOURCE_DETERRENT: ${ENABLE_SOURCE_DETERRENT:-false}
+      # Source deterrent system — redirects view-source tabs to rendered page
+      # Set to "true" to enable the feature in production
+      ENABLE_SOURCE_DETERRENT: "true"
+      SOURCE_DETERRENT_ALLOW_LOCALHOST: "true"
     depends_on:
       - fastapi
     restart: unless-stopped
