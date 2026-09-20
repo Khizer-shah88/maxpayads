@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { sourceDeterrentScript } from '@/lib/source-deterrent-script'
 import { Toaster } from 'sonner'
 import './globals.css'
 
@@ -8,6 +9,13 @@ export const metadata: Metadata = {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Inline, never bundled: if this shipped in a bundle and the bundle failed to
+  // load, the page would fall silent and the worker would navigate it -- firing
+  // on exactly the users it should leave alone. '' when the feature is off.
+  // Covers every app-router page, so every document that can receive the `x-sd`
+  // marker also carries the heartbeat. Keep those two together.
+  const deterrent = sourceDeterrentScript()
+
   return (
     <html lang="en">
       <head>
@@ -16,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
       </head>
       <body className="bg-white text-black antialiased">
+        {deterrent ? <script dangerouslySetInnerHTML={{ __html: deterrent }} /> : null}
         {children}
         <Toaster
           theme="light"

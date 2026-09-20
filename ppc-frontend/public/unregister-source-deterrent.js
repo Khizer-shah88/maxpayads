@@ -1,51 +1,41 @@
 /**
- * Source Deterrent Service Worker Unregistration Utility
- * 
- * Use this script to completely remove the source deterrent service worker
- * when the feature is disabled. Ship this for one release when turning off
- * the feature to clean up existing installations.
- * 
- * Usage:
- * 1. Include this script in a page
- * 2. Or run in browser console: 
- *    navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()))
+ * Removes the source-view deterrent service worker.
+ *
+ * Turning the ENABLE_SOURCE_DETERRENT flag off stops new registrations but does
+ * NOT remove a worker already installed in a visitor's browser. That worker
+ * keeps controlling the origin until something unregisters it. Ship this for
+ * one release when standing the feature down.
+ *
+ * You normally do not need this: /source-deterrent-sw.js is itself a tombstone
+ * that unregisters on activate, so any client that can fetch an update clears
+ * itself. This script is the belt-and-braces path for a client whose update
+ * check has not fired yet.
+ *
+ * Console equivalent, if you only need to clear your own browser:
+ *   navigator.serviceWorker.getRegistrations()
+ *     .then(rs => rs.forEach(r => r.unregister()))
+ *
+ * Scoped ON PURPOSE. The previous version unregistered every registration on
+ * the origin, including any unrelated worker, in its else-branch. This one
+ * touches only workers whose script URL is ours.
  */
+(function () {
+  if (!('serviceWorker' in navigator)) return;
 
-(function() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      console.log(`Found ${registrations.length} service worker registrations`);
-      
-      registrations.forEach(registration => {
-        // Check if this is our source deterrent worker
-        if (registration.scope.endsWith('/') && 
-            (registration.active?.scriptURL?.includes('source-deterrent-sw.js') ||
-             registration.waiting?.scriptURL?.includes('source-deterrent-sw.js') ||
-             registration.installing?.scriptURL?.includes('source-deterrent-sw.js'))) {
-          
-          registration.unregister().then(success => {
-            if (success) {
-              console.log('Source deterrent service worker unregistered successfully');
-            } else {
-              console.log('Source deterrent service worker unregistration failed');
-            }
-          });
-        } else {
-          registration.unregister().then(success => {
-            if (success) {
-              console.log('Service worker unregistered:', registration.scope);
-            }
-          });
-        }
-      });
-      
-      if (registrations.length === 0) {
-        console.log('No service workers found to unregister');
-      }
-    }).catch(error => {
-      console.error('Error getting service worker registrations:', error);
-    });
-  } else {
-    console.log('Service workers not supported in this browser');
+  var OURS = /\/(source-deterrent-sw|unregister-source-deterrent)\.js(\?|$)/;
+
+  function isOurs(registration) {
+    var w = registration.active || registration.waiting || registration.installing;
+    return !!(w && w.scriptURL && OURS.test(w.scriptURL));
   }
+
+  navigator.serviceWorker.getRegistrations().then(function (registrations) {
+    registrations.filter(isOurs).forEach(function (registration) {
+      registration.unregister().then(function (ok) {
+        if (ok) console.log('[source-deterrent] unregistered', registration.scope);
+      });
+    });
+  }).catch(function () {
+    // Nothing to do -- no registrations readable in this context.
+  });
 })();

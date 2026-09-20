@@ -1,76 +1,140 @@
-/**
- * Source-View Deterrent Service Worker
- *
- * EXPLICIT NON-GOAL: This does not and cannot prevent access to the source.
- * curl and every other HTTP client, DevTools -> Network -> Response,
- * DevTools Elements, "Save page as", and the very first visit before the
- * service worker installs all still show everything. The HTML is already on
- * the client. It deters a casual Cmd/Ctrl+U and nothing more. It is NOT a
- * security control -- secrets still belong server-side.
- *
- * HOW IT WORKS
- * A view-source: tab cannot execute JavaScript, so it never sends the heartbeat
- * that the page sends. Nothing in the API exposes the "view-source:" prefix --
- * request.url and client.url both read as the plain URL -- so the tab is
- * identified by ABSENCE. Any window client still silent after GRACE_MS is
- * navigated to its own url, which re-opens it as an ordinary document; the
- * prefix does not survive.
- *
- * This fires on any JS-less context, not specifically on view-source.
- *
- * VERIFIED IN CHROME. Firefox/Safari behaviour for SW-visible view-source
- * navigations and client.navigate() is untested -- treat as "feature absent".
- */
+// Source-view deterrent -- service worker half.
+//
+// SOURCE OF TRUTH: ~/view-source-demo/source-deterrent/sw.js (commit 77d5277).
+// Naming, constants and structure follow that reference. Two deltas are applied
+// for this codebase, both documented at their site below:
+//   1. MARKER GATE      -- required here, see "WHY THE MARKER" below
+//   2. DURABLE BUDGET   -- the reference's own documented upgrade path
+// Do NOT copy ~/view-source-demo/public/sw.js: that file is the "BUG 4" exhibit
+// and has no loop guard whatsoever.
+//
+// HOW IT WORKS
+// A view-source: tab cannot execute JavaScript, so it never sends the heartbeat
+// that the page snippet sends. Nothing in the API exposes the "view-source:"
+// prefix -- request.url and client.url both read as the plain URL -- so the tab
+// is identified by absence. Any window client still silent after GRACE_MS is
+// navigated to its own url, which re-opens it as an ordinary document.
+//
+// WHAT THIS CANNOT DO -- read before shipping
+// curl and every other HTTP client, DevTools -> Network -> Response, DevTools
+// Elements, "Save page as", the first visit before this worker installs, and any
+// browser with JS disabled all still see everything. The HTML is already on the
+// client by the time this runs. This deters a casual Cmd/Ctrl+U. It is NOT a
+// security control. Secrets still belong server-side.
+//
+// It does not detect view-source specifically. It detects "this document did not
+// run JavaScript", which is equally true of JS disabled, a hydration crash, a
+// blocked inline script or an extension. The guards below exist to make that
+// misfire harmless.
+//
+// VERIFIED IN CHROME ONLY. Whether Firefox and Safari let a service worker see a
+// view-source: navigation, and whether their client.navigate() behaves the same,
+// is untested. Treat every other browser as "feature absent" until tested.
 
-// Heartbeat message the page posts to prove it can run JavaScript.
-const PING = 'heartbeat';
+const PING = "SOURCE_DETERRENT_PING";
 
-// Grace period from navigation to first heartbeat, tuned to the p95 on the
-// slowest supported device/network plus headroom. Too low bounces real users
-// whose JS is merely slow; too high leaves the source readable that long.
-const GRACE_MS = 1200;
+// Tune from real data: p95 time from navigation to first heartbeat on the
+// slowest device and network you support, plus headroom. Too low and you bounce
+// real users whose JS is merely slow; too high and the source is readable for
+// that long. 1500 comes from the reference implementation, measured on one app.
+// NOT yet measured against maxpayads traffic -- see SOURCE_DETERRENT.md.
+const GRACE_MS = 1500;
 
-// Loop guard -- the most important lines here. A visitor who genuinely cannot
-// run JS (JS disabled, hydration crash, blocked inline script, extension
-// interference) must NOT be navigated forever. A client that cannot be "fixed"
-// is left alone on a readable page.
+// Loop guard -- the most important line here. Without a cap, a visitor who
+// genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
+// extension interference) gets navigated on every sweep, forever. A client that
+// cannot be "fixed" must be left alone on a readable page.
 const MAX_NAVIGATIONS = 3;
 
-const alive = new Set();   // client ids that proved they can run JS
-const nudged = new Set();  // client ids already navigated once
-let navigations = 0;       // total across all clients, this worker's lifetime
+// ── DELTA 1: MARKER GATE ────────────────────────────────────────────────────
+// WHY THE MARKER: the reference sweeps every window client, which is safe in a
+// demo where every page carries the snippet. This app has pages that CANNOT
+// heartbeat -- above all the session-unavailable 403 page, which ships no script
+// and a `default-src 'none'` CSP, served at `/` on prelander domains. Sweeping
+// it navigated it, it came back silent, and it was navigated again: a live
+// reload loop for real visitors. A sweep is now scheduled ONLY for a navigation
+// whose response carried `x-sd: 1`, which only instrumented documents emit.
+const MARKER = "x-sd";
+
+// ── DELTA 2: DURABLE BUDGET ─────────────────────────────────────────────────
+// The reference keeps the counter in memory and notes: "If the worker gets
+// killed between loops the cap resets -- persist it to the Cache API if you ever
+// observe that." Observed: terminating the worker mid-loop (which the browser
+// does to any idle worker) reset the count and the loop resumed. So it is
+// persisted here, and reset to 0 on every heartbeat -- making the cap mean
+// "3 consecutive navigations that failed to produce a heartbeat".
+const GUARD_CACHE = "sd-nav-guard";
+const GUARD_KEY = "https://source-deterrent.invalid/nav-count";
+
+const alive = new Set(); // client ids that proved they can run JS
+const nudged = new Set(); // client ids already navigated once
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+async function navCount() {
+  try {
+    const cache = await caches.open(GUARD_CACHE);
+    const hit = await cache.match(GUARD_KEY);
+    if (!hit) return 0;
+    const n = parseInt(await hit.text(), 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    // Fail CLOSED. A budget that cannot be read cannot be enforced, and an
+    // unbounded navigate loop is far worse than the feature not firing.
+    return MAX_NAVIGATIONS;
+  }
+}
 
-self.addEventListener('message', (e) => {
-  if (e.data === PING && e.source) alive.add(e.source.id);
+async function setNavCount(n) {
+  try {
+    const cache = await caches.open(GUARD_CACHE);
+    await cache.put(GUARD_KEY, new Response(String(n)));
+  } catch {
+    // Unwritable; navCount() fails closed on the next read.
+  }
+}
+
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener("message", (e) => {
+  if (e.data !== PING || !e.source) return;
+  alive.add(e.source.id);
+  // A heartbeat proves JS runs here, so the consecutive-failure budget resets.
+  e.waitUntil(setNavCount(0));
 });
 
-async function sweep() {
-  if (navigations >= MAX_NAVIGATIONS) return;
+async function sweep(resultingClientId) {
+  if ((await navCount()) >= MAX_NAVIGATIONS) return;
 
   await sleep(GRACE_MS);
 
-  const clients = await self.clients.matchAll({
-    type: 'window',
-    includeUncontrolled: true,
-  });
+  let clients = [];
+  if (resultingClientId) {
+    const client = await self.clients.get(resultingClientId);
+    if (client) clients = [client];
+  }
+  if (!clients.length) {
+    // resultingClientId is not populated in every context. Falling back to a
+    // full sweep is safe ONLY because we are already behind the marker gate:
+    // an uninstrumented document never schedules a sweep in the first place.
+    clients = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+  }
 
   for (const client of clients) {
     if (alive.has(client.id) || nudged.has(client.id)) continue;
-    if (navigations >= MAX_NAVIGATIONS) return;
 
     // A navigated client comes back with a NEW id, so per-id marking alone
-    // cannot stop a loop -- the global counter is what actually bounds it.
+    // cannot stop a loop. The persisted counter is what actually bounds it.
+    const n = await navCount();
+    if (n >= MAX_NAVIGATIONS) return;
     nudged.add(client.id);
-    navigations += 1;
+    await setNavCount(n + 1);
 
     try {
-      // Navigating a JS-less client to its own url re-opens it as a normal
-      // document. The view-source: prefix does not survive.
       await client.navigate(client.url);
     } catch {
       // Client went away, or is not navigable. Nothing to do.
@@ -78,13 +142,29 @@ async function sweep() {
   }
 }
 
-self.addEventListener('fetch', (e) => {
-  // Only navigation requests matter; leave data/prefetch/asset fetches alone.
-  if (e.request.mode !== 'navigate') return;
+self.addEventListener("fetch", (e) => {
+  if (e.request.mode !== "navigate") return;
+
+  const resultingClientId = e.resultingClientId;
+  const fetched = fetch(e.request);
 
   // respondWith is load-bearing: it keeps the worker alive long enough for the
   // sweep to run. waitUntil on its own gets the worker killed first (tested).
-  // The cost is one pass-through hop on navigations.
-  e.respondWith(fetch(e.request));
-  e.waitUntil(sweep());
+  // The cost is one pass-through hop on navigations -- measure it on your app,
+  // and check it does not interfere with framework data/prefetch requests.
+  e.respondWith(fetched);
+
+  e.waitUntil(
+    (async () => {
+      let response;
+      try {
+        response = await fetched;
+      } catch {
+        return;
+      }
+      // Reading headers does not consume the body, so no clone is needed.
+      if (response.headers.get(MARKER) !== "1") return; // uninstrumented -> never sweep
+      await sweep(resultingClientId);
+    })(),
+  );
 });

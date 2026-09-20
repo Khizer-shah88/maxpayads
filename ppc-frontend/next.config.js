@@ -3,10 +3,12 @@ const nextConfig = {
   // Enable standalone output for Docker
   output: 'standalone',
   
-  // Environment variables for source deterrent feature
-  env: {
-    ENABLE_SOURCE_DETERRENT: process.env.ENABLE_SOURCE_DETERRENT || 'true',
-  },
+  // NOTE: ENABLE_SOURCE_DETERRENT is deliberately NOT listed under `env`.
+  // Next's `env` key inlines values via DefinePlugin at BUILD time, which
+  // freezes the flag into the image and makes it unflippable without a
+  // rebuild -- the opposite of a kill switch. Both consumers (the clean-shell
+  // route handler and the /d/[slug] layout) render on the server per request,
+  // so they read the real runtime env directly. Set it in docker-compose.
   
   webpack: (config, { dev, isServer }) => {
     // Basic optimization for production
@@ -18,6 +20,19 @@ const nextConfig = {
     return config
   },
   
+  // API proxy. These lived ONLY in next.config.mjs, which Next never loads:
+  // CONFIG_FILES is ["next.config.js", "next.config.mjs"] and the first match
+  // wins, so the .mjs file was dead code. In production nginx proxies /api
+  // itself, which masked it; in local dev `lib/api.ts` (baseURL: '/api') had
+  // no proxy at all and every API call 404'd.
+  async rewrites() {
+    const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000'
+    return [
+      { source: '/api/:path*', destination: `${backendUrl}/:path*` },
+      { source: '/uploads/:path*', destination: `${backendUrl}/uploads/:path*` },
+    ]
+  },
+
   // Enable compression
   compress: true,
   

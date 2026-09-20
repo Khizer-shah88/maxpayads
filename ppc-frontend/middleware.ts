@@ -189,6 +189,14 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/public-stats/') ||
     // Public static assets served from prelander domains (video tutorials etc.)
     /\.(mp4|webm|png|jpg|jpeg|gif|ico|svg|txt|xml|webmanifest)$/i.test(pathname) ||
+    // Service-worker scripts must stay fetchable at the origin root on EVERY
+    // hostname, portal or not. A 404 here does more than disable the feature:
+    // it removes the browser's only channel for fetching an UPDATE, so a
+    // previously installed worker keeps running its old code indefinitely.
+    // That is precisely how the source-deterrent reload loop survived -- the
+    // fix could not be delivered to the clients that needed it.
+    pathname === '/source-deterrent-sw.js' ||
+    pathname === '/unregister-source-deterrent.js' ||
     pathname === '/favicon.ico';
 
   if (!isPortalHost(host) && !isInfraPath) {
@@ -415,10 +423,18 @@ export async function middleware(request: NextRequest) {
 function addSecurityHeaders(response: NextResponse, pathname?: string): NextResponse {
   const isPrelander = !!pathname && pathname.startsWith('/d/');
 
+  // Next's dev-mode Fast Refresh runtime (react-refresh) evaluates strings, so
+  // `next dev` genuinely requires 'unsafe-eval' — without it the HMR runtime
+  // throws EvalError on every portal page and Fast Refresh silently dies.
+  // Added in development ONLY: 'unsafe-eval' is a real XSS amplifier and a
+  // production bundle has no need for it. NODE_ENV is set by next dev/next
+  // build themselves, so this cannot be flipped on by a stray env var.
+  const devEval = process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : '';
+
   const cspHeader = isPrelander
     ? `
       default-src 'self';
-      script-src 'self' 'unsafe-inline' https:;
+      script-src 'self' 'unsafe-inline'${devEval} https:;
       style-src 'self' 'unsafe-inline' https:;
       img-src 'self' data: blob: https:;
       font-src 'self' data: https:;
@@ -432,7 +448,7 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
     `.replace(/\s{2,}/g, ' ').trim()
     : `
       default-src 'self';
-      script-src 'self' 'unsafe-inline';
+      script-src 'self' 'unsafe-inline'${devEval};
       style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
       img-src 'self' data: blob: https:;
       font-src 'self' data: https://fonts.gstatic.com;
@@ -444,6 +460,23 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
     `.replace(/\s{2,}/g, ' ').trim();
 
   response.headers.set('Content-Security-Policy', cspHeader);
+
+  // Source-deterrent marker. The worker sweeps ONLY navigations whose response
+  // carries this header. That gate is the actual fix for the reload loop: the
+  // session-unavailable 403 page, 404s and every other uninstrumented document
+  // never get it, so the worker cannot see them, let alone navigate them.
+  //
+  // INVARIANT: set this only on documents that actually embed the heartbeat
+  // (lib/source-deterrent-script.ts). A marked page WITHOUT the script is a
+  // guaranteed reload loop. Prelander paths are marked because their layout
+  // and the clean shell both embed it.
+  // Every response that passes through here is an app-router document, and the
+  // root layout embeds the heartbeat in all of them. The script-less responses
+  // -- sessionUnavailableResponse(), the bare 404s, every redirect -- are
+  // returned directly and never reach this function, so they cannot be marked.
+  if (process.env.ENABLE_SOURCE_DETERRENT === 'true') {
+    response.headers.set('x-sd', '1');
+  }
 
   // Anti-framing + hardening on every middleware-served response (STEP 13).
   // X-Frame-Options covers legacy browsers; frame-ancestors 'none' above is
