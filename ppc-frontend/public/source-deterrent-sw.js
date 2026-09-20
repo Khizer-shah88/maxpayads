@@ -38,7 +38,7 @@ const PING = "SOURCE_DETERRENT_PING";
 // real users whose JS is merely slow; too high and the source is readable for
 // that long. 1500 comes from the reference implementation, measured on one app.
 // NOT yet measured against maxpayads traffic -- see SOURCE_DETERRENT.md.
-const GRACE_MS = 200;
+const GRACE_MS = 300;
 
 // Loop guard -- the most important line here. Without a cap, a visitor who
 // genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
