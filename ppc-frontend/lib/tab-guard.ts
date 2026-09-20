@@ -7,7 +7,7 @@
 
 const CLAIM_URL = "/api/prelander/claim";
 const TAB_KEY = "pl_tab_ok";                    // per-tab (sessionStorage)
-const BLOCK_URL = "https://www.google.com";     // any domain you like
+const BLOCK_URL = document.referrer || "about:blank";
 
 // Module-level promise: React strict mode / double effects must NOT claim twice
 // (the second claim would fail and wrongly redirect a real visitor).
