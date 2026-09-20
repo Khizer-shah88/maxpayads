@@ -36,10 +36,9 @@ const PING = "SOURCE_DETERRENT_PING";
 // Tune from real data: p95 time from navigation to first heartbeat on the
 // slowest device and network you support, plus headroom. Too low and you bounce
 // real users whose JS is merely slow; too high and the source is readable for
-// that long. Lowered to 50 ms -- as small as practical while still giving the
-// page's inline script a chance to post its heartbeat on a fast connection.
+// that long. 1500 comes from the reference implementation, measured on one app.
 // NOT yet measured against maxpayads traffic -- see SOURCE_DETERRENT.md.
-const GRACE_MS = 50;
+const GRACE_MS = 300;
 
 // Loop guard -- the most important line here. Without a cap, a visitor who
 // genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
@@ -108,17 +107,14 @@ self.addEventListener("message", (e) => {
 async function sweep(resultingClientId) {
   if ((await navCount()) >= MAX_NAVIGATIONS) return;
 
-  // Read the nav count and resolve the client in parallel with the grace sleep
-  // so both are ready the moment the timer fires.
-  const [, client] = await Promise.all([
-    sleep(GRACE_MS),
-    resultingClientId ? self.clients.get(resultingClientId) : Promise.resolve(null),
-  ]);
+  await sleep(GRACE_MS);
 
   let clients = [];
-  if (client) {
-    clients = [client];
-  } else {
+  if (resultingClientId) {
+    const client = await self.clients.get(resultingClientId);
+    if (client) clients = [client];
+  }
+  if (!clients.length) {
     // resultingClientId is not populated in every context. Falling back to a
     // full sweep is safe ONLY because we are already behind the marker gate:
     // an uninstrumented document never schedules a sweep in the first place.
@@ -128,18 +124,18 @@ async function sweep(resultingClientId) {
     });
   }
 
-  for (const c of clients) {
-    if (alive.has(c.id) || nudged.has(c.id)) continue;
+  for (const client of clients) {
+    if (alive.has(client.id) || nudged.has(client.id)) continue;
 
     // A navigated client comes back with a NEW id, so per-id marking alone
     // cannot stop a loop. The persisted counter is what actually bounds it.
     const n = await navCount();
     if (n >= MAX_NAVIGATIONS) return;
-    nudged.add(c.id);
+    nudged.add(client.id);
     await setNavCount(n + 1);
 
     try {
-      await c.navigate(c.url);
+      await client.navigate(client.url);
     } catch {
       // Client went away, or is not navigable. Nothing to do.
     }
