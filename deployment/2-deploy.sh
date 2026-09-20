@@ -99,6 +99,15 @@ echo "Building Docker images..."
 
 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
 
+# ── Force nginx reload with new configuration ──────────────────────────────────
+echo "Reloading nginx with updated configuration..."
+docker exec ppc_nginx nginx -s reload || echo "nginx reload failed or container not ready"
+sleep 2
+
+# ── Wait for services to be fully ready ────────────────────────────────────────
+echo "Waiting for services to initialize..."
+sleep 10
+
 # ── HTTP health check ─────────────────────────────────────────────────────────
 wait_for_http() {
   local url="$1"
@@ -107,11 +116,30 @@ wait_for_http() {
   local i=1
 
   echo "Waiting for $label..."
+  echo "Testing URL: $url"
 
   while [ "$i" -le "$attempts" ]; do
-    if curl -fsS "$url" >/dev/null 2>&1; then
-      echo "$label: OK"
-      return 0
+    echo "  Attempt $i/$attempts..."
+    
+    # Test with verbose output for first few attempts
+    if [ "$i" -le 3 ]; then
+      if curl -fsS -m 10 "$url" >/dev/null; then
+        echo "$label: OK"
+        return 0
+      else
+        echo "  Test failed, checking nginx and fastapi status..."
+        
+        # Quick diagnostic checks
+        echo "  nginx status: $(docker exec ppc_nginx ps aux | grep nginx | wc -l) processes"
+        echo "  fastapi response: $(docker exec ppc_fastapi curl -s http://localhost:8000/health 2>/dev/null | head -c 50 || echo 'FAILED')"
+        echo "  nginx -> fastapi: $(docker exec ppc_nginx curl -s http://fastapi:8000/health 2>/dev/null | head -c 50 || echo 'FAILED')"
+      fi
+    else
+      # Silent attempts after first 3
+      if curl -fsS -m 10 "$url" >/dev/null 2>&1; then
+        echo "$label: OK"
+        return 0
+      fi
     fi
 
     i=$((i + 1))
@@ -119,6 +147,24 @@ wait_for_http() {
   done
 
   echo "$label: NOT READY after $(($attempts * 5)) seconds"
+  
+  # Final diagnostic on failure
+  echo ""
+  echo "=== FINAL DIAGNOSTIC ==="
+  echo "Container status:"
+  docker compose -f docker-compose.prod.yml ps | head -10
+  echo ""
+  echo "nginx error logs:"
+  docker logs ppc_nginx --tail 5 2>/dev/null || echo "Cannot fetch nginx logs"
+  echo ""
+  echo "FastAPI logs:"  
+  docker logs ppc_fastapi --tail 5 2>/dev/null || echo "Cannot fetch FastAPI logs"
+  echo ""
+  echo "Direct health check tests:"
+  echo "  FastAPI direct: $(docker exec ppc_fastapi curl -s -m 5 http://localhost:8000/health 2>/dev/null || echo 'TIMEOUT')"
+  echo "  nginx->FastAPI: $(docker exec ppc_nginx curl -s -m 5 http://fastapi:8000/health 2>/dev/null || echo 'TIMEOUT')"
+  echo "  External: $(curl -s -m 5 http://localhost/health 2>/dev/null || echo 'TIMEOUT')"
+  
   return 1
 }
 
