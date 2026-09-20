@@ -58,9 +58,40 @@ export default function PrelanderSlugPage() {
       // Block direct access (pasted URLs) for prelander domains
       if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
         if (!tabAuth && isDirectNavigation) {
-          console.log('[TAB-GUARD] Direct pasted URL detected - redirecting to previous URL');
-          const previousUrl = document.referrer || 'https://www.google.com';
-          window.location.replace(previousUrl);
+          console.log('[TAB-GUARD] Direct pasted URL detected - using browser back');
+          
+          // Try to use referrer if available and valid
+          if (document.referrer && document.referrer !== window.location.href) {
+            try {
+              const referrerUrl = new URL(document.referrer);
+              const currentUrl = new URL(window.location.href);
+              if (referrerUrl.hostname !== currentUrl.hostname) {
+                window.location.replace(document.referrer);
+                return;
+              }
+            } catch {
+              // Invalid referrer, fall through to history.back()
+            }
+          }
+          
+          // No valid referrer - use browser history back
+          if (window.history.length > 1) {
+            window.history.back();
+            // Fallback to close/blank if back doesn't work
+            setTimeout(() => {
+              window.close();
+              setTimeout(() => {
+                if (!document.hidden) {
+                  window.location.replace('about:blank');
+                }
+              }, 200);
+            }, 1000);
+          } else {
+            window.close();
+            setTimeout(() => {
+              window.location.replace('about:blank');
+            }, 200);
+          }
           return;
         }
       }
