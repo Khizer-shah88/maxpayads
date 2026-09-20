@@ -99,10 +99,18 @@ echo "Building Docker images..."
 
 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
 
-# ── Force nginx reload with new configuration ──────────────────────────────────
-echo "Reloading nginx with updated configuration..."
-docker exec ppc_nginx nginx -s reload || echo "nginx reload failed or container not ready"
-sleep 2
+# ── Force nginx restart with new configuration ─────────────────────────────────
+echo "Restarting nginx to ensure new configuration is loaded..."
+docker compose -f docker-compose.prod.yml restart nginx
+sleep 5
+
+# ── Verify nginx is using new configuration ────────────────────────────────────
+echo "Testing nginx configuration..."
+if docker exec ppc_nginx nginx -t; then
+  echo "nginx configuration: VALID"
+else
+  echo "nginx configuration: INVALID - deployment will likely fail"
+fi
 
 # ── Wait for services to be fully ready ────────────────────────────────────────
 echo "Waiting for services to initialize..."
@@ -112,7 +120,7 @@ sleep 10
 wait_for_http() {
   local url="$1"
   local label="$2"
-  local attempts=36
+  local attempts=24  # Reduced from 36 (2 minutes instead of 3)
   local i=1
 
   echo "Waiting for $label..."
@@ -146,7 +154,7 @@ wait_for_http() {
     sleep 5
   done
 
-  echo "$label: NOT READY after $(($attempts * 5)) seconds"
+  echo "$label: NOT READY after $(($attempts * 5)) seconds (2 minutes)"
   
   # Final diagnostic on failure
   echo ""
