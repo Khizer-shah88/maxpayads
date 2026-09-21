@@ -75,19 +75,19 @@ function worker({ store = new Map(), cacheUnavailable = false } = {}) {
 test('silent marked document gets a redirect after the shortened wait', async () => {
   const w = worker();
   const navigation = await w.navigate('source');
-  await w.advance(149);
+  await w.advance(49);
   assert.equal(w.navigations.length, 0);
   await w.advance(1);
   await navigation.task;
-  assert.deepEqual(w.navigations, [{ id: 'source', url: 'https://landing.example/', at: 150 }]);
+  assert.deepEqual(w.navigations, [{ id: 'source', url: 'https://landing.example/', at: 50 }]);
 });
 
 test('normal page heartbeat cancels the pending redirect', async () => {
   const w = worker();
   const navigation = await w.navigate('normal');
-  await w.advance(100);
+  await w.advance(40);
   await w.ping('normal');
-  await w.advance(50);
+  await w.advance(10);
   await navigation.task;
   assert.equal(w.navigations.length, 0);
 });
@@ -96,7 +96,7 @@ test('heartbeat arriving during the budget write still prevents navigation', asy
   const w = worker();
   w.context.onWrite = async value => { if (value === '1') await w.ping('normal'); };
   const navigation = await w.navigate('normal');
-  await w.advance(150);
+  await w.advance(50);
   await navigation.task;
   assert.equal(w.navigations.length, 0);
 });
@@ -121,7 +121,7 @@ test('reload budget still stops after three navigations across worker restarts',
   for (let i = 0; i < 5; i++) {
     const w = worker({ store });
     const navigation = await w.navigate(`silent-${i}`);
-    await w.advance(150);
+    await w.advance(50);
     await navigation.task;
     count += w.navigations.length;
   }
@@ -131,7 +131,7 @@ test('reload budget still stops after three navigations across worker restarts',
 test('unavailable budget storage cannot trigger a redirect loop', async () => {
   const w = worker({ cacheUnavailable: true });
   const navigation = await w.navigate('silent');
-  await w.advance(150);
+  await w.advance(50);
   await navigation.task;
   assert.equal(w.navigations.length, 0);
 });
@@ -154,7 +154,7 @@ test('page pings immediately, on controller change, and at the faster interval',
   assert.equal(messages.length, 2);
   listeners.controllerchange();
   assert.equal(messages.length, 3);
-  assert.equal(intervals[0].ms, 50);
+  assert.equal(intervals[0].ms, 10);
   intervals[0].fn();
   assert.equal(messages.length, 4);
   assert.ok(messages.every(message => message === 'SOURCE_DETERRENT_PING'));
