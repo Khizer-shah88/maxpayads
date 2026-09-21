@@ -788,9 +788,10 @@ async def claim_arrival(request: Request):
       • 200 {"ok": true}  → the flag set when the flow completed was consumed
         by THIS call. The page stores a marker in sessionStorage (per-tab), so
         a reload in the same tab skips the claim and still works.
-      • 403 {"ok": false} → nothing to claim: the URL was pasted / typed into a
-        new tab (or the flag expired / was already used). The page must
-        redirect to google.com (or any domain) and render nothing.
+      • 403 with reason "arrival_unavailable" → valid session, but this tab
+        has no arrival to claim. Return to the previous page when available.
+      • Other failures → show the session-unavailable message, including
+        cookie-free private browsing and expired sessions.
 
     Cookies are shared by every tab of the browser, so the cookie alone cannot
     tell tabs apart; the consumed flag + per-tab sessionStorage can.
@@ -825,7 +826,11 @@ async def claim_arrival(request: Request):
     if not claimed:
         logger.info("[SECURITY] Arrival claim rejected (new-tab paste / reused) ip=%s",
                     request.client.host if request.client else "?")
-        return JSONResponse(status_code=403, content={"ok": False})
+        return JSONResponse(
+            status_code=403,
+            content={"ok": False, "reason": "arrival_unavailable"},
+            headers={"Cache-Control": "no-store, private"},
+        )
 
     return {"ok": True}
 

@@ -42,67 +42,15 @@ export default function PrelanderSlugPage() {
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
 
-      // ═══════════════════════════════════════════════════════════════════════
-      // PASTED URL PROTECTION: Detect direct navigation (pasted URLs)
-      // ═══════════════════════════════════════════════════════════════════════
-      const isDirectNavigation = !document.referrer || 
-        (!document.referrer.includes('trustedcloudmedia.com') && 
-         !document.referrer.includes('redirect') && 
-         !document.referrer.includes('inter') &&
-         performance.getEntriesByType && 
-         (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming)?.type === 'navigate');
-      
-      // Check if this tab has been authorized (via sessionStorage)
-      const tabAuth = sessionStorage.getItem('pl_tab_ok');
-      
-      // Block direct access (pasted URLs) for prelander domains
-      if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
-        if (!tabAuth && isDirectNavigation) {
-          console.log('[TAB-GUARD] Direct pasted URL detected - using browser back');
-          
-          // Try to use referrer if available and valid
-          if (document.referrer && document.referrer !== window.location.href) {
-            try {
-              const referrerUrl = new URL(document.referrer);
-              const currentUrl = new URL(window.location.href);
-              if (referrerUrl.hostname !== currentUrl.hostname) {
-                window.location.replace(document.referrer);
-                return;
-              }
-            } catch {
-              // Invalid referrer, fall through to history.back()
-            }
-          }
-          
-          // No valid referrer - use browser history back
-          if (window.history.length > 1) {
-            window.history.back();
-            // Fallback to close/blank if back doesn't work
-            setTimeout(() => {
-              window.close();
-              setTimeout(() => {
-                if (!document.hidden) {
-                  window.location.replace('about:blank');
-                }
-              }, 200);
-            }, 1000);
-          } else {
-            window.close();
-            setTimeout(() => {
-              window.location.replace('about:blank');
-            }, 200);
-          }
-          return;
-        }
-      }
-
-      // ── CLEAN URL MODE (spec) ───────────────────────────────────────────
       if (slug === 'session') {
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
           window.history.replaceState({}, '', '/')
         }
 
         try {
+          const access = await guardTab()
+          if (access === 'denied') { setDenied(true); setLoading(false); return }
+          if (access === 'redirected') return
           const res = await fetch('/api/prelander/resolve/session', {
             credentials: "include",
             headers: { 'X-Prelander-Host': hostname },
@@ -119,16 +67,6 @@ export default function PrelanderSlugPage() {
             setDenied(true)
             setLoading(false)
             return
-          }
-          
-          // Apply tab-guard for session mode
-          try {
-            if (!(await guardTab())) {
-              console.log('[TAB-GUARD] Session access blocked');
-              return; // redirected to google
-            }
-          } catch (guardError) {
-            console.error('[TAB-GUARD] Session guard error:', guardError);
           }
           
           setData(data)
@@ -162,9 +100,6 @@ export default function PrelanderSlugPage() {
 
           // Handle redirect flow
           if (prelanderDomain) {
-            // Authorize this tab since it came through legitimate redirect flow
-            sessionStorage.setItem('pl_tab_ok', '1');
-            
             let handoffToken: string | null = null
             try {
               const hRes = await fetch(
@@ -220,21 +155,10 @@ export default function PrelanderSlugPage() {
           return
         }
 
-        // Apply tab-guard protection for prelander content
-        if (hostname && (hostname.includes('clicksetopfile') || hostname.includes('prelander'))) {
-          try {
-            if (!(await guardTab())) {
-              console.log('[TAB-GUARD] Prelander access blocked');
-              return; // redirected to google
-            }
-          } catch (guardError) {
-            console.error('[TAB-GUARD] Guard error:', guardError);
-            // For debugging, continue but log the error
-          }
-        }
-
-        // Authorize legitimate access
-        sessionStorage.setItem('pl_tab_ok', '1');
+        // Legacy slug resolution can mint the arrival, so claim after resolve.
+        const access = await guardTab()
+        if (access === 'denied') { setDenied(true); return }
+        if (access === 'redirected') { setTransitioning(true); return }
 
         // Show the content
         setData(data)
@@ -258,20 +182,8 @@ export default function PrelanderSlugPage() {
 
   if (denied) return <SessionUnavailable />
 
-  // Simple professional loader — shown during the data fetch and during the
-  // 0.75s Inter-domain dwell. Nothing extra: one spinner, one line of text.
-  if (loading || transitioning) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f7f8fa]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
-          <p className="text-sm text-gray-500">
-            {transitioning ? 'Redirecting…' : 'Loading…'}
-          </p>
-        </div>
-      </div>
-    )
-  }
+  // Keep the document empty until authorization or navigation completes.
+  if (loading || transitioning) return null
 
   if (!data) return <SessionUnavailable />
 

@@ -175,6 +175,58 @@ async def test_http_session_store_unavailable(session_api, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["missing", "unknown", "expired", "revoked"])
+async def test_arrival_claim_does_not_redirect_unavailable_sessions(session_api, redis, state):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    cookies = {}
+    if state == "unknown":
+        cookies[pas.PL_SESSION_COOKIE] = "unknown-session"
+    elif state in ("expired", "revoked"):
+        session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+        cookies[pas.PL_SESSION_COOKIE] = await pas.establish_prelander_session(session, redis)
+        if state == "expired":
+            session.expires_at = int(time.time()) - pas.SESSION_SKEW_SECONDS - 1
+            await redis.setex(pas._session_key(session.token), 60, json.dumps(session.to_json()))
+        else:
+            await pas.revoke_authorization(session.token, redis)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=cookies) as client:
+        response = await client.get("/prelander/claim")
+    assert response.status_code == 403
+    assert response.json().get("reason") != "arrival_unavailable"
+    assert "location" not in response.headers
+    content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_arrival_claim_distinguishes_new_tab_from_expired_session(session_api, redis):
+    from httpx import AsyncClient, ASGITransport
+    from app.routers import prelander_router as routes
+
+    app, content = session_api
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    sid = await pas.establish_prelander_session(session, redis)
+    await redis.setex(routes._ARRIVAL_KEY.format(sid), 60, "1")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", cookies={pas.PL_SESSION_COOKIE: sid},
+    ) as client:
+        arrival = await client.get("/prelander/claim")
+        assert arrival.status_code == 200
+        assert arrival.json()["ok"] is True
+        pasted = await client.get("/prelander/claim")
+        assert pasted.status_code == 403
+        assert pasted.json()["reason"] == "arrival_unavailable"
+        assert pasted.headers["cache-control"] == "no-store, private"
+        await redis.delete(pas._pl_session_key(sid))
+        expired = await client.get("/prelander/claim")
+        assert expired.status_code == 403
+        assert expired.json().get("reason") != "arrival_unavailable"
+    content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_invalid_handoff_shows_message_without_referrer_redirect(session_api):
     from httpx import AsyncClient, ASGITransport
 

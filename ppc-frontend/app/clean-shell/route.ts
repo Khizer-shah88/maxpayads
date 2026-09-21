@@ -1,6 +1,7 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session';
 import { sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
+import { createTabGuard } from '@/lib/tab-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,10 +17,6 @@ const PRELANDER_CSP =
 // docker-compose flip of the flag takes effect.
 const SOURCE_DETERRENT_SCRIPT = sourceDeterrentScriptTag();
 
-// Where a pasted / typed / new-tab prelander URL is sent. Uses browser history
-// back instead of forcing an external URL, providing natural navigation behavior.
-const PASTE_BLOCK_BEHAVIOR = 'history-back'; // Options: 'history-back' | 'close-tab' | url string
-
 const SHELL_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,9 +28,6 @@ const SHELL_HTML = `<!DOCTYPE html>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantaveil, Cantarell, sans-serif; background: #f0f2f5; }
   .pl-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
-  .pl-spin { width: 32px; height: 32px; border: 2px solid #e5e7eb; border-top-color: #1f2937; border-radius: 50%; animation: pl-rot 1s linear infinite; }
-  .pl-msg { font-size: 14px; color: #6b7280; }
-  @keyframes pl-rot { to { transform: rotate(360deg); } }
   .pl-card { width: 100%; max-width: 440px; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; }
   .pl-card.pl-mac-card { max-width: 640px; }
   .pl-head { padding: 32px 24px 20px; text-align: center; }
@@ -68,18 +62,12 @@ const SHELL_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <div class="pl-wrap" id="pl-loader">
-    <div class="pl-spin"></div>
-    <p class="pl-msg">Loading&hellip;</p>
-  </div>
   <div id="pl-root" hidden></div>
   ${SOURCE_DETERRENT_SCRIPT}
   <script>
   ;(async function () {
     var d = document
-    function stop () { var l = d.getElementById('pl-loader'); if (l && l.parentNode) l.parentNode.removeChild(l) }
     function deny () {
-      stop()
       d.title = '${SESSION_UNAVAILABLE_TITLE}'
       var root = d.getElementById('pl-root')
       var heading = d.createElement('h1')
@@ -119,68 +107,13 @@ const SHELL_HTML = `<!DOCTYPE html>
         setTimeout(function () { b.classList.remove('pl-done') }, 2000)
       })
     }
-    // One-time arrival claim. Returns true only for the first tab that came
-    // through the redirect flow (or a reload of that same tab). Any other tab
-    // -- e.g. the prelander URL pasted into a new tab -- uses browser history
-    // to navigate back to the previous page instead of forcing Google redirect.
-    var TAB_KEY = 'pl_tab_ok'
-    async function guardTab () {
-      try {
-        // Reload in the same tab: marker already present -> allowed.
-        try { if (sessionStorage.getItem(TAB_KEY)) return true } catch (e) {}
-        // First load after the redirect flow: consume the one-time flag.
-        var r = await fetch('/api/prelander/claim', { credentials: 'include', cache: 'no-store' })
-        if (r && r.ok) {
-          try { sessionStorage.setItem(TAB_KEY, '1') } catch (e) {}
-          return true
-        }
-      } catch (e) { /* network / storage error -> treat as not allowed */ }
-      
-      // Pasted into a new tab (or flag expired / reused) -> smart redirect
-      // Priority: referrer -> history.back() -> close tab -> about:blank
-      try {
-        // Try referrer first (when pasting over existing page)
-        if (document.referrer && document.referrer !== location.href) {
-          try {
-            var refUrl = new URL(document.referrer)
-            var currUrl = new URL(location.href)
-            // Don't redirect to same domain (avoid loops)
-            if (refUrl.hostname !== currUrl.hostname) {
-              console.log('[TAB-GUARD] Redirecting to referrer:', document.referrer)
-              location.replace(document.referrer)
-              return false
-            }
-          } catch (e) {}
-        }
-        
-        // No valid referrer - use browser history back
-        console.log('[TAB-GUARD] Using browser history back')
-        if (window.history.length > 1) {
-          window.history.back()
-          // Fallback: close tab if back doesn't work
-          setTimeout(function() {
-            window.close()
-            setTimeout(function() {
-              if (!document.hidden) {
-                location.replace('about:blank')
-              }
-            }, 200)
-          }, 1000)
-        } else {
-          // No history - try to close tab
-          window.close()
-          setTimeout(function() {
-            location.replace('about:blank')
-          }, 200)
-        }
-      } catch (e) {
-        // Fallback to about:blank on any error
-        try { location.replace('about:blank') } catch (e2) {}
-      }
-      return false
-    }
+    var guardTab = (${createTabGuard.toString()})()
 
     try {
+      // Reject another tab before resolving templates or campaign content.
+      var access = await guardTab()
+      if (access === 'denied') return deny()
+      if (access === 'redirected') return
       var res = await fetch('/api/prelander/resolve/session', {
         cache: 'no-store',
         credentials: 'same-origin',
@@ -190,13 +123,6 @@ const SHELL_HTML = `<!DOCTYPE html>
       if (res.status === 204 || !res.ok) return deny()
       var data = await res.json()
       if (!data || !data.success) return deny()
-      // New-tab / pasted-URL protection: only the tab that ARRIVED through the
-      // redirect flow may render. A reload in the SAME tab keeps its
-      // sessionStorage marker; a fresh tab has none and the one-time arrival
-      // flag was already consumed by the first tab -> redirect away, render
-      // nothing. Cookies are shared across tabs, so the cookie alone can't tell
-      // tabs apart; the consumed flag + per-tab sessionStorage can.
-      if (!(await guardTab())) return
       // CLEAN FINAL URL: bare root, no slug, no ids, no params.
       if (location.pathname !== '/' || location.search) {
         try { history.replaceState({}, '', '/') } catch (e) {}
@@ -249,7 +175,6 @@ const SHELL_HTML = `<!DOCTYPE html>
       }
       root.hidden = false
       wire(root)
-      stop()
     } catch (e) { deny() }
   })()
   </script>
