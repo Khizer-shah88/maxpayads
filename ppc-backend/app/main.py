@@ -29,6 +29,7 @@ from app.routers import (
 )
 from app.routers import offer_router, landing_page_router, prelander_router, redirection_domain_router
 from app.routers import prelander_public_router
+from app.routers import prelander_template_router
 from app.routers import direct_link_router, direct_link_stats_router, redirect_chain_router, public_stats_router, stats_profile_router
 from app.routers import smartlink_structure_router
 
@@ -107,6 +108,7 @@ app.include_router(landing_page_router.router)
 app.include_router(prelander_router.router)
 app.include_router(redirection_domain_router.router)
 app.include_router(prelander_public_router.router)  # Public prelander rendering
+app.include_router(prelander_template_router.router)  # Admin prelander template CRUD (frontend /admin/prelander-templates)
 # direct_link_stats_router BEFORE direct_link_router: it owns the literal
 # /direct-links/manual-conversions|stats-profiles|stats/... routes. FastAPI
 # matches routes in registration order — with direct_link_router first, its

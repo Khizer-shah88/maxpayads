@@ -76,7 +76,7 @@ export default function PrlanderTemplatesPage() {
       })
       setTemplates(res.data?.templates ?? [])
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to load templates')
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to load templates')
     } finally {
       setLoading(false)
     }
@@ -143,7 +143,7 @@ export default function PrlanderTemplatesPage() {
       setModal(null)
       load()
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Save failed')
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Save failed')
     } finally {
       setSaving(false)
     }
