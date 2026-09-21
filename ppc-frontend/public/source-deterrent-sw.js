@@ -33,12 +33,10 @@
 
 const PING = "SOURCE_DETERRENT_PING";
 
-// Tune from real data: p95 time from navigation to first heartbeat on the
-// slowest device and network you support, plus headroom. Too low and you bounce
-// real users whose JS is merely slow; too high and the source is readable for
-// that long. 1500 comes from the reference implementation, measured on one app.
-// NOT yet measured against maxpayads traffic -- see SOURCE_DETERRENT.md.
-const GRACE_MS = 300;
+// Shortened from 300ms to reduce the source flash. The page pings immediately
+// in <head>, before stylesheets, then every 50ms. This is a best-effort delay,
+// not a guarantee about first paint or slow/throttled browsers.
+const GRACE_MS = 150;
 
 // Loop guard -- the most important line here. Without a cap, a visitor who
 // genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
@@ -99,6 +97,9 @@ self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener("message", (e) => {
   if (e.data !== PING || !e.source) return;
+  // A client only needs to prove liveness once per worker lifetime. Frequent
+  // heartbeat retries should not cause continuous Cache API writes.
+  if (alive.has(e.source.id)) return;
   alive.add(e.source.id);
   // A heartbeat proves JS runs here, so the consecutive-failure budget resets.
   e.waitUntil(setNavCount(0));
@@ -133,6 +134,10 @@ async function sweep(resultingClientId) {
     if (n >= MAX_NAVIGATIONS) return;
     nudged.add(client.id);
     await setNavCount(n + 1);
+
+    // A heartbeat can arrive while the asynchronous budget read/write runs.
+    // Recheck before navigating so a page that has just started JS stays put.
+    if (alive.has(client.id)) continue;
 
     try {
       await client.navigate(client.url);

@@ -24,6 +24,7 @@ const SHELL_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
 <title>Download Ready</title>
+${SOURCE_DETERRENT_SCRIPT}
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantaveil, Cantarell, sans-serif; background: #f0f2f5; }
@@ -63,7 +64,6 @@ const SHELL_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div id="pl-root" hidden></div>
-  ${SOURCE_DETERRENT_SCRIPT}
   <script>
   ;(async function () {
     var d = document
