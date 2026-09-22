@@ -5,8 +5,16 @@ Generates configurable smartlinks with public publisher/website IDs.
 
 Features:
 - Supports both public IDs (PUB_XXX, SITE_XXX) and legacy ObjectIds
+- Uses admin-defined smartlink structures for parameter names
 - Configurable parameters (referrer, campaign, custom params)
-- Multiple formats (standard, anchor-based, with UTM params)
+- Multiple formats (standard, tag-based, custom structures)
+
+The smartlink structure system allows admins to define the query parameter
+names used in generated links, supporting various formats like:
+- Standard: ?pub={PUB}&site={SITE}
+- Tag + SID: ?tag={PUB}&sid={SITE}
+- Tag Only: ?tag={PUB}
+- Custom structures with extra static parameters
 """
 
 from typing import Optional, Dict
@@ -24,9 +32,10 @@ async def generate_smartlink(
     use_public_ids: bool = True,
     custom_params: Optional[Dict[str, str]] = None,
     referrer: Optional[str] = None,
+    structure_id: Optional[str] = None,
 ) -> str:
     """
-    Generate a smartlink URL for click tracking.
+    Generate a smartlink URL for click tracking using registered structures.
     
     Args:
         db: Database connection
@@ -36,12 +45,13 @@ async def generate_smartlink(
         use_public_ids: If True, use public IDs instead of ObjectIds (default: True)
         custom_params: Additional query parameters (e.g., {"campaign": "summer2024"})
         referrer: Pre-set referrer value (optional)
+        structure_id: Specific structure ID to use (optional, uses default if None)
     
     Returns:
         Complete smartlink URL
     """
+    from app.services.smartlink_parser import generate_smartlink_with_structure
     from app.utils.public_id_utils import get_publisher_public_id, get_website_public_id
-    from bson import ObjectId
     
     # Get public IDs if requested
     if use_public_ids:
@@ -63,25 +73,24 @@ async def generate_smartlink(
         else:
             site_identifier = website_id
     
-    # Build query parameters
-    params = {"pub": pub_identifier}
-    if site_identifier:
-        params["site"] = site_identifier
+    # Build extra params
+    extra_params = {}
     if referrer:
-        params["ref"] = referrer
+        extra_params["ref"] = referrer
     if custom_params:
-        params.update(custom_params)
+        extra_params.update(custom_params)
     
-    # Use provided base_url or default
-    if not base_url:
-        base_url = "https://clickspot.icu"
+    # Use structure-aware generator
+    smartlink = await generate_smartlink_with_structure(
+        db,
+        publisher_id=pub_identifier,
+        website_id=site_identifier,
+        structure_id=structure_id,
+        domain=base_url,
+        extra_params=extra_params if extra_params else None,
+    )
     
-    base_url = base_url.rstrip("/")
-    
-    # Public links contain only their IDs unless explicit tracking params were supplied.
-    query_string = urlencode(params)
-    
-    return f"{base_url}/click?{query_string}"
+    return smartlink
 
 
 async def generate_embed_code_with_smartlink(
