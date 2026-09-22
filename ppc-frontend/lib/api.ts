@@ -169,6 +169,8 @@ export const prlanderTemplateApi = {
   getAll: (params?: { status?: string; os_type?: string }) =>
     api.get('/prelander-templates', { params }),
   get: (id: string) => api.get(`/prelander-templates/${id}`),
+  assignDomains: (id: string, domainIds: string[]) =>
+    api.put(`/prelander-templates/${id}/domains`, { domain_ids: domainIds }),
   create: (data: object) => api.post('/prelander-templates', data),
   update: (id: string, data: object) => api.put(`/prelander-templates/${id}`, data),
   setStatus: (id: string, status: string) =>

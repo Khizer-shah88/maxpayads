@@ -59,16 +59,16 @@ async def render_prelander(
     # Get template based on domain or use default
     host = request.headers.get("host", "").split(":")[0].lower()
     template_doc = None
+    from app.core.glossary import normalize_os
+    os_hint = normalize_os(context.os, default=None)
     
     if host:
-        template_doc = await get_template_for_domain(db, host)
+        template_doc = await get_template_for_domain(db, host, os_hint=os_hint)
     
     if not template_doc:
         # Fall back to the OS Default Template. The hint must be an OS name
         # ("windows"/"mac"/"both"), NOT the hostname — passing the host here
         # made the OS-specific default lookup never match.
-        from app.core.glossary import normalize_os
-        os_hint = normalize_os(context.os, default=None)
         template_doc = await get_default_template(db, os_hint=os_hint)
     
     if not template_doc or not template_doc.get("full_html_template"):

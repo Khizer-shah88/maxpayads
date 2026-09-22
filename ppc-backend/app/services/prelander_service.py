@@ -378,7 +378,7 @@ class PrelanderTemplateEngine:
             }
 
 
-async def get_template_for_domain(db, domain: str) -> Optional[Dict[str, Any]]:
+async def get_template_for_domain(db, domain: str, os_hint: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get active template assigned to a Prelander domain.
     Returns None if domain not found, inactive, or template is inactive/deleted.
@@ -409,8 +409,10 @@ async def get_template_for_domain(db, domain: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
-    # Domain OS hint (from the domain doc's template field)
-    os_hint = domain_doc.get("template")  # "windows" | "mac" | "default"
+    # A pinned domain OS wins; Auto follows the visitor's OS for default lookup.
+    domain_os = domain_doc.get("template")  # "windows" | "mac" | "default"
+    if domain_os in ("windows", "mac"):
+        os_hint = domain_os
     return await get_default_template(db, os_hint=os_hint)
 
 

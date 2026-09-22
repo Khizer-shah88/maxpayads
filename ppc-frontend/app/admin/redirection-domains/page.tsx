@@ -10,7 +10,7 @@ import Sidebar from '@/components/shared/Sidebar'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi } from '@/lib/api'
+import { adminApi, prlanderTemplateApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { RedirectionDomain, RedirectionDomainType, Publisher } from '@/types'
 
@@ -55,6 +55,7 @@ const EMPTY_FORM = {
   is_default: false,
   status: 'active' as 'active' | 'paused',
   template: 'default' as 'default' | 'windows' | 'mac',
+  template_id: '',
   weight: 100,
   notes: '',
 }
@@ -85,6 +86,7 @@ export default function RedirectionDomainsPage() {
   const { initialize } = useAuth()
   const [domains, setDomains] = useState<RedirectionDomain[]>([])
   const [publishers, setPublishers] = useState<Publisher[]>([])
+  const [templates, setTemplates] = useState<{ id: string; name: string; status: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<RedirectionDomainType>('anchor')
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
@@ -104,11 +106,13 @@ export default function RedirectionDomainsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [domRes, pubRes] = await Promise.all([
+      const [domRes, pubRes, tplRes] = await Promise.all([
         adminApi.getRedirectionDomains(),
         adminApi.getPublishers({ limit: 200 }),
+        prlanderTemplateApi.getAll(),
       ])
       setDomains(domRes.data?.domains ?? [])
+      setTemplates(tplRes.data?.templates ?? [])
       setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')
       setPublishers(((pubRes.data?.publishers) ?? []).filter((p: Publisher) => p.role !== 'admin'))
     } catch (err: any) {
@@ -141,6 +145,7 @@ export default function RedirectionDomainsPage() {
       is_default: d.is_default,
       status: d.status,
       template: d.template || 'default',
+      template_id: d.template_id || '',
       weight: (d as any).weight ?? 100,
       notes: d.notes || '',
     })
@@ -163,7 +168,10 @@ export default function RedirectionDomainsPage() {
     }
     setSaving(true)
     try {
-      const payload = { ...form }
+      const payload = {
+        ...form,
+        template_id: form.domain_type === 'prelander' ? form.template_id || null : null,
+      }
       if (modal === 'edit' && editId) {
         const res = await adminApi.updateRedirectionDomain(editId, payload)
         // Update in place instead of full reload
@@ -275,7 +283,11 @@ export default function RedirectionDomainsPage() {
       key: 'template',
       label: 'Template',
       render: (d: RedirectionDomain) => (
-        <span className="text-xs font-medium text-gray-600 capitalize">{d.template || 'default'}</span>
+        <span className="text-xs font-medium text-gray-600">
+          {d.template_id
+            ? templates.find(t => t.id === d.template_id)?.name || 'Unavailable template (using default)'
+            : 'OS default template'}
+        </span>
       ),
     }, {
       key: 'weight',
@@ -461,8 +473,28 @@ export default function RedirectionDomainsPage() {
 
                 {form.domain_type === 'prelander' && (
                   <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label htmlFor="prelander-template" className="block text-sm font-medium text-gray-900 mb-1">Prelander template</label>
+                      <select
+                        id="prelander-template"
+                        value={form.template_id}
+                        onChange={e => setForm(p => ({ ...p, template_id: e.target.value }))}
+                        className={inputClass}
+                      >
+                        <option value="">OS default template</option>
+                        {form.template_id && !templates.some(t => t.id === form.template_id) && (
+                          <option value={form.template_id} disabled>Unavailable template (using default)</option>
+                        )}
+                        {templates.map(t => (
+                          <option key={t.id} value={t.id} disabled={t.status !== 'active'}>
+                            {t.name}{t.status !== 'active' ? ` (${t.status}, using default)` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">This domain uses the selected active template. Choose OS default to remove the assignment.</p>
+                    </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-900 mb-1">Page template</label>
+                      <label className="block text-sm font-medium text-gray-900 mb-1">Page OS / default fallback</label>
                       <select
                         value={form.template}
                         onChange={e => setForm(p => ({ ...p, template: e.target.value as typeof form.template }))}

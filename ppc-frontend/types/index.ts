@@ -218,6 +218,7 @@ export interface RedirectionDomain {
   is_default: boolean
   status: RedirectionDomainStatus
   template: PrelanderTemplateChoice
+  template_id?: string | null
   weight?: number
   dns_status: DnsStatus
   dns_checked_at?: string | null

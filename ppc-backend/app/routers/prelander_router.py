@@ -1087,7 +1087,7 @@ async def _get_prelander_data(
             # steps; None means no active template exists at all → the visitor
             # skips the prelander (flagged in the response below).
             try:
-                template_doc = await get_template_for_domain(db, normalized_host)
+                template_doc = await get_template_for_domain(db, normalized_host, os_hint=os_lower)
             except Exception as e:
                 logger.warning(
                     "[PRELANDER] Template lookup failed for %s: %s", normalized_host, e

@@ -3,14 +3,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, LayoutTemplate, Eye, EyeOff, Archive,
-  CheckCircle, MonitorSmartphone, Star, X,
+  CheckCircle, MonitorSmartphone, Star, X, Globe2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { prlanderTemplateApi } from '@/lib/api'
+import { adminApi, prlanderTemplateApi } from '@/lib/api'
+import type { RedirectionDomain } from '@/types'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── types ────────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ interface PrlanderTemplate {
   created_at?: string | null
   updated_at?: string | null
   used_by?: { id: string; name: string; lander_url: string; status: string }[]
+  assigned_domains?: { id: string; domain: string; status: string }[]
 }
 
 // Spec: the template form collects Template Name, Internal Notes and Status,
@@ -65,6 +67,11 @@ export default function PrlanderTemplatesPage() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PrlanderTemplate | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [assignmentTarget, setAssignmentTarget] = useState<PrlanderTemplate | null>(null)
+  const [domains, setDomains] = useState<RedirectionDomain[]>([])
+  const [domainIds, setDomainIds] = useState<string[]>([])
+  const [assignmentLoading, setAssignmentLoading] = useState(false)
+  const [assignmentSaving, setAssignmentSaving] = useState(false)
 
   useEffect(() => { initialize() }, [initialize])
 
@@ -159,6 +166,39 @@ export default function PrlanderTemplatesPage() {
     }
   }
 
+  const openAssignments = async (t: PrlanderTemplate) => {
+    setAssignmentTarget(t)
+    setAssignmentLoading(true)
+    setDomains([])
+    setDomainIds([])
+    try {
+      const res = await adminApi.getRedirectionDomains({ domain_type: 'prelander' })
+      const available: RedirectionDomain[] = res.data?.domains ?? []
+      setDomains(available)
+      setDomainIds(available.filter(d => d.template_id === t.id).map(d => d.id))
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to load prelander domains')
+      setAssignmentTarget(null)
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }
+
+  const saveAssignments = async () => {
+    if (!assignmentTarget) return
+    setAssignmentSaving(true)
+    try {
+      await prlanderTemplateApi.assignDomains(assignmentTarget.id, domainIds)
+      toast.success('Prelander domain assignments saved')
+      setAssignmentTarget(null)
+      await load()
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to save assignments')
+    } finally {
+      setAssignmentSaving(false)
+    }
+  }
+
   const handlePreview = async (t: PrlanderTemplate) => {
     try {
       const res = await prlanderTemplateApi.preview(t.id, { os: t.os_type === 'both' ? 'windows' : t.os_type })
@@ -212,7 +252,7 @@ export default function PrlanderTemplatesPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Prelander Templates</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Design templates for the <code className="bg-gray-100 px-1 rounded">/d/&#123;slug&#125;</code> landing page — separate from Landing Pages and Domains
+              Design prelander templates and assign them to the domains where they should appear.
             </p>
           </div>
           <button onClick={openCreate}
@@ -277,6 +317,12 @@ export default function PrlanderTemplatesPage() {
                 </div>
 
                 {/* Usage */}
+                <div className="text-xs text-gray-500 space-y-1">
+                  <p className="font-medium">Assigned to {t.assigned_domains?.length ?? 0} prelander domain(s)</p>
+                  {(t.assigned_domains || []).map(d => (
+                    <p key={d.id} className="font-mono break-all">{d.domain}{d.status !== 'active' ? ` (${d.status})` : ''}</p>
+                  ))}
+                </div>
                 <div className="flex items-center justify-between text-xs text-gray-400">
                   <span className="flex items-center gap-1">
                     <CheckCircle size={12} className={t.usage_count > 0 ? 'text-emerald-500' : ''} />
@@ -285,6 +331,10 @@ export default function PrlanderTemplatesPage() {
                 </div>
 
                 {/* Actions */}
+                <button onClick={() => openAssignments(t)}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20">
+                  <Globe2 size={13} /> Assign Domains
+                </button>
                 <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
                   <button onClick={() => openView(t)}
                     className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-50 border border-gray-200 transition-colors">
@@ -334,6 +384,47 @@ export default function PrlanderTemplatesPage() {
         )}
 
         {/* ── Create / Edit Modal ─────────────────────────────────────────── */}
+        {assignmentTarget && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div role="dialog" aria-modal="true" aria-labelledby="assignment-title" className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl max-h-[90vh] overflow-y-auto">
+              <h3 id="assignment-title" className="text-lg font-bold text-gray-900">Assign Domains — {assignmentTarget.name}</h3>
+              <p className="text-sm text-gray-500 mt-2 mb-4">Selected domains will use this template. Unchecking an assigned domain restores its OS default. Selecting a domain with another template replaces that assignment.</p>
+              {assignmentTarget.status !== 'active' && (
+                <p className="text-sm text-amber-700 mb-4">This template is {assignmentTarget.status}. Assigned domains use their default until it is active.</p>
+              )}
+              {assignmentLoading ? <Spinner size={20} /> : domains.length === 0 ? (
+                <p className="text-sm text-gray-500">No prelander domains found. <a href="/admin/redirection-domains" className="text-primary underline">Add a prelander domain</a> first.</p>
+              ) : (
+                <div className="space-y-2">
+                  {domains.map(d => (
+                    <label key={d.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl cursor-pointer">
+                      <input type="checkbox" checked={domainIds.includes(d.id)} disabled={assignmentSaving}
+                        onChange={e => setDomainIds(previous => e.target.checked ? [...previous, d.id] : previous.filter(id => id !== d.id))}
+                        className="rounded border-gray-300 text-primary" />
+                      <span className="min-w-0 text-sm">
+                        <span className="block font-mono break-all text-gray-900">{d.domain}</span>
+                        <span className="block text-xs text-gray-500">
+                          {d.template_id === assignmentTarget.id ? 'Assigned to this template' : d.template_id
+                            ? `Current template: ${templates.find(t => t.id === d.template_id)?.name || 'another template'}` : 'OS default template'}
+                          {d.status !== 'active' ? ` · Domain ${d.status}` : ''}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-3 mt-6">
+                <button onClick={saveAssignments} disabled={assignmentLoading || assignmentSaving || domains.length === 0}
+                  className="flex-1 bg-primary text-white py-2.5 rounded-xl text-sm font-semibold disabled:bg-gray-300">
+                  {assignmentSaving ? 'Saving…' : 'Save Assignments'}
+                </button>
+                <button onClick={() => setAssignmentTarget(null)} disabled={assignmentLoading || assignmentSaving}
+                  className="flex-1 py-2.5 rounded-xl text-sm text-gray-600 border border-gray-200 disabled:opacity-50">Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {(modal === 'create' || modal === 'edit') && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
@@ -488,6 +579,13 @@ export default function PrlanderTemplatesPage() {
                 )}
 
                 {/* Landing pages using this template */}
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Assigned prelander domains</p>
+                  {(selected.assigned_domains || []).map(d => (
+                    <p key={d.id} className="text-sm font-mono text-gray-600 break-all">{d.domain}{d.status !== 'active' ? ` (${d.status})` : ''}</p>
+                  ))}
+                  {!selected.assigned_domains?.length && <p className="text-sm text-gray-400">No domains explicitly assigned.</p>}
+                </div>
                 {(selected.used_by?.length ?? 0) > 0 && (
                   <div>
                     <p className="text-sm font-semibold text-gray-700 mb-2">

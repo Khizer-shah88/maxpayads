@@ -47,9 +47,10 @@ from typing import Optional
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.glossary import domain_type_filter
 from app.dependencies import get_db, get_current_admin
 from app.schemas.prelander_template_schema import (
     PrlanderTemplateCreate,
@@ -147,6 +148,24 @@ async def _usage_info(db, templates: list) -> dict:
     return usage
 
 
+async def _domain_assignments(db, template_ids: list[str]) -> dict:
+    """Read the same domain.template_id binding used by the visitor renderer."""
+    assignments = {template_id: [] for template_id in template_ids}
+    if not template_ids:
+        return assignments
+    cursor = db.redirection_domains.find({
+        "domain_type": domain_type_filter("prelander"),
+        "template_id": {"$in": template_ids + [ObjectId(value) for value in template_ids]},
+    })
+    async for domain in cursor:
+        assignments[str(domain["template_id"])].append({
+            "id": str(domain["_id"]),
+            "domain": domain.get("domain", ""),
+            "status": domain.get("status", "active"),
+        })
+    return assignments
+
+
 def _validate_html_payload(html: Optional[str]) -> dict:
     """
     Validate the full HTML template with the live rendering engine.
@@ -226,10 +245,12 @@ async def list_templates(
     cursor = db.prelander_templates.find(query).sort("created_at", -1)
     templates = [serialize_template(t) async for t in cursor]
     usage = await _usage_info(db, templates)
+    assignments = await _domain_assignments(db, [t["id"] for t in templates])
     for t in templates:
         info = usage.get(t["id"], {})
         t["usage_count"] = info.get("count", 0)
         t["used_by"] = info.get("pages", [])
+        t["assigned_domains"] = assignments[t["id"]]
     return {"success": True, "templates": templates, "total": len(templates)}
 
 
@@ -248,7 +269,51 @@ async def get_template(
     info = usage.get(tpl["id"], {})
     tpl["usage_count"] = info.get("count", 0)
     tpl["used_by"] = info.get("pages", [])
+    tpl["assigned_domains"] = (await _domain_assignments(db, [tpl["id"]]))[tpl["id"]]
     return {"success": True, "template": tpl}
+
+
+class TemplateDomainAssignment(BaseModel):
+    domain_ids: list[str] = Field(max_length=1000)
+
+
+@router.put("/{template_id}/domains")
+async def assign_template_domains(
+    template_id: str,
+    data: TemplateDomainAssignment,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """Assign this template to selected prelander domains without changing defaults."""
+    oid = _tpl_oid(template_id)
+    if not await db.prelander_templates.find_one({"_id": oid}):
+        raise NotFoundError("Prelander Template")
+    try:
+        domain_ids = list({ObjectId(value) for value in data.domain_ids})
+    except (InvalidId, TypeError):
+        raise ValidationError("Invalid prelander domain ID")
+    domain_filter = {"domain_type": domain_type_filter("prelander")}
+    # Validate the entire selection before changing any assignment.
+    found = [d async for d in db.redirection_domains.find({
+        **domain_filter, "_id": {"$in": domain_ids},
+    })]
+    if len(found) != len(domain_ids):
+        raise ValidationError("Select existing prelander domains only")
+    now = datetime.utcnow()
+    if domain_ids:
+        await db.redirection_domains.update_many(
+            {**domain_filter, "_id": {"$in": domain_ids}},
+            {"$set": {"template_id": str(oid), "updated_at": now}},
+        )
+    # Only clear bindings belonging to THIS template; others remain untouched.
+    await db.redirection_domains.update_many(
+        {**domain_filter, "template_id": {"$in": [str(oid), oid]}, "_id": {"$nin": domain_ids}},
+        {"$set": {"template_id": None, "updated_at": now}},
+    )
+    return {
+        "success": True,
+        "assigned_domains": (await _domain_assignments(db, [str(oid)]))[str(oid)],
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
