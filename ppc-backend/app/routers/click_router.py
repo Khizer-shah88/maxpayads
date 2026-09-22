@@ -54,8 +54,12 @@ def _invalid_link_response() -> HTMLResponse:
 @router.get("/click")
 async def track_click(
     request: Request,
-    pub: str = Query(..., description="Publisher ID (ObjectId or public_id PUB_XXXXXXXX)"),
-    site: Optional[str] = Query(None, description="Website ID (ObjectId or public_id SITE_XXXXXXXX)"),
+    # NOTE: pub and site are now OPTIONAL — we parse dynamically from structures
+    pub: Optional[str] = Query(None, description="Publisher ID (legacy parameter, auto-detected)"),
+    site: Optional[str] = Query(None, description="Website ID (legacy parameter, auto-detected)"),
+    # Alternative structure parameters (will be auto-detected)
+    tag: Optional[str] = Query(None, description="Publisher ID (alternative parameter)"),
+    sid: Optional[str] = Query(None, description="Website ID (alternative parameter)"),
     hmac_token: Optional[str] = Query(None, alias="hmac", description="System-generated link signature (Smartlink signing)"),
     nonce: Optional[str] = Query(None, alias="n", description="Per-link nonce folded into the signature"),
     db=Depends(get_db),
@@ -75,8 +79,11 @@ async def track_click(
     The endpoint itself only turns the resolved context into a response, so the
     flow stays in one traceable place rather than spread across the handler.
 
-    Backward compatible: accepts ?pub=ObjectId&site=ObjectId as well as
-    ?pub=PUB_XXXXXXXX&site=SITE_XXXXXXXX.
+    Dynamically supports multiple smartlink structures:
+    - Standard: ?pub={PUB}&site={SITE}
+    - Tag + SID: ?tag={PUB}&sid={SITE}
+    - Tag Only: ?tag={PUB}
+    - Custom structures defined in admin panel
 
     LEGACY SMARTLINK SIGNING: previously issued links carry `hmac=<hex>` — an
     HMAC-SHA256 bound to the exact pub/site Tag IDs. A supplied token is ALWAYS
@@ -85,20 +92,38 @@ async def track_click(
     (SMARTLINK_HASH_REQUIRED=true) rejects unsigned links and must remain off
     for the standard pub/site-only link format.
     """
+    # ── Dynamic structure parsing ─────────────────────────────────────────
+    # Parse the request using registered smartlink structures
+    from app.services.smartlink_parser import parse_smartlink_from_request
+    
+    pub_value, site_value, structure_name = await parse_smartlink_from_request(request, db)
+    
+    if not pub_value:
+        logger.warning(
+            "[/click] No valid smartlink parameters found ip=%s params=%s",
+            request.client.host if request.client else "unknown",
+            dict(request.query_params),
+        )
+        return _invalid_link_response()
+    
+    logger.info(
+        f"[/click] Parsed smartlink: structure='{structure_name}' pub={pub_value[:12]}... site={site_value[:12] if site_value else 'N/A'}..."
+    )
+    
     # ── Link-signature validation (tamper prevention) ─────────────────────
     # Runs before anything else: a forged/tampered link must never reach the
     # pipeline (no click row, no routing, no prelander session).
     from app.services import smartlink_signing as sls
     if hmac_token or sls.hash_required():
-        if not sls.verify_link_token(pub, site, hmac_token or "", nonce or ""):
+        if not sls.verify_link_token(pub_value, site_value, hmac_token or "", nonce or ""):
             logger.warning(
                 "[/click] Smartlink signature REJECTED (tampered/invalid/missing) pub=%s… ip=%s",
-                (pub or "")[:12],
+                (pub_value or "")[:12],
                 request.client.host if request.client else "unknown",
             )
             return _invalid_link_response()
     try:
-        ctx = context_from_request(request, pub, site)
+        ctx = context_from_request(request, pub_value, site_value)
         await resolve_redirect(ctx, db, redis)
         response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
     except Exception:

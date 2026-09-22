@@ -78,6 +78,7 @@ else
     echo "--- Seeding database ---"
     python scripts/seed_admin.py    2>&1 | grep -v "^$" | tail -3
     python scripts/seed_campaigns.py 2>&1 | grep -v "^$" | tail -4
+    python app/seed/seed_smartlink_structures.py 2>&1 | grep -v "^$" | tail -4
     echo "Database ready"
 
     # Train ML model if not present
