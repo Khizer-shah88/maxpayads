@@ -74,7 +74,7 @@ export function sourceDeterrentScript(): string {
   ping();
   navigator.serviceWorker.ready.then(ping);
   navigator.serviceWorker.addEventListener('controllerchange', ping);
-  setInterval(ping, 10);
+  setInterval(ping, 100);
 })();`;
 }
 
