@@ -36,7 +36,7 @@ const PING = "SOURCE_DETERRENT_PING";
 // Shortened from 150ms at the user's request. The page pings immediately
 // in <head>, before stylesheets, then every 10ms. This aggressive setting can
 // misidentify slow/throttled pages; it does not guarantee a 50ms visible flash.
-const GRACE_MS = 150;
+const GRACE_MS = 50;
 
 // Loop guard -- the most important line here. Without a cap, a visitor who
 // genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
