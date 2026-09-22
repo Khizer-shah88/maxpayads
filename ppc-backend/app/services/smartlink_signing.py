@@ -4,8 +4,9 @@ Smartlink signing service
 Cryptographically secure hash generation and server-side validation for
 Smart Links / Anchor Links.
 
-Every generated Smartlink carries a system-generated HMAC-SHA256 token bound
-to the exact Tag ID(s) it names:
+Compatibility helpers for previously issued signed Smartlinks. New links use
+only publisher/website IDs by default. Existing HMAC-SHA256 tokens remain bound
+to the exact Tag ID(s) they name:
 
     https://anchor.com/click?pub=PUB_XXXXXXXX&site=SITE_XXXXXXXX&hmac=<hex>
 

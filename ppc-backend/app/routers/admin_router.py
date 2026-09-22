@@ -220,7 +220,7 @@ async def admin_get_publisher_smartlink(
       Tag + SID  → https://anchor.com/?tag=PUB_ID&sid=SITE_ID
       Tag Only   → https://anchor.com/?tag=PUB_ID
 
-    Registered publishers get one link per website + a publisher-level default;
+    Registered publishers get one link per website, with the first as default;
     manual publishers never carry a website param.
     """
     from urllib.parse import quote
@@ -259,26 +259,14 @@ async def admin_get_publisher_smartlink(
     site_param = (structure_doc or {}).get("website_param", "site")
     include_site = bool((structure_doc or {}).get("include_website", True))
 
-    def _build_link(site_public: Optional[str], nonce: Optional[str] = None) -> str:
-        from urllib.parse import quote as _quote
-        from app.services import smartlink_signing as sls
-        # Per-link uniqueness: every generated link gets its own CSPRNG nonce
-        # folded into the signature, so no two links are byte-identical while
-        # each still validates server-side.
-        n = nonce or sls.new_link_nonce()
+    def _build_link(site_public: Optional[str]) -> str:
         params = [f"{pub_param}={quote(public_id)}"]
         if include_site and site_public and site_param:
             params.append(f"{site_param}={quote(site_public)}")
         for extra in (structure_doc or {}).get("extra_params") or []:
             if isinstance(extra, dict) and extra.get("key"):
                 params.append(f"{extra['key']}={extra.get('value', '')}")
-        # System-generated signature bound to THIS link's Tag IDs (+ nonce).
-        # params is a LIST of "key=value" strings — extend, not update.
-        for key, value in sls.signed_link_params(
-            public_id, site_public if include_site else None, n
-        ).items():
-            params.append(f"{key}={_quote(str(value))}")
-        return f"{base}/click?{'&'.join(params)}"
+        return f"{anchor_base}/click?{'&'.join(params)}"
 
     anchor_base = base.rstrip("/")
     is_manual = publisher.get("publisher_type") == PUBLISHER_TYPE_MANUAL
@@ -288,7 +276,7 @@ async def admin_get_publisher_smartlink(
         # Manual publishers never carry a site param.
         default_link = _build_link(None)
     else:
-        # Registered publishers: one link per website + a publisher-level default.
+        # Registered publishers need a website-specific link for attribution.
         cursor = db.websites.find({"publisher_id": publisher_id})
         async for site in cursor:
             site_pub = site.get("public_id") or await get_website_public_id(db, str(site["_id"]))
@@ -299,7 +287,7 @@ async def admin_get_publisher_smartlink(
                     "name": site.get("name", "") or site.get("domain", ""),
                     "smartlink": _build_link(site_pub),
                 })
-        default_link = _build_link(None)
+        default_link = site_links[0]["smartlink"] if site_links else None
 
     return {
         "success": True,

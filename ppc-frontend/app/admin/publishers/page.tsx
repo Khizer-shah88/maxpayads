@@ -676,17 +676,21 @@ export default function PublishersPage() {
                 </div>
               )}
               <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink URL' : (smartlinkModal.data?.website_smartlinks?.length ? 'Publisher-level fallback link' : 'Smartlink')}
-                  </label>
-                  <div className="flex gap-2">
-                    <input readOnly value={smartlinkModal.data?.smartlink || ''} className={`${inp} font-mono text-xs`} />
-                    <button onClick={() => copyText(smartlinkModal.data?.smartlink || '')}
-                      className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
+                {smartlinkModal.data?.publisher_type === 'manual' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                      Smartlink URL
+                    </label>
+                    <div className="flex gap-2">
+                      <input readOnly value={smartlinkModal.data?.smartlink || ''} className={`${inp} font-mono text-xs`} />
+                      <button onClick={() => copyText(smartlinkModal.data?.smartlink || '')}
+                        className="px-3 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center" title="Copy"><Copy size={16} /></button>
+                    </div>
                   </div>
-                </div>
-
+                )}
+                {smartlinkModal.data?.publisher_type !== 'manual' && !smartlinkModal.data?.website_smartlinks?.length && (
+                  <p className="text-sm text-gray-500">Add a website to this publisher to generate a smartlink with its site ID.</p>
+                )}
                 {(smartlinkModal.data?.website_smartlinks || []).map((ws: any, idx: number) => (
                   <div key={ws.website_id}>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">
