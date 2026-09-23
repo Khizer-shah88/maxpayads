@@ -23,7 +23,7 @@ async def connect_db():
         from app.services.domain_service import migrate_legacy_domains
         await migrate_legacy_domains(db)
     except Exception as e:
-        logger.warning("Legacy domain migration skipped: %s", e)
+        logger.warning("Legacy domain migration skipped: %s", e)s
     logger.info("Connected to MongoDB")
 
 async def disconnect_db():
