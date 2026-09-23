@@ -88,22 +88,24 @@ async def get_default_structure(db) -> Optional[Dict]:
     Get the default smartlink structure.
     
     Returns:
-        The default structure document, or None if not found
+        The configured structure, a standard fallback when no database or
+        active structure exists, or None if the database lookup fails.
     """
     try:
-        # First try to find structure marked as default
-        struct = await db.smartlink_structures.find_one(
-            {"is_default": True, "status": "active"}
-        )
-        if struct:
-            return struct
-        
-        # Fall back to any active structure
-        struct = await db.smartlink_structures.find_one(
-            {"status": "active"}
-        )
-        if struct:
-            return struct
+        if db is not None:
+            # First try to find structure marked as default
+            struct = await db.smartlink_structures.find_one(
+                {"is_default": True, "status": "active"}
+            )
+            if struct:
+                return struct
+
+            # Fall back to any active structure
+            struct = await db.smartlink_structures.find_one(
+                {"status": "active"}
+            )
+            if struct:
+                return struct
         
         # No structures exist - return a synthetic "Standard" structure for backward compatibility
         return {
@@ -142,7 +144,7 @@ async def generate_smartlink_with_structure(
     Returns:
         Complete smartlink URL
     """
-    from urllib.parse import quote
+    from urllib.parse import urlencode
     from bson import ObjectId
     
     # Get the structure
@@ -174,22 +176,22 @@ async def generate_smartlink_with_structure(
     site_param = structure.get("website_param", "site")
     include_site = structure.get("include_website", True)
     
-    params = [f"{quote(pub_param)}={quote(publisher_id)}"]
+    params = [(pub_param, publisher_id)]
     
     if include_site and website_id and site_param:
-        params.append(f"{quote(site_param)}={quote(website_id)}")
+        params.append((site_param, website_id))
     
     # Add structure's static extra params
     for extra in structure.get("extra_params", []):
         if isinstance(extra, dict) and extra.get("key"):
-            params.append(f"{quote(str(extra['key']))}={quote(str(extra.get('value', '')))}")
+            params.append((str(extra["key"]), str(extra.get("value", ""))))
     
     # Add dynamic extra params
     if extra_params:
         for key, value in extra_params.items():
-            params.append(f"{quote(str(key))}={quote(str(value))}")
+            params.append((str(key), str(value)))
     
-    smartlink = f"{domain}?{'&'.join(params)}"
+    smartlink = f"{domain}/click?{urlencode(params)}"
     
     logger.info(
         f"[Smartlink Generator] Generated link using structure '{structure.get('name', 'Unknown')}': {smartlink}"
