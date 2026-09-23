@@ -91,6 +91,9 @@ export const adminApi = {
     api.get('/admin/redirection-domains', { params }),
   createRedirectionDomain: (data: object) => api.post('/admin/redirection-domains', data),
   updateRedirectionDomain: (id: string, data: object) => api.put(`/admin/redirection-domains/${id}`, data),
+  // Pool include/exclude switch: active = in pool, paused = excluded
+  toggleRedirectionDomainStatus: (id: string, status: 'active' | 'paused') =>
+    api.patch(`/admin/redirection-domains/${id}/status`, { status }),
   deleteRedirectionDomain: (id: string) => api.delete(`/admin/redirection-domains/${id}`),
   verifyRedirectionDomainDns: (id: string) => api.post(`/admin/redirection-domains/${id}/verify-dns`),
   changePassword: (current_password: string, new_password: string) =>
@@ -311,6 +314,9 @@ export const offerApi = {
 export const landingPageApi = {
   getAll: () => api.get('/landing-pages'),
   get: (id: string) => api.get(`/landing-pages/${id}`),
+  // Prelander domains + their binding state — the Add Landing Page form
+  // shows only the remaining (unbound) ones.
+  getAvailablePrelanderDomains: () => api.get('/landing-pages/available-prelander-domains'),
   create: (data: object) => api.post('/landing-pages', data),
   update: (id: string, data: object) => api.put(`/landing-pages/${id}`, data),
   delete: (id: string) => api.delete(`/landing-pages/${id}`),

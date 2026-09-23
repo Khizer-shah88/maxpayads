@@ -198,9 +198,25 @@ export interface LandingPage {
   // Prelander infrastructure bindings (Domain Glossary)
   prelander_domain?: string | null
   prelander_domain_name?: string | null
+  // Status of the BOUND domain — active = in the traffic pool, paused = excluded
+  prelander_domain_status?: 'active' | 'paused' | null
   prelander_template_id?: string | null
   prelander_template_name?: string | null
   created_at: string
+}
+
+// Prelander domain candidate for landing-page binding, with its binding state:
+// `bound` = false are the remaining domains the Add Landing Page form offers.
+export interface AvailablePrelanderDomain {
+  id: string
+  domain: string
+  status: 'active' | 'paused'
+  is_default: boolean
+  dns_status: 'pending' | 'verified' | 'failed'
+  weight: number
+  template: 'default' | 'windows' | 'mac'
+  bound: boolean
+  bound_page?: { id: string; name: string; status: string } | null
 }
 
 // Domain Glossary: Anchor → Inter → Prelander is the order traffic travels.
