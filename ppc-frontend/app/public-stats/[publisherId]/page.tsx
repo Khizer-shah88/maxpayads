@@ -120,6 +120,9 @@ export default function PublisherStatsPage() {
   const params = useParams()
   const shareId = params.publisherId as string
 
+  // Admin preview mode — read query params for link name and publisher info
+  const [previewInfo, setPreviewInfo] = useState<{ linkName?: string; publisherName?: string; publisherId?: string } | null>(null)
+
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -130,6 +133,19 @@ export default function PublisherStatsPage() {
   const [series, setSeries] = useState({ imp: true, uni: true, conv: true })
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const [lastUpdated, setLastUpdated] = useState('')
+
+  // Read query params for admin preview mode
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search)
+      const linkName = searchParams.get('linkName')
+      const publisherName = searchParams.get('publisherName')
+      const publisherId = searchParams.get('publisherId')
+      if (linkName || publisherName || publisherId) {
+        setPreviewInfo({ linkName: linkName || undefined, publisherName: publisherName || undefined, publisherId: publisherId || undefined })
+      }
+    }
+  }, [])
 
   const loadStats = useCallback(async () => {
     if (!shareId) { setError(true); setLoading(false); return }
@@ -180,7 +196,8 @@ export default function PublisherStatsPage() {
         trend_conversions_pct: d.trend_conversions_pct || 0,
         trend_avg_pct: d.trend_avg_pct || 0,
         trend_wins_pct: d.trend_wins_pct || 0,
-        daily_breakdown: daily,
+        // Sort daily breakdown in ascending order (oldest to newest) for proper graph display
+        daily_breakdown: daily.sort((a, b) => a.date.localeCompare(b.date)),
         country_breakdown: d.country_breakdown || [],
         preferences: d.preferences || {},
       })
@@ -346,7 +363,19 @@ export default function PublisherStatsPage() {
             </svg>
             <div className="min-w-0">
               <b className="block text-[15px] font-semibold tracking-[-0.01em] leading-tight">Stats</b>
-              <span className="block text-[11px] text-[#5C6B7E]">Performance tracking</span>
+              <span className="block text-[11px] text-[#5C6B7E]">
+                {previewInfo ? (
+                  <>
+                    {previewInfo.linkName && <span className="font-medium text-[#8695A8]">{previewInfo.linkName}</span>}
+                    {previewInfo.linkName && (previewInfo.publisherName || previewInfo.publisherId) && <span className="mx-1">·</span>}
+                    {previewInfo.publisherName && <span>{previewInfo.publisherName}</span>}
+                    {previewInfo.publisherName && previewInfo.publisherId && <span className="mx-1">·</span>}
+                    {previewInfo.publisherId && <span className="font-mono text-[10px]">{previewInfo.publisherId}</span>}
+                  </>
+                ) : (
+                  'Performance tracking'
+                )}
+              </span>
             </div>
           </div>
 
@@ -706,13 +735,15 @@ export default function PublisherStatsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.slice(0, 10).map((row, i) => {
+                  {/* Show newest dates first in the table */}
+                  {[...filteredRows].reverse().slice(0, 10).map((row, i) => {
                     const maxImpRow = Math.max(...filteredRows.map(r => r.clicks), 1)
+                    const isNewest = i === 0
                     return (
-                      <tr key={row.date} className="hover:bg-white/[0.03] transition-colors border-b border-[#1D2634] last:border-b-0">
+                      <tr key={row.date} className="hover:bg-white/[0.03] transition-colors">
                         <td className="px-4 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
                           {fmtDate(row.date)}
-                          {i === 0 && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
+                          {isNewest && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
                           {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (

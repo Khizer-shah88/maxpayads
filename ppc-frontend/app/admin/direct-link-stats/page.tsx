@@ -485,7 +485,7 @@ export default function DirectLinkStatsPage() {
 
   const selectedPublisher = publishers.find(p => p.id === selectedPublisherId)
 
-  // Aggregated stats per publisher — only count active/paused links, not archived
+  // Aggregated stats per publisher — show ALL publishers, not just those with links
   const publisherStats = publishers
     .map(pub => {
       const pubLinks = links.filter(l => l.publisher_id === pub.id)
@@ -497,13 +497,21 @@ export default function DirectLinkStatsPage() {
         ...pub,
         linkCount: activeLinks.length,  // only count active links
         totalLinks: pubLinks.length,     // total including archived
+        hasLinks: pubLinks.length > 0,   // whether publisher has any links
         totalClicks,
         totalConversions,
         todayConversions,
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
-    .filter(p => p.totalLinks > 0) // show publishers that have any links (including archived)
+    // Show ALL publishers regardless of whether they have links
+    .sort((a, b) => {
+      // Sort: publishers with links first, then by total clicks (desc), then by name
+      if (a.hasLinks && !b.hasLinks) return -1
+      if (!a.hasLinks && b.hasLinks) return 1
+      if (a.totalClicks !== b.totalClicks) return b.totalClicks - a.totalClicks
+      return a.name.localeCompare(b.name)
+    })
 
   // All publishers for the Create Link dropdown (regardless of existing links)
   const publisherDropdownList = publishers
@@ -605,8 +613,31 @@ export default function DirectLinkStatsPage() {
     setGeneratingShare(publisherId)
     try {
       const res = await directLinkApi.generateStatsToken({ publisher_id: publisherId })
-      const url = res.data?.stats_url
+      let url = res.data?.stats_url
       if (url) {
+        // Find the active link for this publisher
+        const activeLink = links.find(l => l.publisher_id === publisherId && l.status !== 'archived')
+        
+        // Get publisher's public ID
+        const publisher = publishers.find(p => p.id === publisherId)
+        const publisherPublicId = publisher ? await (async () => {
+          try {
+            const pubData = await adminApi.getPublisher(publisherId)
+            return pubData.data?.publisher?.public_id || publisherId
+          } catch {
+            return publisherId
+          }
+        })() : publisherId
+        
+        // Add query parameters for admin preview mode
+        const urlObj = new URL(url)
+        if (activeLink?.name) {
+          urlObj.searchParams.set('linkName', activeLink.name)
+        }
+        urlObj.searchParams.set('publisherName', publisherName)
+        urlObj.searchParams.set('publisherId', publisherPublicId)
+        url = urlObj.toString()
+        
         setShareModal({ name: publisherName, url })
       } else {
         throw new Error('No URL returned')
@@ -634,8 +665,31 @@ export default function DirectLinkStatsPage() {
     setRegenerating(publisherId)
     try {
       const res = await directLinkApi.regenerateStatsLink(linkId)
-      const url = res.data?.stats_url
+      let url = res.data?.stats_url
       if (url) {
+        // Find the active link for this publisher
+        const activeLink = links.find(l => l.id === linkId)
+        
+        // Get publisher's public ID
+        const publisher = publishers.find(p => p.id === publisherId)
+        const publisherPublicId = publisher ? await (async () => {
+          try {
+            const pubData = await adminApi.getPublisher(publisherId)
+            return pubData.data?.publisher?.public_id || publisherId
+          } catch {
+            return publisherId
+          }
+        })() : publisherId
+        
+        // Add query parameters for admin preview mode
+        const urlObj = new URL(url)
+        if (activeLink?.name) {
+          urlObj.searchParams.set('linkName', activeLink.name)
+        }
+        urlObj.searchParams.set('publisherName', publisherName)
+        urlObj.searchParams.set('publisherId', publisherPublicId)
+        url = urlObj.toString()
+        
         setShareModal({ name: publisherName, url })
         toast.success('New link generated — the previous link has expired')
       } else {
@@ -796,7 +850,12 @@ export default function DirectLinkStatsPage() {
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
             <div className="px-5 py-4 border-b border-gray-100">
               <h2 className="text-base font-bold text-gray-900">Publishers</h2>
-              <p className="text-xs text-gray-400 mt-0.5">{publisherStats.length} publisher{publisherStats.length !== 1 ? 's' : ''} with active links</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {publisherStats.length} publisher{publisherStats.length !== 1 ? 's' : ''} total
+                {publisherStats.filter(p => p.hasLinks).length > 0 && 
+                  ` · ${publisherStats.filter(p => p.hasLinks).length} with links`
+                }
+              </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -907,62 +966,77 @@ export default function DirectLinkStatsPage() {
                       
                       {/* Actions */}
                       <td className="px-3 py-4">
-                        <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => generateStatsUrl(pub.id, pub.name)}
-                            disabled={generatingShare === pub.id}
-                            title="Share stats link"
-                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
-                          >
-                            {generatingShare === pub.id ? <Spinner size={14} /> : <Share2 size={14} />}
-                          </button>
-                          <button
-                            onClick={() => openPrefs(pub)}
-                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                            title="Stats preferences"
-                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
-                          >
-                            <Settings2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => openPubDomain(pub)}
-                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                            title="Dedicated stats domain"
-                            className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
-                          >
-                            <Globe2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => openHistory(pub)}
-                            title="Conversion history"
-                            className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-100 transition-colors"
-                          >
-                            <History size={14} />
-                          </button>
-                          <button
-                            onClick={() => regenerateStatsUrl(pub.id, pub.name)}
-                            disabled={regenerating === pub.id}
-                            title="Regenerate stats link"
-                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
-                          >
-                            {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
-                          </button>
-                          <button
-                            onClick={() => {
-                              const pubLinks = links.filter(l => l.publisher_id === pub.id)
-                              if (pubLinks.length === 0) return
-                              setDeleteAllTarget({
-                                name: pub.name,
-                                count: pubLinks.length,
-                                ids: pubLinks.map(l => l.id),
-                              })
-                            }}
-                            title="Delete all links"
-                            className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                        {pub.hasLinks ? (
+                          <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => generateStatsUrl(pub.id, pub.name)}
+                              disabled={generatingShare === pub.id}
+                              title="Share stats link"
+                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                            >
+                              {generatingShare === pub.id ? <Spinner size={14} /> : <Share2 size={14} />}
+                            </button>
+                            <button
+                              onClick={() => openPrefs(pub)}
+                              disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                              title="Stats preferences"
+                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
+                            >
+                              <Settings2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => openPubDomain(pub)}
+                              disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                              title="Dedicated stats domain"
+                              className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
+                            >
+                              <Globe2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => openHistory(pub)}
+                              title="Conversion history"
+                              className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-100 transition-colors"
+                            >
+                              <History size={14} />
+                            </button>
+                            <button
+                              onClick={() => regenerateStatsUrl(pub.id, pub.name)}
+                              disabled={regenerating === pub.id}
+                              title="Regenerate stats link"
+                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                            >
+                              {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                            </button>
+                            <button
+                              onClick={() => {
+                                const pubLinks = links.filter(l => l.publisher_id === pub.id)
+                                if (pubLinks.length === 0) return
+                                setDeleteAllTarget({
+                                  name: pub.name,
+                                  count: pubLinks.length,
+                                  ids: pubLinks.map(l => l.id),
+                                })
+                              }}
+                              title="Delete all links"
+                              className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setLinkForm({ ...EMPTY_LINK_FORM, publisher_id: pub.id })
+                                setShowCreateModal(true)
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-dark text-white border border-primary/20 transition-colors"
+                            >
+                              <Plus size={13} /> Create Link
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
