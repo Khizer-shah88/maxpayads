@@ -389,17 +389,23 @@ export default function PublisherStatsPage() {
             </div>
           </div>
 
-          {/* ── Identity mark — hide in preview mode since publisher info is already shown above ── */}
-          {stats.identity && !previewInfo && (
+          {/* ── Identity mark — show publisher name in preview mode, link number otherwise ── */}
+          {stats.identity && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111721] border border-[#1D2634] min-w-0">
-              <span className="text-xs text-[#3B82F6] font-semibold tabular-nums whitespace-nowrap">
-                #{stats.identity.link_number ? `L${stats.identity.link_number}` : 'L1'}
-              </span>
+              {previewInfo?.publisherName ? (
+                <span className="text-xs text-[#3B82F6] font-semibold whitespace-nowrap">
+                  {previewInfo.publisherName}
+                </span>
+              ) : (
+                <span className="text-xs text-[#3B82F6] font-semibold tabular-nums whitespace-nowrap">
+                  #{stats.identity.link_number ? `L${stats.identity.link_number}` : 'L1'}
+                </span>
+              )}
               {stats.identity.pub_id && (
                 <>
                   <span className="text-[10px] text-[#3D4A5E]">·</span>
-                  <span className="text-xs text-[#8695A8] truncate" title={stats.identity.pub_id}>
-                    Pub id {stats.identity.pub_id}
+                  <span className="text-xs text-[#8695A8] truncate font-mono" title={stats.identity.pub_id}>
+                    {stats.identity.pub_id}
                   </span>
                 </>
               )}
@@ -767,14 +773,14 @@ export default function PublisherStatsPage() {
                     const maxImpRow = Math.max(...filteredRows.map(r => r.clicks), 1)
                     const isNewest = i === 0
                     return (
-                      <tr key={row.date} className="hover:bg-white/[0.03] transition-colors">
-                        <td className="px-3 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
+                      <tr key={row.date} className="hover:bg-white/[0.03] transition-colors" style={{ borderBottom: 'none' }}>
+                        <td className="px-3 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap" style={{ border: 'none' }}>
                           {fmtDate(row.date)}
                           {isNewest && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
                           {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>
                             {row.clicks.toLocaleString()}
                             <span
                               className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
@@ -784,16 +790,16 @@ export default function PublisherStatsPage() {
                         )}
                         {/* OS valid-click columns — admin picks which OSes to expose */}
                         {prefs.show_windows_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.windows_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_mac_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.mac_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_android_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.android_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
                             {row.conversions.toLocaleString()}
                           </td>
                         )}
