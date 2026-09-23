@@ -389,8 +389,8 @@ export default function PublisherStatsPage() {
             </div>
           </div>
 
-          {/* ── Identity mark — which publisher/link this page tracks ── */}
-          {stats.identity && (
+          {/* ── Identity mark — hide in preview mode since publisher info is already shown above ── */}
+          {stats.identity && !previewInfo && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111721] border border-[#1D2634] min-w-0">
               <span className="text-xs text-[#3B82F6] font-semibold tabular-nums whitespace-nowrap">
                 #{stats.identity.link_number ? `L${stats.identity.link_number}` : 'L1'}
@@ -740,7 +740,7 @@ export default function PublisherStatsPage() {
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse table-fixed">
+            <table className="w-full table-fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
                   <tr>
                     <th className="w-[42%] px-3 py-2.5 text-left text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Date</th>
