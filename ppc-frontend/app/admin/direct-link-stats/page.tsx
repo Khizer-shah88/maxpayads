@@ -756,21 +756,6 @@ export default function DirectLinkStatsPage() {
                           >
                             {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
                           </button>
-                          <button
-                            onClick={() => {
-                              const pubLinks = links.filter(l => l.publisher_id === pub.id)
-                              if (pubLinks.length === 0) return
-                              setDeleteAllTarget({
-                                name: pub.name,
-                                count: pubLinks.length,
-                                ids: pubLinks.map(l => l.id),
-                              })
-                            }}
-                            title="Delete all links"
-                            className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
                         </div>
                       </td>
                     </tr>
