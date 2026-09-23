@@ -20,6 +20,12 @@ class StatsProfilePreferences(BaseModel):
     show_conversions: bool = Field(True, description="Show conversion count")
     show_cr: bool = Field(True, description="Show conversion rate")
     show_fraud_score: bool = Field(False, description="Show average fraud score")
+    show_daily_breakdown: bool = Field(True, description="Show the daily breakdown table")
+    # Per-OS valid-click columns. Default: ONLY Windows. The admin opts the
+    # Mac / Android columns in per publisher (mirrors public_stats_router).
+    show_windows_clicks: bool = Field(True, description="Show the Valid Windows column (default ON)")
+    show_mac_clicks: bool = Field(False, description="Show the Valid Mac column (opt-in)")
+    show_android_clicks: bool = Field(False, description="Show the Valid Android column (opt-in)")
 
 
 class StatsProfileCreate(BaseModel):
