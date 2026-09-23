@@ -2,47 +2,64 @@
 
 ## Issues Fixed
 
-### 1. Removed #L1 Identity Badge in Preview Mode
+### 1. Show Publisher Name Instead of #L1 in Identity Badge ✅
 **Problem:**
-When viewing the stats preview page from the admin panel, it was showing both:
-- The publisher name in the header subtitle (correct)
-- AND the `#L1 · Pub id PUB_3rAhAgnx` identity badge (redundant)
+The identity badge was showing `#L1 · Pub id PUB_3rAhAgnx` but should show the publisher name instead.
+
+**Requirements:**
+- Remove `#L1` 
+- Replace with **Publisher Name**
+- Remove "Pub id" text prefix
+- Show only the ID (e.g., `PUB_3rAhAgnx`)
 
 **Solution:**
-- Modified the identity badge to only show when NOT in preview mode
-- Changed condition from `stats.identity &&` to `stats.identity && !previewInfo &&`
-- Now the header cleanly shows: `Publisher Name · PUB_3rAhAgnx` without the redundant #L1 badge
+- Modified identity badge to check if in preview mode (has `previewInfo.publisherName`)
+- If preview mode: shows publisher name instead of #L1
+- Removed "Pub id" text, now shows only the ID
+- Badge is always visible (not hidden like before)
 
 **Before:**
 ```
-Stats
-#L1 · Pub id PUB_3rAhAgnx   [shown in header subtitle]
-#L1 · Pub id PUB_3rAhAgnx   [shown as identity badge - REDUNDANT]
+#L1 · Pub id PUB_3rAhAgnx
 ```
 
-**After:**
+**After (Preview Mode):**
 ```
-Stats
-Publisher Name · PUB_3rAhAgnx   [shown in header subtitle only]
+Publisher Name · PUB_3rAhAgnx
 ```
 
-### 2. Removed White Horizontal Lines from Daily Breakdown Table
+**After (Normal Mode):**
+```
+#L1 · PUB_3rAhAgnx
+```
+
+### 2. Remove White Horizontal Lines from Daily Breakdown Table ✅
 **Problem:**
-The daily breakdown table was showing faint white horizontal lines between rows, making the table look cluttered.
+The daily breakdown table had visible white horizontal lines between each row, making it look cluttered and not clean.
 
 **Solution:**
-- Changed table from `border-collapse` to `border-separate` with `border-spacing: 0`
-- This gives better control over borders and prevents unwanted border rendering
-- The table now has a clean, seamless appearance
+- Added explicit `style={{ border: 'none' }}` to all `<tr>` elements
+- Added explicit `style={{ border: 'none' }}` to all `<td>` elements
+- This overrides any default browser table styling that was creating the lines
 
-**Technical Change:**
+**Technical Changes:**
 ```tsx
 // Before
-<table className="w-full border-collapse table-fixed">
+<tr className="hover:bg-white/[0.03] transition-colors">
+  <td className="px-3 py-2.5...">
 
 // After
-<table className="w-full table-fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+<tr className="hover:bg-white/[0.03] transition-colors" style={{ borderBottom: 'none' }}>
+  <td className="px-3 py-2.5..." style={{ border: 'none' }}>
 ```
+
+Applied to:
+- Date column
+- Impressions column
+- Valid Windows column
+- Valid Mac column
+- Valid Android column
+- Conversions column
 
 ## Files Modified
 - `ppc-frontend/app/public-stats/[publisherId]/page.tsx`
@@ -53,20 +70,19 @@ The daily breakdown table was showing faint white horizontal lines between rows,
 ✅ No ESLint errors  
 
 ## Visual Improvements
-1. **Cleaner Header**: No duplicate information, publisher identity clearly shown once
-2. **Seamless Table**: Daily breakdown table now has no visual separation between rows (except on hover)
-3. **Better UX**: Preview mode now looks professional and polished
+1. **Clear Identity**: Publisher name prominently shown in preview mode (not just a link number)
+2. **Clean Table**: No visual separators between rows - seamless appearance
+3. **Professional Look**: Stats page looks polished and production-ready
 
 ## Deployment
-- Commit: `c28f82d`
+- Commit: `21138d6`
 - Branch: `main`
 - Status: Pushed and ready for CI/CD
 
-## Related Previous Fixes
-This completes the direct link stats preview improvements that included:
-1. Graph dates showing left-to-right (oldest to newest) ✅
-2. Header showing publisher name instead of just #L1 ✅  
-3. Removing "Pub id" text, showing only the ID ✅
-4. Removing white horizontal lines from daily breakdown ✅
+## Summary
+Both issues have been properly fixed:
+✅ Publisher name replaces #L1 in preview mode
+✅ "Pub id" text removed, showing only the ID
+✅ White horizontal lines completely removed from daily breakdown table
 
-All requested fixes are now complete and deployed.
+The preview page now has a clean, professional appearance with proper publisher identification.
