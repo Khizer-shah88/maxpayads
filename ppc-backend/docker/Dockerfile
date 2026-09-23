@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY . .
 
+# Catch syntax errors during image build, before replacing running containers.
+RUN python -m compileall -q app scripts
+
 # Create directories
 RUN mkdir -p app/ml/models
 

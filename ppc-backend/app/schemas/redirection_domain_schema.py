@@ -30,6 +30,11 @@ def _coerce_domain_type(v: Any) -> Any:
     return normalize_domain_type(v, default=v)
 
 
+class RedirectionDomainStatusToggle(BaseModel):
+    """Pool include/exclude switch: active = in the pool, paused = excluded."""
+    status: DomainStatus = "active"
+
+
 class RedirectionDomainCreate(BaseModel):
     domain: str
     domain_type: DomainType

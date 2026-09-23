@@ -74,6 +74,11 @@ def serialize_profile(doc: dict, publisher_name: Optional[str] = None) -> dict:
         "show_cr": True,
         "show_fraud_score": False,
         "show_daily_breakdown": True,
+        # Per-OS valid-click columns — Windows only by default (mirrors
+        # public_stats_router + StatsProfilePreferences).
+        "show_windows_clicks": True,
+        "show_mac_clicks": False,
+        "show_android_clicks": False,
     }
     
     return {

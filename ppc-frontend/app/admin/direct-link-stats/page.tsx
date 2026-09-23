@@ -2,15 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Edit3, CheckCircle, Copy, RefreshCw,
-  Plus, Trash2, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2, Settings2, History,
+  Edit3, Copy, RefreshCw,
+  Plus, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2, Settings2, History,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
-import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi, directLinkApi, statsProfileApi } from '@/lib/api'
+import { adminApi, directLinkApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -39,14 +38,6 @@ interface Publisher {
   email: string
   role: string
   status: string
-}
-
-interface ManualOverride {
-  date: string
-  publisher_id: string
-  link_id?: string
-  manual_conversions: number
-  reason: string
 }
 
 // One row of the admin-entered conversion history (editable / deletable)
@@ -79,6 +70,8 @@ interface StatsPreferences {
   show_android_clicks: boolean
 }
 
+// Default column set: ONLY Windows valid clicks are shown to the publisher.
+// The admin opts Mac / Android columns in per publisher via these toggles.
 const DEFAULT_PREFS: StatsPreferences = {
   show_os: true,
   show_country: true,
@@ -91,35 +84,8 @@ const DEFAULT_PREFS: StatsPreferences = {
   show_cr: true,
   show_daily_breakdown: true,
   show_windows_clicks: true,
-  show_mac_clicks: true,
-  show_android_clicks: true,
-}
-
-interface LinkFormData {
-  name: string
-  publisher_id: string
-  status: 'active' | 'paused' | 'archived'
-  daily_conversion_cap: number
-  notes: string
-  preferences: StatsPreferences
-}
-
-const EMPTY_LINK_FORM: LinkFormData = {
-  name: '',
-  publisher_id: '',
-  status: 'active',
-  daily_conversion_cap: 0,
-  notes: '',
-  preferences: { ...DEFAULT_PREFS },
-}
-
-function safeBtoa(str: string): string {
-  try {
-    // encode to handle unicode
-    return btoa(unescape(encodeURIComponent(str)))
-  } catch {
-    return btoa(str.replace(/[^\x00-\x7F]/g, '?'))
-  }
+  show_mac_clicks: false,
+  show_android_clicks: false,
 }
 
 function formatDate(dateStr: string): string {
@@ -132,65 +98,21 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-      toast.success('Copied!')
-    } catch {
-      toast.error('Copy failed')
-    }
-  }
-  return (
-    <button onClick={handleCopy}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary/5 border border-primary/20 transition-colors">
-      {copied ? <CheckCircle size={13} className="text-emerald-500" /> : <Copy size={13} />}
-      {label}
-    </button>
-  )
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DirectLinkStatsPage() {
   const { initialize } = useAuth()
-
   const [publishers, setPublishers] = useState<Publisher[]>([])
   const [links, setLinks] = useState<DirectLink[]>([])
   const [publisherDomains, setPublisherDomains] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [selectedPublisherId, setSelectedPublisherId] = useState<string>('')
 
-  // Create link modal
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [linkForm, setLinkForm] = useState<LinkFormData>({ ...EMPTY_LINK_FORM })
-  const [savingLink, setSavingLink] = useState(false)
-
-  // Manual override modal
-  const [showOverrideModal, setShowOverrideModal] = useState(false)
-  const [overrideForm, setOverrideForm] = useState<ManualOverride>({
-    date: '',
-    publisher_id: '',
-    link_id: '',
-    manual_conversions: 0,
-    reason: '',
-  })
-  const [savingOverride, setSavingOverride] = useState(false)
-
   // Share stats modal
   const [shareModal, setShareModal] = useState<{ name: string; url: string } | null>(null)
   const [generatingShare, setGeneratingShare] = useState<string | null>(null)
   // Regenerate public stats URL (expires the old link, keeps config & data)
   const [regenerating, setRegenerating] = useState<string | null>(null)
-
-  // Styled delete confirmations (replace native confirm())
-  const [deleteLinkTarget, setDeleteLinkTarget] = useState<DirectLink | null>(null)
-  const [deletingLink, setDeletingLink] = useState(false)
-  const [deleteAllTarget, setDeleteAllTarget] = useState<{ name: string; count: number; ids: string[] } | null>(null)
-  const [deletingAll, setDeletingAll] = useState(false)
 
   // Stats domain config (white-label domain for share links)
   const [statsDomain, setStatsDomain] = useState('')
@@ -217,7 +139,6 @@ export default function DirectLinkStatsPage() {
   // list is empty, so the publisher's card action is never a dead end)
   const [showAddConv, setShowAddConv] = useState(false)
   const [addConvDate, setAddConvDate] = useState(() => new Date().toISOString().split('T')[0])
-  const [addConvLink, setAddConvLink] = useState('')
   const [addConvValue, setAddConvValue] = useState(0)
   const [addConvReason, setAddConvReason] = useState('')
   const [addingConversion, setAddingConversion] = useState(false)
@@ -295,30 +216,6 @@ export default function DirectLinkStatsPage() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
-
-  // Auto-cleanup duplicate links on page load (runs silently)
-  useEffect(() => {
-    directLinkApi.cleanupDuplicateLinks().catch(() => {/* silent */})
-  }, [])
-
-  // Manual cleanup handler (with feedback)
-  const handleCleanupDuplicates = async () => {
-    setCleaningUp(true)
-    try {
-      const res = await directLinkApi.cleanupDuplicateLinks()
-      const { links_archived, publishers_affected } = res.data
-      if (links_archived > 0) {
-        toast.success(`Archived ${links_archived} old link${links_archived !== 1 ? 's' : ''} across ${publishers_affected} publisher${publishers_affected !== 1 ? 's' : ''}`)
-      } else {
-        toast.success('Already clean — no duplicate links found')
-      }
-      loadData()
-    } catch {
-      toast.error('Cleanup failed')
-    } finally {
-      setCleaningUp(false)
-    }
-  }
 
   // Load saved stats domain setting
   useEffect(() => {
@@ -425,7 +322,7 @@ export default function DirectLinkStatsPage() {
       await directLinkApi.createManualConversion({
         date: addConvDate,
         publisher_id: historyModal.pubId,
-        link_id: addConvLink || null,
+        link_id: null,
         conversions: addConvValue,
         reason: addConvReason.trim(),
       })
@@ -475,17 +372,10 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Links for selected publisher — only active/paused for display
-  const publisherLinks = selectedPublisherId
-    ? links.filter(l => l.publisher_id === selectedPublisherId)
-    : []
-
-  // Active link for selected publisher (only 1 should exist)
-  const activePublisherLinks = publisherLinks.filter(l => l.status !== 'archived')
-
+  // The selected publisher drives the white-label share section below.
   const selectedPublisher = publishers.find(p => p.id === selectedPublisherId)
 
-  // Aggregated stats per publisher — show ALL publishers, not just those with links
+  // Aggregated stats per publisher — only count active/paused links, not archived
   const publisherStats = publishers
     .map(pub => {
       const pubLinks = links.filter(l => l.publisher_id === pub.id)
@@ -512,101 +402,6 @@ export default function DirectLinkStatsPage() {
       if (a.totalClicks !== b.totalClicks) return b.totalClicks - a.totalClicks
       return a.name.localeCompare(b.name)
     })
-
-  // All publishers for the Create Link dropdown (regardless of existing links)
-  const publisherDropdownList = publishers
-
-  // Create link
-  const handleCreateLink = async () => {
-    if (!linkForm.name.trim()) { toast.error('Name is required'); return }
-    if (!linkForm.publisher_id) { toast.error('Publisher is required'); return }
-
-    setSavingLink(true)
-    try {
-      await directLinkApi.create({
-        name: linkForm.name.trim(),
-        publisher_id: linkForm.publisher_id,
-        status: linkForm.status,
-        daily_conversion_cap: Number(linkForm.daily_conversion_cap) || 0,
-        notes: linkForm.notes.trim() || null,
-        preferences: linkForm.preferences,
-      })
-      toast.success('Direct link created')
-      setShowCreateModal(false)
-      setLinkForm({ ...EMPTY_LINK_FORM })
-      loadData()
-    } catch (err: any) {
-      const detail = err?.response?.data?.error || err?.response?.data?.detail
-      toast.error(typeof detail === 'string' ? detail : 'Failed to create link')
-    } finally {
-      setSavingLink(false)
-    }
-  }
-
-  // Delete link (invoked from the styled ConfirmDialog)
-  const handleDeleteLink = async (link: DirectLink) => {
-    setDeletingLink(true)
-    try {
-      await directLinkApi.delete(link.id)
-      toast.success('Link deleted')
-      setDeleteLinkTarget(null)
-      loadData()
-    } catch {
-      toast.error('Delete failed')
-    } finally {
-      setDeletingLink(false)
-    }
-  }
-
-  // Delete all links for a publisher (invoked from the styled ConfirmDialog)
-  const handleDeleteAllLinks = async () => {
-    if (!deleteAllTarget) return
-    setDeletingAll(true)
-    try {
-      await Promise.all(deleteAllTarget.ids.map(id => directLinkApi.delete(id)))
-      toast.success('Links deleted')
-      setDeleteAllTarget(null)
-      loadData()
-    } catch {
-      toast.error('Delete failed')
-    } finally {
-      setDeletingAll(false)
-    }
-  }
-
-  // Manual override submit — writes to BOTH conversion override (for internal
-  // reports) and manual conversions (for the publisher's public stats page)
-  const handleOverrideSubmit = async () => {
-    if (!overrideForm.reason.trim()) { toast.error('Reason is required'); return }
-    if (overrideForm.manual_conversions < 0) { toast.error('Conversions must be ≥ 0'); return }
-    setSavingOverride(true)
-    try {
-      await Promise.allSettled([
-        directLinkApi.createManualOverride({
-          date: overrideForm.date,
-          publisher_id: overrideForm.publisher_id,
-          link_id: overrideForm.link_id || undefined,
-          manual_conversions: overrideForm.manual_conversions,
-          reason: overrideForm.reason,
-        }),
-        directLinkApi.createManualConversion({
-          date: overrideForm.date,
-          publisher_id: overrideForm.publisher_id,
-          link_id: overrideForm.link_id || null,
-          conversions: overrideForm.manual_conversions,
-          reason: overrideForm.reason,
-        }),
-      ])
-      toast.success('Conversions added — they now appear on the publisher stats page')
-      setShowOverrideModal(false)
-      loadData()
-    } catch (err: any) {
-      const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to apply override'
-      toast.error(errorMsg)
-    } finally {
-      setSavingOverride(false)
-    }
-  }
 
   // Generate stats URL for publisher — resolves the active link, shows modal
   const generateStatsUrl = async (publisherId: string, publisherName: string) => {
@@ -719,29 +514,9 @@ export default function DirectLinkStatsPage() {
             <div>
               <h1 className="text-xl font-bold text-gray-900 tracking-tight">Direct Link Stats</h1>
               <p className="text-gray-400 text-sm mt-0.5">
-                Create links per publisher — track clicks, conversions and share white-label stats
+                Publisher statistics — clicks, conversions and white-label stats links
               </p>
             </div>
-          </div>
-          <div className="flex gap-2 self-start">
-            <button
-              onClick={handleCleanupDuplicates}
-              disabled={cleaningUp}
-              className="border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-              title="Archive old links — keeps only the newest link per publisher"
-            >
-              {cleaningUp ? <Spinner size={16} /> : <RefreshCw size={16} />}
-              Clean Duplicates
-            </button>
-            <button
-              onClick={() => {
-                setLinkForm({ ...EMPTY_LINK_FORM })
-                setShowCreateModal(true)
-              }}
-              className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 shadow-sm"
-            >
-              <Plus size={18} /> Create Link
-            </button>
           </div>
         </div>
 
@@ -788,12 +563,12 @@ export default function DirectLinkStatsPage() {
           </div>
         </div>
 
-        {/* Summary cards */}
+        {/* Summary cards — publisher-centric */}
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {[
-            { label: 'Total Links', value: links.length.toLocaleString(), icon: Link2, tone: 'text-primary', bg: 'bg-primary/10 border-primary/15' },
-            { label: 'Publishers with Links', value: publisherStats.length.toLocaleString(), icon: Globe2, tone: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
+            { label: 'Publishers', value: publisherStats.length.toLocaleString(), icon: Globe2, tone: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
             { label: 'Total Clicks', value: links.reduce((s, l) => s + l.total_clicks, 0).toLocaleString(), icon: MousePointerClick, tone: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
+            { label: 'Total Conversions', value: links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString(), icon: Target, tone: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
           ].map((s, i) => (
             <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
               <div className="flex items-center gap-3 mb-3">
@@ -807,17 +582,6 @@ export default function DirectLinkStatsPage() {
           ))}
         </div>
         
-        {/* Total Conversions - Full Width Card */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 bg-emerald-50 border-emerald-100">
-              <Target size={16} className="text-emerald-600" />
-            </div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Total Conversions</span>
-          </div>
-          <p className="text-2xl font-bold text-gray-900 tracking-tight">{links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString()}</p>
-        </div>
-
         {/* Date filter */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3 mb-6 flex gap-3 items-center flex-wrap">
           <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mr-1">Period</span>
@@ -837,14 +601,8 @@ export default function DirectLinkStatsPage() {
         ) : publisherStats.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <Link size={48} className="mx-auto mb-4 opacity-20" />
-            <p className="text-base font-medium mb-2">No direct links yet</p>
-            <p className="text-sm mb-6">Create a link for a publisher to start tracking stats</p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-2"
-            >
-              <Plus size={16} /> Create First Link
-            </button>
+            <p className="text-base font-medium mb-2">No publishers with stats yet</p>
+            <p className="text-sm">Publishers appear here once they have a direct link with traffic</p>
           </div>
         ) : (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
@@ -863,7 +621,6 @@ export default function DirectLinkStatsPage() {
                   <tr>
                     <th className="px-5 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Publisher</th>
                     <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Links</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Clicks</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
@@ -897,13 +654,6 @@ export default function DirectLinkStatsPage() {
                       {/* Status */}
                       <td className="px-3 py-4 text-center">
                         <StatusBadge status={pub.status} />
-                      </td>
-                      
-                      {/* Active Links */}
-                      <td className="px-3 py-4 text-center">
-                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-50 border border-blue-100 text-sm font-bold text-blue-600">
-                          {pub.linkCount}
-                        </span>
                       </td>
                       
                       {/* Total Clicks */}
@@ -966,77 +716,62 @@ export default function DirectLinkStatsPage() {
                       
                       {/* Actions */}
                       <td className="px-3 py-4">
-                        {pub.hasLinks ? (
-                          <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
-                            <button
-                              onClick={() => generateStatsUrl(pub.id, pub.name)}
-                              disabled={generatingShare === pub.id}
-                              title="Share stats link"
-                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
-                            >
-                              {generatingShare === pub.id ? <Spinner size={14} /> : <Share2 size={14} />}
-                            </button>
-                            <button
-                              onClick={() => openPrefs(pub)}
-                              disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                              title="Stats preferences"
-                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
-                            >
-                              <Settings2 size={14} />
-                            </button>
-                            <button
-                              onClick={() => openPubDomain(pub)}
-                              disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
-                              title="Dedicated stats domain"
-                              className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
-                            >
-                              <Globe2 size={14} />
-                            </button>
-                            <button
-                              onClick={() => openHistory(pub)}
-                              title="Conversion history"
-                              className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-100 transition-colors"
-                            >
-                              <History size={14} />
-                            </button>
-                            <button
-                              onClick={() => regenerateStatsUrl(pub.id, pub.name)}
-                              disabled={regenerating === pub.id}
-                              title="Regenerate stats link"
-                              className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
-                            >
-                              {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
-                            </button>
-                            <button
-                              onClick={() => {
-                                const pubLinks = links.filter(l => l.publisher_id === pub.id)
-                                if (pubLinks.length === 0) return
-                                setDeleteAllTarget({
-                                  name: pub.name,
-                                  count: pubLinks.length,
-                                  ids: pubLinks.map(l => l.id),
-                                })
-                              }}
-                              title="Delete all links"
-                              className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setLinkForm({ ...EMPTY_LINK_FORM, publisher_id: pub.id })
-                                setShowCreateModal(true)
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary hover:bg-primary-dark text-white border border-primary/20 transition-colors"
-                            >
-                              <Plus size={13} /> Create Link
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => generateStatsUrl(pub.id, pub.name)}
+                            disabled={generatingShare === pub.id}
+                            title="Share stats link"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                          >
+                            {generatingShare === pub.id ? <Spinner size={14} /> : <Share2 size={14} />}
+                          </button>
+                          <button
+                            onClick={() => openPrefs(pub)}
+                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            title="Stats preferences"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
+                          >
+                            <Settings2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => openPubDomain(pub)}
+                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            title="Dedicated stats domain"
+                            className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
+                          >
+                            <Globe2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => openHistory(pub)}
+                            title="Conversion history"
+                            className="p-2 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-100 transition-colors"
+                          >
+                            <History size={14} />
+                          </button>
+                          <button
+                            onClick={() => regenerateStatsUrl(pub.id, pub.name)}
+                            disabled={regenerating === pub.id}
+                            title="Regenerate stats link"
+                            className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
+                          >
+                            {regenerating === pub.id ? <Spinner size={14} /> : <RefreshCw size={14} />}
+                          </button>
+                          <button
+                            onClick={() => {
+                              const pubLinks = links.filter(l => l.publisher_id === pub.id)
+                              if (pubLinks.length === 0) return
+                              setDeleteAllTarget({
+                                name: pub.name,
+                                count: pubLinks.length,
+                                ids: pubLinks.map(l => l.id),
+                              })
+                            }}
+                            title="Delete all links"
+                            className="p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1046,124 +781,9 @@ export default function DirectLinkStatsPage() {
           </div>
         )}
 
-        {/* Selected publisher links table */}
-        {selectedPublisher && (
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-6">
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <div>
-                <h2 className="text-base font-bold text-gray-900">{selectedPublisher.name} — Links</h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {activePublisherLinks.length} active
-                  {publisherLinks.length > activePublisherLinks.length
-                    ? ` · ${publisherLinks.length - activePublisherLinks.length} archived`
-                    : ''}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setLinkForm({ ...EMPTY_LINK_FORM, publisher_id: selectedPublisher.id })
-                  setShowCreateModal(true)
-                }}
-                className="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5"
-              >
-                <Plus size={14} /> Add Link
-              </button>
-            </div>
-
-            {publisherLinks.length === 0 ? (
-              <div className="text-center py-12 text-gray-400">
-                <Link size={32} className="mx-auto mb-2 opacity-20" />
-                <p className="text-sm">No links for this publisher</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-100">
-                    <tr>
-                      {['Name', 'Masked URL', 'Status', 'Clicks', 'Conv.', 'Today', 'Actions'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {publisherLinks.map(link => (
-                      <tr key={link.id} className={`hover:bg-gray-50/50 ${link.status === 'archived' ? 'opacity-40' : ''}`}>
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900 text-sm">{link.name}</p>
-                          <p className="text-[11px] text-gray-400 truncate max-w-[160px]">{link.destination_url}</p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            <code className="text-xs bg-gray-100 px-2 py-0.5 rounded font-mono text-gray-700 truncate max-w-[180px]">
-                              {link.masked_url}
-                            </code>
-                            <CopyButton text={link.masked_url} label="" />
-                          </div>
-                        </td>
-                        <td className="px-4 py-3"><StatusBadge status={link.status} /></td>
-                        <td className="px-4 py-3 font-mono text-gray-700">{link.total_clicks.toLocaleString()}</td>
-                        <td className="px-4 py-3 font-mono text-gray-700">{link.total_conversions.toLocaleString()}</td>
-                        <td className="px-4 py-3">
-                          <span className={`font-mono font-bold ${link.today_conversions > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
-                            {link.today_conversions}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => {
-                                const today = new Date().toISOString().split('T')[0]
-                                setOverrideForm({
-                                  date: today,
-                                  publisher_id: link.publisher_id,
-                                  link_id: link.id,
-                                  manual_conversions: 0,
-                                  reason: '',
-                                })
-                                setShowOverrideModal(true)
-                              }}
-                              title="Manual conversion override"
-                              className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteLink(link)}
-                              title="Delete"
-                              className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Styled delete confirmations ──────────────────────────────────── */}
-        <ConfirmDialog
-          open={deleteLinkTarget !== null}
-          title="Delete Link"
-          message={<>Delete link <strong className="text-gray-900">{deleteLinkTarget?.name}</strong>? The link URL will stop working immediately. This cannot be undone.</>}
-          confirmLabel="Delete Link"
-          loading={deletingLink}
-          onConfirm={() => { if (deleteLinkTarget) handleDeleteLink(deleteLinkTarget) }}
-          onCancel={() => setDeleteLinkTarget(null)}
-        />
-        <ConfirmDialog
-          open={deleteAllTarget !== null}
-          title="Delete All Links"
-          message={<>Delete all <strong className="text-gray-900">{deleteAllTarget?.count}</strong> link{deleteAllTarget?.count !== 1 ? 's' : ''} for <strong className="text-gray-900">{deleteAllTarget?.name}</strong>? This cannot be undone.</>}
-          confirmLabel="Delete All"
-          loading={deletingAll}
-          onConfirm={handleDeleteAllLinks}
-          onCancel={() => setDeleteAllTarget(null)}
-        />
+        {/* Selected publisher links table removed — Direct Link Stats tracks
+            publisher stats, not individual links. Per-link rows, masked URLs
+            and link CRUD are no longer part of this page. */}
 
         {/* Stats share section */}
         {selectedPublisher && (
@@ -1205,159 +825,6 @@ export default function DirectLinkStatsPage() {
 
         {/* All Direct Links section removed - publishers are displayed in the grid above */}
 
-
-        {/* ── Create Link Modal ────────────────────────────────────────────── */}
-        {showCreateModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[92vh] overflow-y-auto">
-              <h3 className="text-lg font-bold text-gray-900 mb-5">Create Direct Link</h3>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Link Name <span className="text-red-500">*</span></label>
-                  <input value={linkForm.name} onChange={e => setLinkForm(p => ({ ...p, name: e.target.value }))}
-                    placeholder="e.g. Campaign A — Publisher 1" className={inp} />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Publisher <span className="text-red-500">*</span></label>
-                  <select value={linkForm.publisher_id} onChange={e => setLinkForm(p => ({ ...p, publisher_id: e.target.value }))} className={inp}>
-                    <option value="">Select publisher…</option>
-                    {publisherDropdownList.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
-                    ))}
-                  </select>
-                  {publisherDropdownList.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">
-                      No publishers found. Create publishers first from the Publishers page.
-                    </p>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    <select value={linkForm.status} onChange={e => setLinkForm(p => ({ ...p, status: e.target.value as LinkFormData['status'] }))} className={inp}>
-                      <option value="active">Active</option>
-                      <option value="paused">Paused</option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Daily Cap <span className="text-gray-400 font-normal">(0=∞)</span></label>
-                    <input type="number" min={0} value={linkForm.daily_conversion_cap}
-                      onChange={e => setLinkForm(p => ({ ...p, daily_conversion_cap: parseInt(e.target.value) || 0 }))} className={inp} />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                  <textarea value={linkForm.notes} onChange={e => setLinkForm(p => ({ ...p, notes: e.target.value }))}
-                    rows={2} className={inp} />
-                </div>
-
-                {/* ── Stats Preferences ── */}
-                <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
-                  <p className="text-sm font-semibold text-gray-800 mb-3">Stats Page Preferences</p>
-                  <p className="text-xs text-gray-400 mb-4">Control what the publisher sees on their shared stats page.</p>
-                  <div className="grid grid-cols-1 gap-2">
-                    {(
-                      [
-                        { key: 'show_impressions',     label: 'Show Impressions' },
-                        { key: 'show_clicks',          label: 'Show Clicks' },
-                        { key: 'show_windows_clicks',  label: 'Show Windows Clicks' },
-                        { key: 'show_mac_clicks',      label: 'Show Mac Clicks' },
-                        { key: 'show_android_clicks',  label: 'Show Android Clicks' },
-                        { key: 'show_valid_clicks',    label: 'Show Valid Clicks (Unique Wins)' },
-                        { key: 'show_invalid_clicks',  label: 'Show Invalid Clicks' },
-                        { key: 'show_conversions',     label: 'Show Conversions' },
-                        { key: 'show_cr',              label: 'Show Conversion Rate' },
-                        { key: 'show_os',              label: 'Show OS Statistics' },
-                        { key: 'show_country',         label: 'Show Country Statistics' },
-                        { key: 'show_device',          label: 'Show Device Statistics' },
-                        { key: 'show_daily_breakdown', label: 'Show Daily Breakdown Table' },
-                      ] as { key: keyof StatsPreferences; label: string }[]
-                    ).map(({ key, label }) => (
-                      <label key={key} className="flex items-center justify-between gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-white transition-colors">
-                        <span className="text-sm text-gray-700">{label}</span>
-                        <button
-                          type="button"
-                          onClick={() => setLinkForm(p => ({
-                            ...p,
-                            preferences: { ...p.preferences, [key]: !p.preferences[key] }
-                          }))}
-                          className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
-                            linkForm.preferences[key] ? 'bg-primary' : 'bg-gray-200'
-                          }`}
-                        >
-                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
-                            linkForm.preferences[key] ? 'translate-x-4' : 'translate-x-0'
-                          }`} />
-                        </button>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <button onClick={handleCreateLink} disabled={savingLink}
-                  className="flex-1 bg-primary hover:bg-primary-dark text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300">
-                  {savingLink ? <Spinner size={16} /> : 'Create Link'}
-                </button>
-                <button onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Manual Override Modal ─────────────────────────────────────────── */}
-        {showOverrideModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900 mb-2">Manual Conversion Override</h3>
-              <p className="text-sm text-gray-500 mb-5">
-                Override the conversion count for a specific date. This affects reporting only.
-              </p>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Date <span className="text-red-500">*</span></label>
-                  <input type="date" value={overrideForm.date}
-                    onChange={e => setOverrideForm(p => ({ ...p, date: e.target.value }))} className={inp} />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Manual Conversions <span className="text-red-500">*</span></label>
-                  <input type="number" min={0} value={overrideForm.manual_conversions}
-                    onChange={e => setOverrideForm(p => ({ ...p, manual_conversions: parseInt(e.target.value) || 0 }))}
-                    className={inp} />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-red-500">*</span></label>
-                  <textarea rows={3} value={overrideForm.reason}
-                    onChange={e => setOverrideForm(p => ({ ...p, reason: e.target.value }))}
-                    placeholder="Explain the override reason…" className={inp} />
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <button onClick={handleOverrideSubmit} disabled={savingOverride}
-                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300">
-                  {savingOverride ? <Spinner size={16} /> : 'Apply Override'}
-                </button>
-                <button onClick={() => setShowOverrideModal(false)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Share Stats Modal info update — domain config notice */}
         {/* ── Share Stats Modal ────────────────────────────────────────────── */}
@@ -1503,7 +970,8 @@ export default function DirectLinkStatsPage() {
               </div>
               <p className="text-sm text-gray-500 mb-5">
                 Choose exactly what <strong className="text-gray-800">{prefsModal.pubName}</strong> sees on their shared
-                stats page. OS toggles control the Valid Windows / Valid Mac / Valid Android columns.
+                stats page. By default only the <strong>Windows Valid Clicks</strong> column is shown — enable the
+                toggles below to also show Mac / Android columns.
               </p>
               <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
                 <div className="grid grid-cols-1 gap-1">
@@ -1511,9 +979,9 @@ export default function DirectLinkStatsPage() {
                     [
                       { key: 'show_impressions', label: 'Show Impressions' },
                       { key: 'show_clicks', label: 'Show Clicks' },
-                      { key: 'show_windows_clicks', label: 'Show Windows Valid Clicks column' },
-                      { key: 'show_mac_clicks', label: 'Show Mac Valid Clicks column' },
-                      { key: 'show_android_clicks', label: 'Show Android Valid Clicks column' },
+                      { key: 'show_windows_clicks', label: 'Show Windows Valid Clicks column (default ON)' },
+                      { key: 'show_mac_clicks', label: 'Show Mac Valid Clicks column (opt-in)' },
+                      { key: 'show_android_clicks', label: 'Show Android Valid Clicks column (opt-in)' },
                       { key: 'show_valid_clicks', label: 'Show Valid Clicks (Unique Wins)' },
                       { key: 'show_invalid_clicks', label: 'Show Invalid Clicks' },
                       { key: 'show_conversions', label: 'Show Conversions' },
@@ -1571,7 +1039,6 @@ export default function DirectLinkStatsPage() {
                         setShowAddConv(true)
                         setEditingConversion(null)
                         setAddConvDate(new Date().toISOString().split('T')[0])
-                        setAddConvLink('')
                         setAddConvValue(0)
                         setAddConvReason('')
                       }}
@@ -1591,7 +1058,7 @@ export default function DirectLinkStatsPage() {
               {showAddConv && (
                 <div className="mx-5 mt-5 border border-gray-200 rounded-xl bg-gray-50 p-4">
                   <p className="text-sm font-semibold text-gray-800 mb-3">New conversion entry</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Date</label>
                       <input type="date" value={addConvDate}
@@ -1601,15 +1068,6 @@ export default function DirectLinkStatsPage() {
                       <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Conversions</label>
                       <input type="number" min={0} value={addConvValue}
                         onChange={e => setAddConvValue(parseInt(e.target.value) || 0)} className={inp} />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Link (optional)</label>
-                      <select value={addConvLink} onChange={e => setAddConvLink(e.target.value)} className={inp}>
-                        <option value="">All Links</option>
-                        {links.filter(l => l.publisher_id === historyModal.pubId && l.status !== 'archived').map(l => (
-                          <option key={l.id} value={l.id}>{l.name}</option>
-                        ))}
-                      </select>
                     </div>
                   </div>
                   <div className="mt-3">
@@ -1645,7 +1103,6 @@ export default function DirectLinkStatsPage() {
                         onClick={() => {
                           setShowAddConv(true)
                           setAddConvDate(new Date().toISOString().split('T')[0])
-                          setAddConvLink('')
                           setAddConvValue(0)
                           setAddConvReason('')
                         }}
@@ -1659,7 +1116,7 @@ export default function DirectLinkStatsPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
                       <tr>
-                        {['Date', 'Link', 'Conversions', 'Reason', ''].map(h => (
+                        {['Date', 'Conversions', 'Reason', ''].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1670,7 +1127,6 @@ export default function DirectLinkStatsPage() {
                           {editingConversion?.id === row.id ? (
                             <>
                               <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(row.date)}</td>
-                              <td className="px-4 py-3 text-gray-500 text-xs">{row.link_name || 'All Links'}</td>
                               <td className="px-4 py-3">
                                 <input type="number" min={0} value={editConvValue}
                                   onChange={e => setEditConvValue(parseInt(e.target.value) || 0)}
@@ -1696,7 +1152,6 @@ export default function DirectLinkStatsPage() {
                           ) : (
                             <>
                               <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(row.date)}</td>
-                              <td className="px-4 py-3 text-gray-500 text-xs max-w-[120px] truncate">{row.link_name || 'All Links'}</td>
                               <td className="px-4 py-3 font-mono font-bold text-gray-900">{row.conversions.toLocaleString()}</td>
                               <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate" title={row.reason}>{row.reason || '—'}</td>
                               <td className="px-4 py-3 whitespace-nowrap">
@@ -1712,7 +1167,7 @@ export default function DirectLinkStatsPage() {
                                   title="Delete this conversion entry"
                                   className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
                                 >
-                                  <Trash2 size={13} />
+                                  <X size={13} />
                                 </button>
                               </td>
                             </>

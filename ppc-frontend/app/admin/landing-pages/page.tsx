@@ -10,8 +10,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { landingPageApi, campaignApi, adminApi, prlanderTemplateApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
-import type { LandingPage } from '@/types'
-import type { RedirectionDomain } from '@/types'
+import type { LandingPage, AvailablePrelanderDomain } from '@/types'
 
 interface DeviceCampaign {
   id: string
@@ -62,7 +61,9 @@ export default function LandingPagesPage() {
   const { initialize } = useAuth()
   const [pages, setPages] = useState<LandingPage[]>([])
   const [campaigns, setCampaigns] = useState<DeviceCampaign[]>([])
-  const [prelanderDomains, setPrelanderDomains] = useState<RedirectionDomain[]>([])
+  // All prelander domains with binding state — the Add form shows only the
+  // remaining (bound = false) ones; the pool panel lists every domain.
+  const [prelanderDomains, setPrelanderDomains] = useState<AvailablePrelanderDomain[]>([])
   const [templates, setTemplates] = useState<PrelanderTemplateLite[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
@@ -73,6 +74,8 @@ export default function LandingPagesPage() {
   const [deleting, setDeleting] = useState(false)
   // OS filter for the list (Requirement 4) — '' = all
   const [osFilter, setOsFilter] = useState('')
+  // Pool include/exclude switch — per-domain status toggle
+  const [togglingPoolId, setTogglingPoolId] = useState<string | null>(null)
 
   useEffect(() => { initialize() }, [])
 
@@ -82,7 +85,10 @@ export default function LandingPagesPage() {
       const [lpRes, cRes, dRes, tRes] = await Promise.all([
         landingPageApi.getAll().catch(() => ({ data: { landing_pages: [] } })),
         campaignApi.getAll({ status: 'active' }).catch(() => ({ data: { campaigns: [] } })),
-        adminApi.getRedirectionDomains({ domain_type: 'prelander', status: 'active' })
+        // Available domains include EVERY prelander domain with its bound flag
+        // and status (pool switch) — no status filter so paused domains stay
+        // visible and configurable.
+        landingPageApi.getAvailablePrelanderDomains()
           .catch(() => ({ data: { domains: [] } })),
         prlanderTemplateApi.getAll({ status: 'active' })
           .catch(() => ({ data: { templates: [] } })),
@@ -137,7 +143,13 @@ export default function LandingPagesPage() {
       setModal(null)
       load()
     } catch (err: any) {
-      toast.error(err.response?.data?.detail?.[0]?.msg || err.response?.data?.detail || 'Failed to save')
+      const detail = err.response?.data?.detail
+      toast.error(
+        (Array.isArray(detail) && detail[0]?.msg) ||
+        detail ||
+        err.response?.data?.error ||
+        'Failed to save'
+      )
     }
     finally { setSaving(false) }
   }
@@ -151,6 +163,25 @@ export default function LandingPagesPage() {
       load()
     } catch { toast.error('Delete failed') }
     finally { setDeleting(false) }
+  }
+
+  // Pool include/exclude switch — toggles the DOMAIN's active/paused status.
+  // Active = in the weighted prelander pool; paused = fully configured but
+  // receives no traffic (routing already skips inactive domains).
+  const handleTogglePool = async (domain: AvailablePrelanderDomain) => {
+    const next = domain.status === 'active' ? 'paused' : 'active'
+    setTogglingPoolId(domain.id)
+    try {
+      const res = await adminApi.toggleRedirectionDomainStatus(domain.id, next)
+      toast.success(res.data?.message || (next === 'active'
+        ? `${domain.domain} is now active — included in the pool`
+        : `${domain.domain} is now paused — excluded from the pool`))
+      load()
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || err.response?.data?.detail || 'Failed to update domain status')
+    } finally {
+      setTogglingPoolId(null)
+    }
   }
 
   const activePages = pages.filter(p => p.status === 'active')
@@ -178,14 +209,40 @@ export default function LandingPagesPage() {
     )
   }
 
+  // Domain candidates for the form's Prelander Domain dropdown:
+  //   - Create: ONLY the remaining (bound = false) domains — already-added
+  //     domains never reappear in the Add Landing Page form.
+  //   - Edit:  remaining domains PLUS this page's own binding (an admin must
+  //     be able to keep, or re-pick, the currently bound domain).
+  const remainingDomains = prelanderDomains.filter(d => !d.bound)
+  const editableDomainHost = pages.find(p => p.id === editId)?.prelander_domain
+  const selectableDomains = modal === 'edit' && editableDomainHost
+    ? [
+        ...prelanderDomains.filter(d => d.bound && d.domain === editableDomainHost),
+        ...remainingDomains,
+      ]
+    : remainingDomains
+
   const columns = [
     { key: 'name', label: 'Name', render: (p: LandingPage) => <span className="font-medium text-gray-900">{p.name}</span> },
     { key: 'lander_url', label: 'Prelander URL', render: (p: LandingPage) => <span className="text-sm text-gray-500 max-w-xs block truncate font-mono">{p.lander_url}</span> },
     { key: 'prelander_domain', label: 'Prelander Domain', render: (p: LandingPage) => (
       p.prelander_domain_name ? (
-        <div className="flex items-center gap-1.5">
-          <Globe size={13} className="text-emerald-600 flex-shrink-0" />
-          <span className="text-sm font-mono text-gray-800">{p.prelander_domain_name}</span>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1.5">
+            <Globe size={13} className="text-emerald-600 flex-shrink-0" />
+            <span className="text-sm font-mono text-gray-800">{p.prelander_domain_name}</span>
+          </div>
+          {/* Pool include/exclude state of the bound domain */}
+          {p.prelander_domain_status === 'paused' ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 w-fit">
+              Excluded from pool
+            </span>
+          ) : p.prelander_domain_status === 'active' ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 w-fit">
+              In pool
+            </span>
+          ) : null}
         </div>
       ) : (
         <span className="text-xs text-gray-300">—</span>
@@ -290,6 +347,67 @@ export default function LandingPagesPage() {
           <DataTable columns={columns} data={filteredPages} loading={loading} emptyMessage="No landing pages yet." />
         </div>
 
+        {/* ── Prelander Domain Pool — see & configure every prelander domain,
+              and include/exclude it from the traffic pool via the status
+              toggle (active = in pool, paused = excluded). ─────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-6 mt-6">
+          <div className="flex items-center gap-2 mb-1">
+            <Globe size={16} className="text-emerald-600" />
+            <h2 className="text-base font-semibold text-gray-900">Prelander Domain Pool</h2>
+            <span className="text-xs text-gray-400">
+              {prelanderDomains.filter(d => d.status === 'active').length} in pool ·
+              {' '}{prelanderDomains.filter(d => d.status === 'paused').length} excluded
+            </span>
+          </div>
+          <p className="text-xs text-gray-400 mb-4">
+            Active domains participate in the weighted prelander pool; paused domains stay fully
+            configured but receive no traffic. A domain bound to a landing page is marked <span className="font-medium text-gray-600">bound</span>.
+          </p>
+          {prelanderDomains.length === 0 ? (
+            <p className="text-sm text-gray-400 py-2">No prelander domains configured. Add them in Redirection Domains.</p>
+          ) : (
+            <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
+              {prelanderDomains.map(d => (
+                <div key={d.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50/60">
+                  <Globe size={14} className={d.status === 'active' ? 'text-emerald-600' : 'text-gray-300'} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-mono text-gray-800 truncate">{d.domain}</span>
+                      {d.is_default && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold">Default</span>
+                      )}
+                      {d.bound && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200 font-semibold">
+                          Bound{d.bound_page ? `: ${d.bound_page.name}` : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-gray-400">
+                      weight {d.weight} · template {d.template}
+                    </div>
+                  </div>
+                  {/* Pool include/exclude switch */}
+                  <button
+                    onClick={() => handleTogglePool(d)}
+                    disabled={togglingPoolId === d.id}
+                    title={d.status === 'active' ? 'Active — included in the traffic pool. Click to exclude.' : 'Paused — excluded from the traffic pool. Click to include.'}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 ${
+                      d.status === 'active' ? 'bg-emerald-500' : 'bg-gray-200'
+                    }`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${
+                      d.status === 'active' ? 'translate-x-5' : 'translate-x-0'
+                    }`} />
+                  </button>
+                  <span className={`text-xs font-medium w-16 text-right ${d.status === 'active' ? 'text-emerald-700' : 'text-gray-400'}`}>
+                    {togglingPoolId === d.id ? '…' : d.status === 'active' ? 'In pool' : 'Excluded'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {modal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setModal(null)}>
             <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100" onClick={e => e.stopPropagation()}>
@@ -331,11 +449,47 @@ export default function LandingPagesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Prelander Domain</label>
                   <select value={form.prelander_domain} onChange={e => setForm(p => ({ ...p, prelander_domain: e.target.value }))} className={inputClass}>
                     <option value="">Not bound (uses routing engine pool)</option>
-                    {prelanderDomains.map(d => (
-                      <option key={d.id} value={d.domain}>{d.domain}{d.is_default ? ' ★' : ''}</option>
+                    {/* Create: only the REMAINING (not yet bound) domains are
+                        offered — domains already bound to a landing page are
+                        excluded. Edit: also offer this page's own binding so
+                        the current value stays selectable. */}
+                    {selectableDomains.map(d => (
+                      <option key={d.id} value={d.domain}>
+                        {d.domain}{d.is_default ? ' ★' : ''}{d.status === 'paused' ? ' (paused — excluded from pool)' : ''}
+                      </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-400 mt-1">Prelander redirection domains from the Domain Glossary</p>
+                  {remainingDomains.length === 0 && modal === 'create' && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      All prelander domains are already bound to landing pages. Add a new prelander domain in Redirection Domains first.
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {modal === 'create'
+                      ? 'Only prelander domains not yet assigned to a landing page are listed'
+                      : 'Prelander redirection domains from the Domain Glossary'}
+                  </p>
+                  {form.prelander_domain && (() => {
+                    const selectedDomain = prelanderDomains.find(d => d.domain === form.prelander_domain)
+                    if (!selectedDomain) return null
+                    return (
+                      <div className={`mt-2 p-2.5 rounded-lg border flex items-center gap-2 ${selectedDomain.status === 'active' ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
+                        <span className={`text-xs font-semibold ${selectedDomain.status === 'active' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {selectedDomain.status === 'active' ? 'In traffic pool' : 'Paused — excluded from traffic pool'}
+                        </span>
+                        {selectedDomain.status === 'paused' && (
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePool(selectedDomain)}
+                            disabled={togglingPoolId === selectedDomain.id}
+                            className="ml-auto text-xs font-medium text-amber-700 underline hover:text-amber-900 disabled:opacity-50"
+                          >
+                            {togglingPoolId === selectedDomain.id ? 'Activating…' : 'Include in pool'}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Prelander Template</label>

@@ -25,6 +25,16 @@ jobs:
           git log -1 --oneline
           echo "========================================="
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Reject invalid backend code before syncing files or changing containers.
+      - name: Check backend Python syntax
+        working-directory: ppc-backend
+        run: python -m compileall -q app scripts
+
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:

@@ -17,6 +17,7 @@ admin entered manually.
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from app.dependencies import get_db
@@ -76,14 +77,55 @@ async def get_public_stats(
         "show_cr": True,
         "show_fraud_score": False,
         "show_daily_breakdown": True,
-        # Per-OS click breakdown — shown unless the admin turns that OS off for
-        # this link.
+        # Default column set: ONLY Windows valid clicks. The admin opts the
+        # other OS columns in per publisher via the toggles.
         "show_windows_clicks": True,
-        "show_mac_clicks": True,
-        "show_android_clicks": True,
+        "show_mac_clicks": False,
+        "show_android_clicks": False,
     }
     # Priority: link preferences > profile preferences > defaults
+    # Each per-OS toggle defaults OFF unless explicitly enabled — a profile
+    # written before those keys existed must not suddenly expose Mac/Android.
     prefs = link_preferences or (profile.get("preferences") if profile else None) or default_prefs
+    for os_key in ("show_windows_clicks", "show_mac_clicks", "show_android_clicks"):
+        if os_key not in prefs:
+            prefs[os_key] = default_prefs[os_key]
+
+    # ── Identity mark (#L1 / Pub id) for the page header ─────────────────────
+    # The share page header shows which publisher this page belongs to, e.g.
+    # "#L1 · Pub bvdrt71" — a short link number + the publisher's public_id.
+    # L-number = position of this link among the publisher's links, oldest
+    # first (L1 = their first/primary link). Falls back to the masked slug
+    # segment when the link has no slug yet.
+    publisher = None
+    try:
+        publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)})
+    except Exception:
+        publisher = None
+    if not publisher:
+        publisher = await db.publishers.find_one({"_id": publisher_id})
+    pub_identifier = ""
+    if publisher:
+        pub_identifier = (
+            publisher.get("public_id")
+            or publisher.get("name")
+            or ""
+        )
+
+    link_number = 1
+    if link.get("slug"):
+        try:
+            links_cursor = db.direct_links.find(
+                {"publisher_id": publisher_id},
+                {"slug": 1, "created_at": 1},
+            ).sort("created_at", 1)
+            slugs = [d.get("slug") async for d in links_cursor]
+            if link["slug"] in slugs:
+                link_number = slugs.index(link["slug"]) + 1
+        except Exception:
+            link_number = 1
+    elif link.get("created_at"):
+        link_number = 1
 
     # ── Date range ────────────────────────────────────────────────────────────
     end_date = datetime.utcnow()
@@ -283,6 +325,15 @@ async def get_public_stats(
     response_data = {
         "date_range": f"Last {days} Days",
         "preferences": prefs,
+    }
+
+    # Identity mark shown in the page header: "#L1 · Pub bvdrt71". The link
+    # number identifies which of the publisher's links this page tracks; the
+    # pub identifier is the publisher's public_id (PUB_…) or name. Neither
+    # leaks the internal ObjectId.
+    response_data["identity"] = {
+        "link_number": link_number,
+        "pub_id": pub_identifier,
     }
 
     if prefs.get("show_impressions", True):

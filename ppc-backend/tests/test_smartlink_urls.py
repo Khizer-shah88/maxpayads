@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from app.routers import admin_router, click_router
 from app.services import domain_service, smartlink_signing
 from app.services.smartlink_service import generate_smartlink
+from app.services.smartlink_parser import generate_smartlink_with_structure
 from app.utils import public_id_utils
 
 
@@ -29,6 +30,55 @@ async def test_service_generates_only_identifiers(public_ids, website_id, expect
     assert urlsplit(link).path == "/click"
     assert parse_qs(urlsplit(link).query) == expected
     assert link == await generate_smartlink(None, "publisher", website_id, "https://anchor.example/")
+
+
+@pytest.mark.parametrize("use_public_ids", [True, False])
+async def test_service_without_saved_structures(public_ids, use_public_ids):
+    database = SimpleNamespace(
+        smartlink_structures=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+    )
+    referrer = "https://example.com/page?source=email&offer=a+b#details"
+    link = await generate_smartlink(
+        database, "publisher", "website", "https://anchor.example/",
+        use_public_ids=use_public_ids, referrer=referrer,
+        custom_params={"campaign": "summer / sale"},
+    )
+    assert link.startswith("https://anchor.example/click?")
+    assert "ref=https%3A%2F%2Fexample.com%2Fpage%3F" in link
+    assert parse_qs(urlsplit(link).query) == {
+        "pub": [PUB if use_public_ids else "publisher"],
+        "site": [SITE if use_public_ids else "website"],
+        "ref": [referrer],
+        "campaign": ["summer / sale"],
+    }
+
+
+@pytest.mark.parametrize("selection", ["default", "active", "explicit"])
+@pytest.mark.parametrize("include_website", [True, False])
+async def test_structure_generation_preserves_configuration(selection, include_website):
+    structure = {
+        "name": "Custom", "publisher_param": "tag", "website_param": "sid",
+        "include_website": include_website,
+        "extra_params": [{"key": "source", "value": "email / newsletter"}],
+    }
+    find_one = AsyncMock(side_effect=[None, structure] if selection == "active" else [structure])
+    database = SimpleNamespace(smartlink_structures=SimpleNamespace(find_one=find_one))
+    structure_id = "507f1f77bcf86cd799439011" if selection == "explicit" else None
+    link = await generate_smartlink_with_structure(
+        database, PUB, SITE, structure_id=structure_id,
+        domain="https://anchor.example/", extra_params={"ref": "https://example.com/page"},
+    )
+    expected = {"tag": [PUB], "source": ["email / newsletter"], "ref": ["https://example.com/page"]}
+    if include_website:
+        expected["sid"] = [SITE]
+    assert urlsplit(link).path == "/click"
+    assert parse_qs(urlsplit(link).query) == expected
+    if selection == "explicit":
+        assert str(find_one.call_args.args[0]["_id"]) == structure_id
+    elif selection == "active":
+        assert find_one.call_args.args[0] == {"status": "active"}
+    else:
+        find_one.assert_awaited_once_with({"is_default": True, "status": "active"})
 
 
 @pytest.mark.parametrize("publisher_type, site_count", [("manual", 0), ("registered", 2), ("registered", 0)])

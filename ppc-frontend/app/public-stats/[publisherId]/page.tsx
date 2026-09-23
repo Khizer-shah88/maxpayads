@@ -34,6 +34,7 @@ interface CountryRow {
 
 interface StatsData {
   date_range: string
+  identity?: { link_number: number; pub_id: string }
   total_impressions: number
   total_conversions: number
   conversion_rate: number
@@ -181,6 +182,7 @@ export default function PublisherStatsPage() {
 
       setStats({
         date_range: d.date_range || `Last ${days} Days`,
+        identity: d.identity || null,
         total_impressions: totalImp,
         total_conversions: totalConv,
         conversion_rate: cr,
@@ -348,6 +350,14 @@ export default function PublisherStatsPage() {
   const toggleSeries = (k: 'imp' | 'uni' | 'conv') =>
     setSeries(prev => ({ ...prev, [k]: !prev[k] }))
 
+  // Number of columns visible in the daily breakdown table (for colSpan).
+  const visibleColCount = 1
+    + (prefs.show_impressions !== false ? 1 : 0)
+    + (prefs.show_windows_clicks !== false ? 1 : 0)
+    + (prefs.show_mac_clicks !== false ? 1 : 0)
+    + (prefs.show_android_clicks !== false ? 1 : 0)
+    + (prefs.show_conversions !== false ? 1 : 0)
+
   const hovered = hoverIdx !== null ? chartData[hoverIdx] : null
 
   return (
@@ -378,6 +388,23 @@ export default function PublisherStatsPage() {
               </span>
             </div>
           </div>
+
+          {/* ── Identity mark — which publisher/link this page tracks ── */}
+          {stats.identity && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111721] border border-[#1D2634] min-w-0">
+              <span className="text-xs text-[#3B82F6] font-semibold tabular-nums whitespace-nowrap">
+                #{stats.identity.link_number ? `L${stats.identity.link_number}` : 'L1'}
+              </span>
+              {stats.identity.pub_id && (
+                <>
+                  <span className="text-[10px] text-[#3D4A5E]">·</span>
+                  <span className="text-xs text-[#8695A8] truncate" title={stats.identity.pub_id}>
+                    Pub id {stats.identity.pub_id}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-2 flex-wrap">
             {showFilters && platformChips.map(chip => {
@@ -713,24 +740,24 @@ export default function PublisherStatsPage() {
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+            <table className="w-full border-collapse table-fixed">
                 <thead>
                   <tr>
-                    <th className="px-4 py-2.5 text-left text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Date</th>
+                    <th className="w-[42%] px-3 py-2.5 text-left text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Date</th>
                     {prefs.show_impressions !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Impressions</th>
+                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Impressions</th>
                     )}
                     {prefs.show_windows_clicks !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Windows</th>
+                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Windows</th>
                     )}
                     {prefs.show_mac_clicks !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Mac</th>
+                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Mac</th>
                     )}
                     {prefs.show_android_clicks !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Android</th>
+                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Android</th>
                     )}
                     {prefs.show_conversions !== false && (
-                      <th className="px-4 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
+                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
                     )}
                   </tr>
                 </thead>
@@ -741,13 +768,13 @@ export default function PublisherStatsPage() {
                     const isNewest = i === 0
                     return (
                       <tr key={row.date} className="hover:bg-white/[0.03] transition-colors">
-                        <td className="px-4 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
+                        <td className="px-3 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap">
                           {fmtDate(row.date)}
                           {isNewest && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
                           {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">
                             {row.clicks.toLocaleString()}
                             <span
                               className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
@@ -757,16 +784,16 @@ export default function PublisherStatsPage() {
                         )}
                         {/* OS valid-click columns — admin picks which OSes to expose */}
                         {prefs.show_windows_clicks !== false && (
-                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.windows_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.windows_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_mac_clicks !== false && (
-                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.mac_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.mac_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_android_clicks !== false && (
-                          <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.android_clicks.toLocaleString()}</td>
+                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]">{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className={`px-4 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`}>
                             {row.conversions.toLocaleString()}
                           </td>
                         )}
@@ -774,7 +801,7 @@ export default function PublisherStatsPage() {
                     )
                   })}
                   {filteredRows.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-[#5C6B7E]">No data in this range</td></tr>
+                    <tr><td colSpan={visibleColCount} className="px-4 py-8 text-center text-sm text-[#5C6B7E]">No data in this range</td></tr>
                   )}
                 </tbody>
               </table>
