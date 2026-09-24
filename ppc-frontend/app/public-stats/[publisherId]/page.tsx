@@ -420,7 +420,7 @@ export default function PublisherStatsPage() {
         </div>
       </header>
 
-      <main className="max-w-[1280px] mx-auto px-5 py-5 flex flex-col gap-4">
+      <main className="max-w-[1280px] mx-auto px-3 sm:px-5 py-3 sm:py-5 flex flex-col gap-3 sm:gap-4">
         {showFilters && (
           <section aria-label="Operating system filters" className="flex items-center justify-between gap-3 flex-wrap bg-[#111721] border border-[#1D2634] rounded-[10px] px-4 py-3">
             <span className="text-xs font-medium text-[#8695A8]">Valid clicks by OS</span>
@@ -727,33 +727,33 @@ export default function PublisherStatsPage() {
           )}
         </section>
 
-        {/* Daily breakdown — FULL width so every column fits with no dead space */}
+        {/* Daily breakdown — responsive table with horizontal scroll on mobile */}
         <section className="bg-[#111721] border border-[#1D2634] rounded-[10px] overflow-hidden">
-          <div className="px-4 py-3.5 border-b border-[#1D2634]">
+          <div className="px-3 sm:px-4 py-3.5 border-b border-[#1D2634]">
             <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
             <p className="text-xs text-[#8695A8] mt-0.5">
               {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS and conversions per day'}
             </p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+          <div className="overflow-x-auto -mx-px">
+            <table className="w-full min-w-[640px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
                   <tr>
-                    <th className="w-[42%] px-3 py-2.5 text-left text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Date</th>
+                    <th className="px-2 sm:px-3 py-2.5 text-left text-[10.5px] sm:text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Date</th>
                     {prefs.show_impressions !== false && (
-                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Impressions</th>
+                      <th className="px-2 sm:px-3 py-2.5 text-right text-[10.5px] sm:text-[11.5px] font-medium text-[#22D3EE] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Impressions</th>
                     )}
                     {prefs.show_windows_clicks !== false && (
-                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Windows</th>
+                      <th className="px-2 sm:px-3 py-2.5 text-right text-[10.5px] sm:text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Valid Windows</th>
                     )}
                     {prefs.show_mac_clicks !== false && (
-                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Mac</th>
+                      <th className="px-2 sm:px-3 py-2.5 text-right text-[10.5px] sm:text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Valid Mac</th>
                     )}
                     {prefs.show_android_clicks !== false && (
-                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Valid Android</th>
+                      <th className="px-2 sm:px-3 py-2.5 text-right text-[10.5px] sm:text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Valid Android</th>
                     )}
                     {prefs.show_conversions !== false && (
-                      <th className="px-3 py-2.5 text-right text-[11.5px] font-medium text-[#8695A8] bg-[#0D131C] border-b border-[#1D2634]">Conv.</th>
+                      <th className="px-2 sm:px-3 py-2.5 text-right text-[10.5px] sm:text-[11.5px] font-medium text-[#A78BFA] bg-[#0D131C] border-b border-[#1D2634] whitespace-nowrap">Conv.</th>
                     )}
                   </tr>
                 </thead>
@@ -764,34 +764,28 @@ export default function PublisherStatsPage() {
                     const isNewest = i === 0
                     return (
                       <tr key={row.date} className="hover:bg-white/[0.03] transition-colors" style={{ borderBottom: 'none' }}>
-                        <td className="px-3 py-2.5 text-[13px] text-[#8695A8] whitespace-nowrap" style={{ border: 'none' }}>
+                        <td className="px-2 sm:px-3 py-2.5 sm:py-3 text-[12px] sm:text-[13px] text-[#8695A8] whitespace-nowrap" style={{ border: 'none' }}>
                           {fmtDate(row.date)}
-                          {isNewest && <span className="ml-2 text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1.5 py-0.5 rounded">latest</span>}
-                          {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
+                          {isNewest && <span className="ml-1.5 sm:ml-2 text-[9.5px] sm:text-[10.5px] text-[#3B82F6] bg-[#3B82F6]/15 px-1 sm:px-1.5 py-0.5 rounded">latest</span>}
+                          {row.date === stats.peak_day_date && <span className="ml-1.5 sm:ml-2 text-[9.5px] sm:text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1 sm:px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.clicks > 0 ? 'text-[#3B82F6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
+                          <td className={`px-2 sm:px-3 py-2.5 sm:py-3 text-right font-medium tabular-nums ${row.clicks > 0 ? 'text-[#22D3EE] text-[13px] sm:text-[14px]' : 'text-[#5C6B7E] text-[12px] sm:text-[13px]'}`} style={{ border: 'none' }}>
                             {row.clicks.toLocaleString()}
-                            {row.clicks > 0 && (
-                              <span
-                                className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
-                                style={{ width: Math.round((row.clicks / maxImpRow) * 40) }}
-                              />
-                            )}
                           </td>
                         )}
                         {/* OS valid-click columns — admin picks which OSes to expose */}
                         {prefs.show_windows_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.windows_clicks > 0 ? 'text-[#60A5FA]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
+                          <td className={`px-2 sm:px-3 py-2.5 sm:py-3 text-right tabular-nums ${row.windows_clicks > 0 ? 'text-[#E5E7EB] text-[13px] sm:text-[14px]' : 'text-[#5C6B7E] text-[12px] sm:text-[13px]'}`} style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_mac_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.mac_clicks > 0 ? 'text-[#A78BFA]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
+                          <td className={`px-2 sm:px-3 py-2.5 sm:py-3 text-right tabular-nums ${row.mac_clicks > 0 ? 'text-[#E5E7EB] text-[13px] sm:text-[14px]' : 'text-[#5C6B7E] text-[12px] sm:text-[13px]'}`} style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_android_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.android_clicks > 0 ? 'text-[#34D399]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
+                          <td className={`px-2 sm:px-3 py-2.5 sm:py-3 text-right tabular-nums ${row.android_clicks > 0 ? 'text-[#E5E7EB] text-[13px] sm:text-[14px]' : 'text-[#5C6B7E] text-[12px] sm:text-[13px]'}`} style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions > 0 ? 'text-[#FBBF24]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
+                          <td className={`px-2 sm:px-3 py-2.5 sm:py-3 text-right font-medium tabular-nums ${row.conversions > 0 ? 'text-[#A78BFA] text-[13px] sm:text-[14px]' : 'text-[#A78BFA]/40 text-[12px] sm:text-[13px]'}`} style={{ border: 'none' }}>
                             {row.conversions.toLocaleString()}
                           </td>
                         )}
