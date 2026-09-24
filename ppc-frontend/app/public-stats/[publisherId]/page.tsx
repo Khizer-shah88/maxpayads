@@ -270,7 +270,10 @@ export default function PublisherStatsPage() {
       : []),
   ]
 
-  const showFilters = prefs.show_os !== false && platformChips.length > 0
+  const hasAnyPlatformData = platformChips.some(c => c.value > 0)
+  // Only show filters if there are 2 or more OS types with clicks
+  const platformsWithData = platformChips.filter(c => c.value > 0).length
+  const showFilters = prefs.show_os !== false && platformsWithData >= 2
   const filterActive = platformFilters.size > 0
 
   // Filter daily rows by the selected platforms. With no selection every
@@ -767,23 +770,25 @@ export default function PublisherStatsPage() {
                           {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
                             {row.clicks.toLocaleString()}
-                            <span
-                              className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
-                              style={{ width: Math.round((row.clicks / maxImpRow) * 40) }}
-                            />
+                            {row.clicks > 0 && (
+                              <span
+                                className="inline-block h-1 rounded-[2px] bg-[#3B82F6] opacity-35 ml-2 align-middle"
+                                style={{ width: Math.round((row.clicks / maxImpRow) * 40) }}
+                              />
+                            )}
                           </td>
                         )}
                         {/* OS valid-click columns — admin picks which OSes to expose */}
                         {prefs.show_windows_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.windows_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_mac_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.mac_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_android_clicks !== false && (
-                          <td className="px-3 py-2.5 text-right text-[13px] tabular-nums text-[#E8EEF6]" style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.android_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
                           <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
