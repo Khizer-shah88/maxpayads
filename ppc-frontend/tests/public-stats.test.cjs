@@ -11,7 +11,7 @@ const { outputText } = ts.transpileModule(readFileSync(path.join(__dirname, '../
 
 function report(count = 1) {
   return {
-    identity: { link_number: 1, pub_id: 'PUB_PRIVATE' },
+    identity: { publisher_name: 'Publisher from API', pub_id: 'PUB_PUBLIC123' },
     total_impressions: 20, total_conversions: 2,
     unique_windows_clicks: count, unique_mac_clicks: 2, unique_android_clicks: 3,
     preferences: { show_windows_clicks: true, show_mac_clicks: true, show_android_clicks: true },
@@ -84,13 +84,18 @@ function filters(tree) {
   return nodes(tree).find(n => n.props?.['aria-label'] === 'Operating system filters');
 }
 
-test('header hides publisher identity and OS filters appear in the stats body', async () => {
+test('header shows the publisher identity from the API and keeps OS filters in the stats body', async () => {
   const page = harness();
   await page.mount();
   const tree = page.render();
   const header = nodes(tree).find(n => n.type === 'header');
   const main = nodes(tree).find(n => n.type === 'main');
+  const identity = nodes(header).find(n => n.props?.['aria-label'] === 'Publisher identity');
+  assert.ok(identity);
+  assert.match(text(identity), /Publisher from API/);
+  assert.match(text(identity), /PUB_PUBLIC123/);
   assert.doesNotMatch(text(tree), /Private publisher|Private link|PUB_PRIVATE|#L1/);
+  assert.doesNotMatch(text(main), /Publisher from API|PUB_PUBLIC123/);
   assert.doesNotMatch(text(header), /Windows|Mac|Android/);
   assert.ok(filters(main));
   assert.match(text(filters(main)), /Windows1Mac2Android3/);

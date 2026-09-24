@@ -10,9 +10,8 @@ Regeneration (POST /direct-links/{link_id}/regenerate-stats-link) replaces the
 share ID, so any old URL stops resolving immediately and renders only
 "This statistics link has expired." — with no further information exposed.
 
-No internal branding, publisher names, campaign names, domain names, or admin
-info is exposed — only aggregated performance numbers plus any conversions the
-admin entered manually.
+The header identifies the publisher by name and public ID. Internal IDs,
+campaign details, domain names and admin information are not exposed.
 """
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -51,14 +50,10 @@ async def get_public_stats(
         raise HTTPException(status_code=410, detail=_EXPIRED_DETAIL)
 
     # Banned/removed publishers lose Direct Link Stats (same rule as admin).
-    from app.services.publisher_service import is_publisher_banned_or_removed
-    try:
-        if await is_publisher_banned_or_removed(publisher_id, db):
-            raise HTTPException(status_code=410, detail=_EXPIRED_DETAIL)
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+    from app.services.publisher_service import get_publisher_by_id
+    publisher = await get_publisher_by_id(publisher_id, db)
+    if not publisher or publisher.get("status") in ("banned", "removed"):
+        raise HTTPException(status_code=410, detail=_EXPIRED_DETAIL)
 
     # ── Report configuration (preferences) ────────────────────────────────────
     link_preferences = link.get("preferences") or None
@@ -294,10 +289,14 @@ async def get_public_stats(
         elif recent_avg < older_avg * 0.9:
             trend = "down"
 
-    # Build response based on preferences — NO publisher name/ID exposed.
+    # Only the requested display identity accompanies the performance data.
     response_data = {
         "date_range": f"Last {days} Days",
         "preferences": prefs,
+        "identity": {
+            "publisher_name": publisher.get("name") or "",
+            "pub_id": publisher.get("public_id") or "",
+        },
     }
 
     if prefs.get("show_impressions", True):

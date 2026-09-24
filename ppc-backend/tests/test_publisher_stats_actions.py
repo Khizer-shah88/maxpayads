@@ -315,6 +315,5 @@ async def test_public_os_counts_only_valid_clicks(stats_db, os_name, bucket):
         assert report[f"unique_{os_key}_clicks"] == expected
         assert day[f"{os_key}_clicks"] == expected
     assert report["unique_wins"] == day["unique_wins"] == int(bucket in ("windows", "mac"))
-    assert "identity" not in report
-    assert "Private publisher" not in response.text
-    assert "PUB_PRIVATE" not in response.text
+    assert report["identity"] == {"publisher_name": "Private publisher", "pub_id": "PUB_PRIVATE"}
+    assert str(pid) not in response.text

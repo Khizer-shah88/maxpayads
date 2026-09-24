@@ -34,6 +34,7 @@ interface CountryRow {
 
 interface StatsData {
   date_range: string
+  identity?: { publisher_name: string; pub_id: string }
   total_impressions: number
   total_conversions: number
   conversion_rate: number
@@ -171,6 +172,7 @@ export default function PublisherStatsPage() {
 
       setStats({
         date_range: d.date_range || `Last ${days} Days`,
+        identity: d.identity,
         total_impressions: totalImp,
         total_conversions: totalConv,
         conversion_rate: cr,
@@ -357,8 +359,8 @@ export default function PublisherStatsPage() {
     <div className="min-h-screen bg-[#0A0E14] text-[#E8EEF6] font-sans">
       {/* â”€â”€ Top bar — brand, range segment, refresh â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <header className="sticky top-0 z-20 bg-[#0D131C] border-b border-[#1D2634]">
-        <div className="max-w-[1280px] mx-auto px-5 py-3 flex items-center justify-between gap-3.5 flex-wrap">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="max-w-[1280px] mx-auto px-5 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5">
+          <div className="flex items-center gap-2.5 min-w-0 justify-self-center sm:justify-self-start">
             <svg viewBox="0 0 140 80" className="w-[34px] h-5 text-[#3B82F6] flex-none" aria-hidden="true">
               <path fill="currentColor" d="M12 44C12 30 30 20 54 20c22 0 38 6 50 16l20-14c-4 12-4 24 0 36l-20-12c-12 8-30 12-50 12C30 58 12 52 12 44Z" />
               <path fill="currentColor" d="M56 52c2 9 10 15 20 14-6-3-11-8-14-15Z" />
@@ -369,7 +371,25 @@ export default function PublisherStatsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="min-w-0 max-w-full justify-self-center sm:col-span-2 sm:row-start-2 lg:col-span-1 lg:col-start-2 lg:row-start-1">
+            {(stats.identity?.publisher_name || stats.identity?.pub_id) && (
+              <div aria-label="Publisher identity" className="flex min-w-0 max-w-full flex-col items-center justify-center gap-x-2 gap-y-0.5 rounded-lg border border-[#1D2634] bg-[#111721] px-3 py-1.5 text-center sm:flex-row sm:flex-wrap">
+                {stats.identity.publisher_name && (
+                  <span className="min-w-0 max-w-full text-xs font-semibold text-[#3B82F6] [overflow-wrap:anywhere]">
+                    {stats.identity.publisher_name}
+                  </span>
+                )}
+                {stats.identity.publisher_name && stats.identity.pub_id && <span aria-hidden="true" className="hidden text-[#3D4A5E] sm:inline">·</span>}
+                {stats.identity.pub_id && (
+                  <span className="min-w-0 max-w-full font-mono text-xs text-[#8695A8] [overflow-wrap:anywhere]">
+                    {stats.identity.pub_id}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 justify-self-center sm:col-start-2 sm:row-start-1 sm:justify-self-end lg:col-start-3">
             <div className="flex bg-[#111721] border border-[#1D2634] rounded-lg p-0.5">
               {(['7', '14', '30'] as const).map(d => (
                 <button
