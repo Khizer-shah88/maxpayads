@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+import re
 
 import pytest
 from bson import ObjectId
@@ -228,3 +229,92 @@ async def test_stats_setup_rejects_unavailable_publishers(stats_db, case, expect
         response = await client.post(f"/direct-links/publisher/{'invalid' if case == 'invalid' else pid}/stats-link")
     assert response.status_code == expected
     assert stats_db.direct_links.docs == []
+
+
+def evaluate(expression, doc):
+    """Evaluate the aggregation expressions against real test click documents."""
+    if isinstance(expression, str) and expression.startswith("$"):
+        return doc.get(expression[1:])
+    if not isinstance(expression, dict):
+        return expression
+    if "$eq" in expression:
+        left, right = expression["$eq"]
+        return evaluate(left, doc) == evaluate(right, doc)
+    if "$cond" in expression:
+        condition, yes, no = expression["$cond"]
+        return evaluate(yes if evaluate(condition, doc) else no, doc)
+    if "$ifNull" in expression:
+        value, fallback = expression["$ifNull"]
+        resolved = evaluate(value, doc)
+        return evaluate(fallback, doc) if resolved is None else resolved
+    if "$regexMatch" in expression:
+        args = expression["$regexMatch"]
+        return bool(re.search(args["regex"], evaluate(args["input"], doc), re.I))
+    if "$dateToString" in expression:
+        args = expression["$dateToString"]
+        return evaluate(args["date"], doc).strftime(args["format"])
+    return {key: evaluate(value, doc) for key, value in expression.items()}
+
+
+class ClickCollection(Collection):
+    def aggregate(self, pipeline):
+        docs = deepcopy(self.docs)
+        for stage in pipeline:
+            if "$match" in stage:
+                docs = [doc for doc in docs if matches(doc, stage["$match"])]
+            elif "$group" in stage:
+                groups = {}
+                spec = stage["$group"]
+                for doc in docs:
+                    key = evaluate(spec["_id"], doc)
+                    group = groups.setdefault(repr(key), {"_id": key})
+                    for name, accumulator in spec.items():
+                        if name != "_id":
+                            group[name] = group.get(name, 0) + evaluate(accumulator["$sum"], doc)
+                docs = list(groups.values())
+            elif "$sort" in stage:
+                docs = Cursor(docs).sort(list(stage["$sort"].items())).docs
+            elif "$limit" in stage:
+                docs = docs[:stage["$limit"]]
+            else:
+                raise AssertionError(f"Unsupported test aggregation stage: {stage}")
+        return Cursor(docs)
+
+
+@pytest.mark.parametrize("os_name, bucket", [
+    ("Windows", "windows"), ("Windows NT 10.0", "windows"), ("win32", "windows"),
+    ("Mac OS X 10.15", "mac"), ("Darwin", "mac"), ("iOS", "mac"),
+    ("Android", "android"), ("Android/APK", "android"), ("apk", "android"),
+])
+async def test_public_os_counts_only_valid_clicks(stats_db, os_name, bucket):
+    pid = ObjectId()
+    stats_db.publishers.docs.append({"_id": pid, "name": "Private publisher", "public_id": "PUB_PRIVATE", "role": "publisher", "status": "active"})
+    stats_db.direct_links.docs.append({
+        "_id": ObjectId(), "publisher_id": str(pid), "status": "active", "stats_share_id": "test-share",
+        "preferences": {"show_country": False, "show_windows_clicks": True, "show_mac_clicks": True, "show_android_clicks": True},
+    })
+    now = datetime.utcnow()
+    base = {"publisher_id": str(pid), "timestamp": now, "os": os_name}
+    stats_db.clicks = ClickCollection([
+        {**base, "is_valid": True}, {**base, "is_valid": False},
+        {**base, "is_valid": None}, base,  # pending/legacy clicks aren't validated
+        {**base, "publisher_id": str(ObjectId()), "is_valid": True},
+        {**base, "timestamp": now - timedelta(days=100), "is_valid": True},
+    ])
+    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="http://test") as client:
+        response = await client.get("/public-stats/test-share")
+    assert response.status_code == 200
+    report = response.json()["data"]
+    assert report["total_impressions"] == 4
+    assert report["total_clicks"] == 4
+    assert len(report["daily_breakdown"]) == 1
+    day = report["daily_breakdown"][0]
+    assert day["clicks"] == 4
+    for os_key in ("windows", "mac", "android"):
+        expected = int(os_key == bucket)
+        assert report[f"unique_{os_key}_clicks"] == expected
+        assert day[f"{os_key}_clicks"] == expected
+    assert report["unique_wins"] == day["unique_wins"] == int(bucket in ("windows", "mac"))
+    assert "identity" not in report
+    assert "Private publisher" not in response.text
+    assert "PUB_PRIVATE" not in response.text

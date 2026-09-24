@@ -17,10 +17,10 @@ admin entered manually.
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Depends
 
 from app.dependencies import get_db
+from app.core.glossary import normalize_os
 
 router = APIRouter(prefix="/public-stats", tags=["Public Stats"])
 
@@ -91,42 +91,6 @@ async def get_public_stats(
         if os_key not in prefs:
             prefs[os_key] = default_prefs[os_key]
 
-    # ── Identity mark (#L1 / Pub id) for the page header ─────────────────────
-    # The share page header shows which publisher this page belongs to, e.g.
-    # "#L1 · Pub bvdrt71" — a short link number + the publisher's public_id.
-    # L-number = position of this link among the publisher's links, oldest
-    # first (L1 = their first/primary link). Falls back to the masked slug
-    # segment when the link has no slug yet.
-    publisher = None
-    try:
-        publisher = await db.publishers.find_one({"_id": ObjectId(publisher_id)})
-    except Exception:
-        publisher = None
-    if not publisher:
-        publisher = await db.publishers.find_one({"_id": publisher_id})
-    pub_identifier = ""
-    if publisher:
-        pub_identifier = (
-            publisher.get("public_id")
-            or publisher.get("name")
-            or ""
-        )
-
-    link_number = 1
-    if link.get("slug"):
-        try:
-            links_cursor = db.direct_links.find(
-                {"publisher_id": publisher_id},
-                {"slug": 1, "created_at": 1},
-            ).sort("created_at", 1)
-            slugs = [d.get("slug") async for d in links_cursor]
-            if link["slug"] in slugs:
-                link_number = slugs.index(link["slug"]) + 1
-        except Exception:
-            link_number = 1
-    elif link.get("created_at"):
-        link_number = 1
-
     # ── Date range ────────────────────────────────────────────────────────────
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
@@ -139,9 +103,12 @@ async def get_public_stats(
         "timestamp": {"$gte": start_date, "$lte": end_date},
     }
 
+    # Validation is completed asynchronously. Pending, invalid and legacy
+    # unvalidated clicks still count as impressions, never as valid OS clicks.
+    valid_click_count = {"$sum": {"$cond": [{"$eq": ["$is_valid", True]}, 1, 0]}}
     os_pipeline = [
         {"$match": click_match},
-        {"$group": {"_id": "$os", "count": {"$sum": 1}}},
+        {"$group": {"_id": "$os", "count": {"$sum": 1}, "valid_clicks": valid_click_count}},
     ]
     os_results = await db.clicks.aggregate(os_pipeline).to_list(length=None)
 
@@ -150,14 +117,14 @@ async def get_public_stats(
     mac_clicks = 0
     android_clicks = 0
     for row in os_results:
-        os_val = (row.get("_id") or "").lower()
-        cnt = row.get("count", 0)
-        total_clicks += cnt
-        if any(w in os_val for w in ("windows", "win")):
+        os_val = normalize_os(row.get("_id"))
+        cnt = row.get("valid_clicks", 0)
+        total_clicks += row.get("count", 0)
+        if os_val == "windows":
             windows_clicks += cnt
-        elif any(m in os_val for m in ("mac", "ios", "darwin", "macos")):
+        elif os_val == "mac":
             mac_clicks += cnt
-        elif "android" in os_val:
+        elif os_val == "android":
             android_clicks += cnt
 
     # ── Country breakdown (share page country stats) ──────────────────────────
@@ -241,25 +208,27 @@ async def get_public_stats(
         daily_clicks_pipeline = [
             {"$match": click_match},
             {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                "_id": {
+                    "date": {"$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}},
+                    "os": "$os",
+                },
                 "clicks": {"$sum": 1},
-                "windows_clicks": {"$sum": {"$cond": [
-                    {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "windows|win", "options": "i"}},
-                    1, 0,
-                ]}},
-                "mac_clicks": {"$sum": {"$cond": [
-                    {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "mac|ios|darwin", "options": "i"}},
-                    1, 0,
-                ]}},
-                "android_clicks": {"$sum": {"$cond": [
-                    {"$regexMatch": {"input": {"$ifNull": ["$os", ""]}, "regex": "android", "options": "i"}},
-                    1, 0,
-                ]}},
+                "valid_clicks": valid_click_count,
             }},
-            {"$sort": {"_id": -1}},
-            {"$limit": days},
         ]
-        daily_clicks_raw = await db.clicks.aggregate(daily_clicks_pipeline).to_list(length=None)
+        daily_os_rows = await db.clicks.aggregate(daily_clicks_pipeline).to_list(length=None)
+        daily_counts = {}
+        for row in daily_os_rows:
+            date_str = row["_id"]["date"]
+            counts = daily_counts.setdefault(date_str, {
+                "_id": date_str, "clicks": 0,
+                "windows_clicks": 0, "mac_clicks": 0, "android_clicks": 0,
+            })
+            counts["clicks"] += row["clicks"]
+            os_key = normalize_os(row["_id"].get("os"))
+            if os_key in ("windows", "mac", "android"):
+                counts[f"{os_key}_clicks"] += row["valid_clicks"]
+        daily_clicks_raw = [daily_counts[date] for date in sorted(daily_counts, reverse=True)[:days]]
 
         # Tracked conversions per day
         daily_conv_pipeline = [
@@ -290,6 +259,10 @@ async def get_public_stats(
                 ),
                 "android_clicks": (
                     row.get("android_clicks", 0) if prefs.get("show_android_clicks", True) else 0
+                ),
+                "unique_wins": sum(
+                    row.get(f"{os}_clicks", 0)
+                    for os in ("windows", "mac") if prefs.get(f"show_{os}_clicks", True)
                 ),
             })
 
@@ -327,15 +300,6 @@ async def get_public_stats(
         "preferences": prefs,
     }
 
-    # Identity mark shown in the page header: "#L1 · Pub bvdrt71". The link
-    # number identifies which of the publisher's links this page tracks; the
-    # pub identifier is the publisher's public_id (PUB_…) or name. Neither
-    # leaks the internal ObjectId.
-    response_data["identity"] = {
-        "link_number": link_number,
-        "pub_id": pub_identifier,
-    }
-
     if prefs.get("show_impressions", True):
         response_data["total_impressions"] = total_clicks
 
@@ -365,7 +329,7 @@ async def get_public_stats(
     if prefs.get("show_daily_breakdown", True):
         response_data["daily_breakdown"] = daily_breakdown
 
-    response_data["unique_wins"] = windows_clicks + mac_clicks
+    response_data["unique_wins"] = response_data["unique_windows_clicks"] + response_data["unique_mac_clicks"]
     response_data["insights"] = {
         "avg_daily_clicks": avg_daily_clicks,
         "trend_direction": trend,

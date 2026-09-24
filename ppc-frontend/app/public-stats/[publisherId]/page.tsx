@@ -34,7 +34,6 @@ interface CountryRow {
 
 interface StatsData {
   date_range: string
-  identity?: { link_number: number; pub_id: string }
   total_impressions: number
   total_conversions: number
   conversion_rate: number
@@ -121,9 +120,6 @@ export default function PublisherStatsPage() {
   const params = useParams()
   const shareId = params.publisherId as string
 
-  // Admin preview mode — read query params for link name and publisher info
-  const [previewInfo, setPreviewInfo] = useState<{ linkName?: string; publisherName?: string; publisherId?: string } | null>(null)
-
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -134,23 +130,16 @@ export default function PublisherStatsPage() {
   const [series, setSeries] = useState({ imp: true, uni: true, conv: true })
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   const [lastUpdated, setLastUpdated] = useState('')
-
-  // Read query params for admin preview mode
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const searchParams = new URLSearchParams(window.location.search)
-      const linkName = searchParams.get('linkName')
-      const publisherName = searchParams.get('publisherName')
-      const publisherId = searchParams.get('publisherId')
-      if (linkName || publisherName || publisherId) {
-        setPreviewInfo({ linkName: linkName || undefined, publisherName: publisherName || undefined, publisherId: publisherId || undefined })
-      }
-    }
-  }, [])
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState(false)
+  const requestInFlight = useRef(false)
+  const hasLoaded = useRef(false)
 
   const loadStats = useCallback(async () => {
     if (!shareId) { setError(true); setLoading(false); return }
-    setLoading(true)
+    if (requestInFlight.current) return
+    requestInFlight.current = true
+    setRefreshing(true)
     try {
       const response = await publicStatsApi.getPublisherStats(shareId)
       const d = response.data.data
@@ -158,7 +147,7 @@ export default function PublisherStatsPage() {
       const daily: DayRow[] = (d.daily_breakdown || []).map((r: any) => ({
         date: r.date,
         clicks: r.clicks || 0,
-        unique_wins: r.unique_wins || r.windows_clicks || 0,
+        unique_wins: r.unique_wins ?? ((r.windows_clicks || 0) + (r.mac_clicks || 0)),
         conversions: r.conversions || 0,
         cr: r.cr || 0,
         windows_clicks: r.windows_clicks || 0,
@@ -182,14 +171,13 @@ export default function PublisherStatsPage() {
 
       setStats({
         date_range: d.date_range || `Last ${days} Days`,
-        identity: d.identity || null,
         total_impressions: totalImp,
         total_conversions: totalConv,
         conversion_rate: cr,
         avg_daily_impressions: d.insights?.avg_daily_clicks || Math.round(totalImp / days),
         peak_day_value: peakRow?.clicks || 0,
         peak_day_date: peakRow?.date || '',
-        unique_wins: d.unique_wins || uniqueWins,
+        unique_wins: d.unique_wins ?? uniqueWins,
         days_tracked: days,
         windows_clicks: d.unique_windows_clicks || 0,
         mac_clicks: d.unique_mac_clicks || 0,
@@ -203,28 +191,34 @@ export default function PublisherStatsPage() {
         country_breakdown: d.country_breakdown || [],
         preferences: d.preferences || {},
       })
-    } catch (err: any) {
-      // Any failure (invalid token, revoked, wrong publisher, 404, network)
-      // renders the same minimal expired message — never reveal why the link
-      // failed or who it belonged to.
-      console.error('Public stats error:', err?.response?.status)
-      setError(true)
-    } finally {
-      setLoading(false)
+      hasLoaded.current = true
+      setError(false)
+      setRefreshError(false)
       setLastUpdated(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
+    } catch (err: any) {
+      const status = err?.response?.status
+      // Expired/revoked links hide the report immediately. A temporary refresh
+      // failure keeps the last successful report visible until the next retry.
+      if (!hasLoaded.current || [401, 403, 404, 410].includes(status)) {
+        setError(true)
+      } else {
+        setRefreshError(true)
+      }
+    } finally {
+      requestInFlight.current = false
+      setRefreshing(false)
+      setLoading(false)
     }
   }, [shareId])
 
   useEffect(() => { loadStats() }, [loadStats])
 
-  // ── Auto refresh every 20s (spec) — pauses while a manual refresh runs ──
-  const AUTO_REFRESH_MS = 20_000
-  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Refresh in place every 30 seconds; overlapping requests are skipped.
   useEffect(() => {
-    refreshTimer.current = setInterval(() => {
+    const timer = setInterval(() => {
       loadStats()
-    }, AUTO_REFRESH_MS)
-    return () => { if (refreshTimer.current) clearInterval(refreshTimer.current) }
+    }, 30_000)
+    return () => clearInterval(timer)
   }, [loadStats])
 
   // â”€â”€â”€ Platform filter toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -274,8 +268,7 @@ export default function PublisherStatsPage() {
       : []),
   ]
 
-  const hasAnyPlatformData = platformChips.some(c => c.value > 0)
-  const showFilters = prefs.show_os !== false && hasAnyPlatformData
+  const showFilters = prefs.show_os !== false && platformChips.length > 0
   const filterActive = platformFilters.size > 0
 
   // Filter daily rows by the selected platforms. With no selection every
@@ -362,7 +355,7 @@ export default function PublisherStatsPage() {
 
   return (
     <div className="min-h-screen bg-[#0A0E14] text-[#E8EEF6] font-sans">
-      {/* â”€â”€ Top bar — brand, platform chips, range segment, refresh â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* â”€â”€ Top bar — brand, range segment, refresh â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <header className="sticky top-0 z-20 bg-[#0D131C] border-b border-[#1D2634]">
         <div className="max-w-[1280px] mx-auto px-5 py-3 flex items-center justify-between gap-3.5 flex-wrap">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -373,63 +366,7 @@ export default function PublisherStatsPage() {
             </svg>
             <div className="min-w-0">
               <b className="block text-[15px] font-semibold tracking-[-0.01em] leading-tight">Stats</b>
-              <span className="block text-[11px] text-[#5C6B7E]">
-                {previewInfo ? (
-                  <>
-                    {previewInfo.linkName && <span className="font-medium text-[#8695A8]">{previewInfo.linkName}</span>}
-                    {previewInfo.linkName && (previewInfo.publisherName || previewInfo.publisherId) && <span className="mx-1">·</span>}
-                    {previewInfo.publisherName && <span>{previewInfo.publisherName}</span>}
-                    {previewInfo.publisherName && previewInfo.publisherId && <span className="mx-1">·</span>}
-                    {previewInfo.publisherId && <span className="font-mono text-[10px]">{previewInfo.publisherId}</span>}
-                  </>
-                ) : (
-                  'Performance tracking'
-                )}
-              </span>
             </div>
-          </div>
-
-          {/* ── Identity mark — show publisher name in preview mode, link number otherwise ── */}
-          {stats.identity && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#111721] border border-[#1D2634] min-w-0">
-              {previewInfo?.publisherName ? (
-                <span className="text-xs text-[#3B82F6] font-semibold whitespace-nowrap">
-                  {previewInfo.publisherName}
-                </span>
-              ) : (
-                <span className="text-xs text-[#3B82F6] font-semibold tabular-nums whitespace-nowrap">
-                  #{stats.identity.link_number ? `L${stats.identity.link_number}` : 'L1'}
-                </span>
-              )}
-              {stats.identity.pub_id && (
-                <>
-                  <span className="text-[10px] text-[#3D4A5E]">·</span>
-                  <span className="text-xs text-[#8695A8] truncate font-mono" title={stats.identity.pub_id}>
-                    {stats.identity.pub_id}
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-center gap-2 flex-wrap">
-            {showFilters && platformChips.map(chip => {
-              const active = platformFilters.has(chip.key)
-              return (
-                <button
-                  key={chip.key}
-                  onClick={() => togglePlatform(chip.key)}
-                  className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-colors ${
-                    active
-                      ? 'bg-[#3B82F6]/15 border-[#3B82F6]/40 text-[#E8EEF6]'
-                      : 'bg-[#111721] border-[#1D2634] text-[#8695A8] hover:border-[#26313F] hover:text-[#E8EEF6]'
-                  }`}
-                >
-                  {chip.label}
-                  <b className="font-medium text-[#E8EEF6] tabular-nums">{chip.value.toLocaleString()}</b>
-                </button>
-              )
-            })}
           </div>
 
           <div className="flex items-center gap-2">
@@ -447,10 +384,13 @@ export default function PublisherStatsPage() {
               ))}
             </div>
             <button
-              onClick={loadStats}
+              onClick={() => loadStats()}
+              disabled={refreshing}
+              aria-label="Refresh stats"
+              title="Stats refresh automatically every 30 seconds"
               className="inline-flex items-center gap-1.5 bg-[#111721] border border-[#1D2634] rounded-lg px-2.5 py-1.5 text-xs text-[#8695A8] hover:text-[#E8EEF6] hover:border-[#26313F] transition-colors"
             >
-              <RefreshCw size={13} />
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
               <span className="tabular-nums">{lastUpdated || '—'}</span>
             </button>
           </div>
@@ -458,6 +398,33 @@ export default function PublisherStatsPage() {
       </header>
 
       <main className="max-w-[1280px] mx-auto px-5 py-5 flex flex-col gap-4">
+        {showFilters && (
+          <section aria-label="Operating system filters" className="flex items-center justify-between gap-3 flex-wrap bg-[#111721] border border-[#1D2634] rounded-[10px] px-4 py-3">
+            <span className="text-xs font-medium text-[#8695A8]">Valid clicks by OS</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              {platformChips.map(chip => {
+                const active = platformFilters.has(chip.key)
+                return (
+                  <button
+                    key={chip.key}
+                    onClick={() => togglePlatform(chip.key)}
+                    aria-pressed={active}
+                    className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-colors ${
+                      active
+                        ? 'bg-[#3B82F6]/15 border-[#3B82F6]/40 text-[#E8EEF6]'
+                        : 'bg-[#111721] border-[#1D2634] text-[#8695A8] hover:border-[#26313F] hover:text-[#E8EEF6]'
+                    }`}
+                  >
+                    {chip.label}
+                    <b className="font-medium text-[#E8EEF6] tabular-nums">{chip.value.toLocaleString()}</b>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
+        {refreshError && <p role="status" className="text-xs text-amber-400">Could not refresh stats. Retrying automatically.</p>}
+
         {/* KPI grid — example layout: 5 cards w/ icon tiles + sub rows */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
           {prefs.show_impressions !== false && (
@@ -645,7 +612,7 @@ export default function PublisherStatsPage() {
           <div className="bg-[#111721] border border-[#1D2634] rounded-[10px]">
             <div className="px-4 py-3.5 border-b border-[#1D2634]">
               <h2 className="text-sm font-semibold text-[#E8EEF6]">Top platforms</h2>
-              <p className="text-xs text-[#8695A8] mt-0.5">Share of total clicks</p>
+              <p className="text-xs text-[#8695A8] mt-0.5">Share of valid OS clicks</p>
             </div>
             <div className="px-4 pt-1.5 pb-3.5">
               {platformChips.length === 0 ? (
@@ -674,7 +641,7 @@ export default function PublisherStatsPage() {
                         </div>
                       </div>
                       <span className="text-right text-[12.5px] text-[#8695A8] tabular-nums">
-                        {((c.value / Math.max(stats.total_impressions, 1)) * 100).toFixed(1)}%
+                        {((c.value / Math.max(platformChips.reduce((sum, chip) => sum + chip.value, 0), 1)) * 100).toFixed(1)}%
                       </span>
                     </button>
                   ))

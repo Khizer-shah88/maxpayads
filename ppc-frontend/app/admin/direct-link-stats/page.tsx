@@ -426,28 +426,8 @@ export default function DirectLinkStatsPage() {
     try {
       const link = await resolveStatsLink(publisherId)
       const res = await directLinkApi.shareStatsLink(link.id)
-      let url = res.data?.stats_url
+      const url = res.data?.stats_url
       if (url) {
-        // Get publisher's public ID
-        const publisher = publishers.find(p => p.id === publisherId)
-        const publisherPublicId = publisher ? await (async () => {
-          try {
-            const pubData = await adminApi.getPublisher(publisherId)
-            return pubData.data?.publisher?.public_id || publisherId
-          } catch {
-            return publisherId
-          }
-        })() : publisherId
-        
-        // Add query parameters for admin preview mode
-        const urlObj = new URL(url)
-        if (link.name) {
-          urlObj.searchParams.set('linkName', link.name)
-        }
-        urlObj.searchParams.set('publisherName', publisherName)
-        urlObj.searchParams.set('publisherId', publisherPublicId)
-        url = urlObj.toString()
-        
         setShareModal({ name: publisherName, url })
       } else {
         throw new Error('No URL returned')
@@ -466,28 +446,8 @@ export default function DirectLinkStatsPage() {
     try {
       const link = await resolveStatsLink(publisherId)
       const res = await directLinkApi.regenerateStatsLink(link.id)
-      let url = res.data?.stats_url
+      const url = res.data?.stats_url
       if (url) {
-        // Get publisher's public ID
-        const publisher = publishers.find(p => p.id === publisherId)
-        const publisherPublicId = publisher ? await (async () => {
-          try {
-            const pubData = await adminApi.getPublisher(publisherId)
-            return pubData.data?.publisher?.public_id || publisherId
-          } catch {
-            return publisherId
-          }
-        })() : publisherId
-        
-        // Add query parameters for admin preview mode
-        const urlObj = new URL(url)
-        if (link.name) {
-          urlObj.searchParams.set('linkName', link.name)
-        }
-        urlObj.searchParams.set('publisherName', publisherName)
-        urlObj.searchParams.set('publisherId', publisherPublicId)
-        url = urlObj.toString()
-        
         setShareModal({ name: publisherName, url })
         toast.success('New link generated — the previous link has expired')
       } else {
