@@ -805,7 +805,7 @@ export default function DirectLinkStatsPage() {
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Shareable URL</label>
                 <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-1">
                   <div className="flex-1 px-3 py-2 text-xs font-mono text-gray-700 break-all select-all min-w-0">
-                    {shareModal.url}
+                    {shareModal.url.split('?')[0]}
                   </div>
                 </div>
               </div>
@@ -815,7 +815,9 @@ export default function DirectLinkStatsPage() {
                 <button
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(shareModal.url)
+                      // Copy only the clean URL without query params
+                      const cleanUrl = shareModal.url.split('?')[0]
+                      await navigator.clipboard.writeText(cleanUrl)
                       toast.success('Link copied to clipboard!')
                     } catch {
                       toast.error('Copy failed — please select and copy manually')
@@ -826,7 +828,15 @@ export default function DirectLinkStatsPage() {
                   <Copy size={15} /> Copy Link
                 </button>
                 <a
-                  href={shareModal.url}
+                  href={(() => {
+                    // For preview, add query params to show context
+                    const pub = publishers.find(p => p.name === shareModal.name)
+                    if (!pub) return shareModal.url.split('?')[0]
+                    const link = links.find(l => l.publisher_id === pub.id)
+                    const cleanUrl = shareModal.url.split('?')[0]
+                    if (!link) return cleanUrl
+                    return `${cleanUrl}?linkName=${encodeURIComponent(link.name)}&publisherName=${encodeURIComponent(pub.name)}&publisherId=${encodeURIComponent(pub.id)}`
+                  })()}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
