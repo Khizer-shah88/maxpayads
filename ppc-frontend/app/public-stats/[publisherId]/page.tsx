@@ -770,7 +770,7 @@ export default function PublisherStatsPage() {
                           {row.date === stats.peak_day_date && <span className="ml-2 text-[10.5px] text-[#F59E0B] bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">peak</span>}
                         </td>
                         {prefs.show_impressions !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.clicks > 0 ? 'text-[#3B82F6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
                             {row.clicks.toLocaleString()}
                             {row.clicks > 0 && (
                               <span
@@ -782,16 +782,16 @@ export default function PublisherStatsPage() {
                         )}
                         {/* OS valid-click columns — admin picks which OSes to expose */}
                         {prefs.show_windows_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.windows_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.windows_clicks > 0 ? 'text-[#60A5FA]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.windows_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_mac_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.mac_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.mac_clicks > 0 ? 'text-[#A78BFA]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.mac_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_android_clicks !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.android_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.android_clicks > 0 ? 'text-[#34D399]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>{row.android_clicks.toLocaleString()}</td>
                         )}
                         {prefs.show_conversions !== false && (
-                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
+                          <td className={`px-3 py-2.5 text-right text-[13px] tabular-nums ${row.conversions > 0 ? 'text-[#FBBF24]' : 'text-[#5C6B7E]'}`} style={{ border: 'none' }}>
                             {row.conversions.toLocaleString()}
                           </td>
                         )}
