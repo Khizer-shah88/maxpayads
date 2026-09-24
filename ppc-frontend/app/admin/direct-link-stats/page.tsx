@@ -120,11 +120,13 @@ export default function DirectLinkStatsPage() {
   const [cleaningUp, setCleaningUp] = useState(false)
 
   // Per-publisher stats-domain editor (fisherhub-style dedicated domain)
-  const [pubDomainModal, setPubDomainModal] = useState<{ pubId: string; pubName: string; value: string } | null>(null)
+  const [pubDomainModal, setPubDomainModal] = useState<{ pubId: string; pubName: string; linkId: string; value: string } | null>(null)
+  const [openingDomain, setOpeningDomain] = useState<string | null>(null)
   const [savingPubDomain, setSavingPubDomain] = useState(false)
 
   // Per-publisher stats-page preferences editor (what the pub sees on /public-stats)
   const [prefsModal, setPrefsModal] = useState<{ pubId: string; pubName: string; linkId: string; prefs: StatsPreferences } | null>(null)
+  const [openingPrefs, setOpeningPrefs] = useState<string | null>(null)
   const [savingPrefs, setSavingPrefs] = useState(false)
 
   // Conversion history browser/editor (old conversions editable + deletable)
@@ -237,18 +239,28 @@ export default function DirectLinkStatsPage() {
   }
 
   // ── Per-publisher dedicated stats domain (e.g. fisherhub.com) ─────────────
-  const openPubDomain = (pub: { id: string; name: string }) => {
-    const link = links.find(l => l.publisher_id === pub.id && l.status !== 'archived')
-    setPubDomainModal({ pubId: pub.id, pubName: pub.name, value: link?.stats_domain || '' })
+  const resolveStatsLink = async (publisherId: string): Promise<DirectLink> => {
+    const res = await directLinkApi.ensurePublisherStatsLink(publisherId)
+    return res.data.link
+  }
+
+  const openPubDomain = async (pub: { id: string; name: string }) => {
+    setOpeningDomain(pub.id)
+    try {
+      const link = await resolveStatsLink(pub.id)
+      setPubDomainModal({ pubId: pub.id, pubName: pub.name, linkId: link.id, value: link.stats_domain || '' })
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to load the stats domain')
+    } finally {
+      setOpeningDomain(null)
+    }
   }
 
   const savePubDomain = async () => {
     if (!pubDomainModal) return
     setSavingPubDomain(true)
     try {
-      const link = links.find(l => l.publisher_id === pubDomainModal.pubId && l.status !== 'archived')
-      if (!link) { toast.error('No active link for this publisher'); return }
-      await directLinkApi.update(link.id, { stats_domain: pubDomainModal.value.trim() })
+      await directLinkApi.update(pubDomainModal.linkId, { stats_domain: pubDomainModal.value.trim() })
       toast.success(pubDomainModal.value.trim()
         ? `Dedicated stats domain saved for ${pubDomainModal.pubName}`
         : 'Dedicated domain cleared — publisher falls back to the global stats domain')
@@ -262,16 +274,21 @@ export default function DirectLinkStatsPage() {
   }
 
   // ── Per-publisher stats preferences (what the pub sees on /public-stats) ──
-  const openPrefs = (pub: { id: string; name: string }) => {
-    const link = links.find(l => l.publisher_id === pub.id && l.status !== 'archived')
-    if (!link) { toast.error('No active link for this publisher'); return }
-    const current = link.preferences || {}
-    setPrefsModal({
-      pubId: pub.id,
-      pubName: pub.name,
-      linkId: link.id,
-      prefs: { ...DEFAULT_PREFS, ...current },
-    })
+  const openPrefs = async (pub: { id: string; name: string }) => {
+    setOpeningPrefs(pub.id)
+    try {
+      const link = await resolveStatsLink(pub.id)
+      setPrefsModal({
+        pubId: pub.id,
+        pubName: pub.name,
+        linkId: link.id,
+        prefs: { ...DEFAULT_PREFS, ...link.preferences },
+      })
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to load stats preferences')
+    } finally {
+      setOpeningPrefs(null)
+    }
   }
 
   const savePrefs = async () => {
@@ -407,12 +424,10 @@ export default function DirectLinkStatsPage() {
   const generateStatsUrl = async (publisherId: string, publisherName: string) => {
     setGeneratingShare(publisherId)
     try {
-      const res = await directLinkApi.generateStatsToken({ publisher_id: publisherId })
+      const link = await resolveStatsLink(publisherId)
+      const res = await directLinkApi.shareStatsLink(link.id)
       let url = res.data?.stats_url
       if (url) {
-        // Find the active link for this publisher
-        const activeLink = links.find(l => l.publisher_id === publisherId && l.status !== 'archived')
-        
         // Get publisher's public ID
         const publisher = publishers.find(p => p.id === publisherId)
         const publisherPublicId = publisher ? await (async () => {
@@ -426,8 +441,8 @@ export default function DirectLinkStatsPage() {
         
         // Add query parameters for admin preview mode
         const urlObj = new URL(url)
-        if (activeLink?.name) {
-          urlObj.searchParams.set('linkName', activeLink.name)
+        if (link.name) {
+          urlObj.searchParams.set('linkName', link.name)
         }
         urlObj.searchParams.set('publisherName', publisherName)
         urlObj.searchParams.set('publisherId', publisherPublicId)
@@ -445,26 +460,14 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Resolve the active link ID for a publisher (newest active/paused link)
-  const activeLinkIdFor = (pubId: string): string | null => {
-    const active = links
-      .filter(l => l.publisher_id === pubId && (l.status === 'active' || l.status === 'paused'))
-      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
-    return active[0]?.id ?? null
-  }
-
   // Regenerate the public stats URL for a publisher's active link
   const regenerateStatsUrl = async (publisherId: string, publisherName: string) => {
-    const linkId = activeLinkIdFor(publisherId)
-    if (!linkId) { toast.error('No active link for this publisher'); return }
     setRegenerating(publisherId)
     try {
-      const res = await directLinkApi.regenerateStatsLink(linkId)
+      const link = await resolveStatsLink(publisherId)
+      const res = await directLinkApi.regenerateStatsLink(link.id)
       let url = res.data?.stats_url
       if (url) {
-        // Find the active link for this publisher
-        const activeLink = links.find(l => l.id === linkId)
-        
         // Get publisher's public ID
         const publisher = publishers.find(p => p.id === publisherId)
         const publisherPublicId = publisher ? await (async () => {
@@ -478,8 +481,8 @@ export default function DirectLinkStatsPage() {
         
         // Add query parameters for admin preview mode
         const urlObj = new URL(url)
-        if (activeLink?.name) {
-          urlObj.searchParams.set('linkName', activeLink.name)
+        if (link.name) {
+          urlObj.searchParams.set('linkName', link.name)
         }
         urlObj.searchParams.set('publisherName', publisherName)
         urlObj.searchParams.set('publisherId', publisherPublicId)
@@ -601,8 +604,8 @@ export default function DirectLinkStatsPage() {
         ) : publisherStats.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <Link size={48} className="mx-auto mb-4 opacity-20" />
-            <p className="text-base font-medium mb-2">No publishers with stats yet</p>
-            <p className="text-sm">Publishers appear here once they have a direct link with traffic</p>
+            <p className="text-base font-medium mb-2">No publishers yet</p>
+            <p className="text-sm">Add a publisher to manage their stats and sharing options</p>
           </div>
         ) : (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
@@ -727,19 +730,19 @@ export default function DirectLinkStatsPage() {
                           </button>
                           <button
                             onClick={() => openPrefs(pub)}
-                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            disabled={openingPrefs === pub.id}
                             title="Stats preferences"
                             className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-40"
                           >
-                            <Settings2 size={14} />
+                            {openingPrefs === pub.id ? <Spinner size={14} /> : <Settings2 size={14} />}
                           </button>
                           <button
                             onClick={() => openPubDomain(pub)}
-                            disabled={!links.some(l => l.publisher_id === pub.id && l.status !== 'archived')}
+                            disabled={openingDomain === pub.id}
                             title="Dedicated stats domain"
                             className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 transition-colors disabled:opacity-40"
                           >
-                            <Globe2 size={14} />
+                            {openingDomain === pub.id ? <Spinner size={14} /> : <Globe2 size={14} />}
                           </button>
                           <button
                             onClick={() => openHistory(pub)}

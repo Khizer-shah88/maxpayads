@@ -20,6 +20,8 @@ from typing import Optional
 
 from bson import ObjectId
 from bson.errors import InvalidId
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 
 from app.dependencies import get_db, get_current_admin
@@ -76,6 +78,67 @@ async def _unique_share_id(db) -> str:
     raise RuntimeError("Could not generate unique share ID after 10 attempts")
 
 
+async def _ensure_publisher_stats_link(publisher_id: str, db) -> dict:
+    """Resolve the same stats record for every publisher action, creating it if needed."""
+    try:
+        pub_oid = ObjectId(publisher_id)
+    except (InvalidId, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid publisher ID")
+    publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
+    if not publisher:
+        raise HTTPException(status_code=404, detail="Publisher not found")
+    if publisher.get("status") in ("banned", "removed"):
+        raise HTTPException(status_code=403, detail="Direct Link Stats unavailable: publisher is banned or removed")
+
+    publisher_id = str(pub_oid)
+    link = await db.direct_links.find_one(
+        {"publisher_id": publisher_id, "status": {"$in": ["active", "paused"]}},
+        sort=[("created_at", -1), ("_id", -1)],
+    )
+    if link:
+        return link
+
+    previous = await db.direct_links.find_one(
+        {"publisher_id": publisher_id}, sort=[("created_at", -1), ("_id", -1)],
+    ) or {}
+    now = datetime.utcnow()
+    # Manual/name-only publishers have no traffic link. Keep their report in a
+    # paused, domain-free record so stats setup cannot create a redirect URL.
+    # The existing unique slug index makes concurrent setup requests idempotent.
+    query = {"slug": f"stats-{publisher_id}"}
+    doc = {
+        **query,
+        "publisher_id": publisher_id,
+        "publisher_name": publisher.get("name", ""),
+        "name": f"{publisher.get('name', 'Publisher')} stats",
+        "status": "paused",
+        "stats_share_id": await _unique_share_id(db),
+        "preferences": previous.get("preferences") or {},
+        "stats_domain": previous.get("stats_domain") or "",
+        "total_clicks": 0,
+        "total_conversions": 0,
+        "created_at": now,
+        "updated_at": now,
+    }
+    try:
+        link = await db.direct_links.find_one_and_update(
+            query, {"$setOnInsert": doc}, upsert=True, return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        link = await db.direct_links.find_one(query)
+        if not link:
+            raise
+
+    if link.get("status") == "archived":
+        # Reopening stats must not revive an archived share URL.
+        await db.direct_links.update_one(
+            {"_id": link["_id"], "status": "archived"},
+            {"$set": {"status": "paused", "stats_share_id": await _unique_share_id(db), "updated_at": now}},
+        )
+        link = await db.direct_links.find_one(query)
+    return link
+
+
 def _serialize(doc: dict, today_conversions: int = 0, manual_conversions: int = 0) -> dict:
     return {
         "id": str(doc["_id"]),
@@ -106,6 +169,16 @@ def _serialize(doc: dict, today_conversions: int = 0, manual_conversions: int = 
 
 
 # ─── CRUD ─────────────────────────────────────────────────────────────────────
+
+@router.post("/publisher/{publisher_id}/stats-link")
+async def ensure_publisher_stats_link(
+    publisher_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    link = await _ensure_publisher_stats_link(publisher_id, db)
+    return {"success": True, "link": _serialize(link)}
+
 
 @router.get("")
 async def list_links(
@@ -849,8 +922,8 @@ async def generate_stats_token(
     db=Depends(get_db),
 ):
     """
-    Legacy-compatible entry point: return the shareable stats URL for the
-    publisher's most recent active/paused direct link (share ID based).
+    Legacy-compatible entry point: return the publisher's shareable stats URL,
+    initializing a stats record when they have no active/paused direct link.
 
     Body: { "publisher_id": "..." }
     """
@@ -858,20 +931,7 @@ async def generate_stats_token(
     if not publisher_id:
         raise HTTPException(status_code=400, detail="publisher_id is required")
 
-    try:
-        pub_oid = ObjectId(publisher_id)
-        publisher = await db.publishers.find_one({"_id": pub_oid, "role": "publisher"})
-        if not publisher:
-            raise HTTPException(status_code=404, detail="Publisher not found")
-    except InvalidId:
-        raise HTTPException(status_code=400, detail="Invalid publisher ID")
-
-    link = await db.direct_links.find_one(
-        {"publisher_id": publisher_id, "status": {"$in": ["active", "paused"]}},
-        sort=[("created_at", -1)],
-    )
-    if not link:
-        raise HTTPException(status_code=404, detail="No active direct link for this publisher")
+    link = await _ensure_publisher_stats_link(publisher_id, db)
 
     share_id = link.get("stats_share_id")
     if not share_id:
@@ -887,6 +947,6 @@ async def generate_stats_token(
         "success": True,
         "share_id": share_id,
         "stats_url": stats_url,
-        "publisher_name": publisher.get("name", "Unknown"),
+        "publisher_name": link.get("publisher_name", "Unknown"),
         "expires": None,
     }

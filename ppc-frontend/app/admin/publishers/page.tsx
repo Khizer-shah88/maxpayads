@@ -250,7 +250,7 @@ export default function PublishersPage() {
       render: (p: Publisher) => (
         <div>
           <span className="font-medium text-gray-900">{p.name}</span>
-          {p.public_id && <span className="block text-xs font-mono text-gray-400">{p.public_id}</span>}
+          {p.public_id && <span className="block text-xs font-mono text-gray-400">{p.public_id.replace(/^PUB_/, '')}</span>}
         </div>
       )
     },

@@ -236,6 +236,8 @@ export const directLinkApi = {
   deleteConversionOverride: (id: string) =>
     api.delete(`/direct-links/conversions/overrides/${id}`),
   // White-label stats link (share ID based)
+  ensurePublisherStatsLink: (publisherId: string) =>
+    api.post(`/direct-links/publisher/${publisherId}/stats-link`),
   shareStatsLink: (id: string) =>
     api.post(`/direct-links/${id}/share-stats-link`),
   // Regenerate the public stats URL — old link expires immediately
