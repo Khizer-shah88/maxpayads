@@ -1,43 +1,86 @@
 # Public Stats: Conditional Colors & OS Filter Visibility Fix
 
-## Issues Fixed
+# Public Stats: Colorful Distinct Colors for Each Metric
 
-### 1. ✅ Conditional Color Coding for Zero Values
-**Problem:**
-All numeric values in the daily breakdown table were displayed in white (`text-[#E8EEF6]`), making it hard to distinguish between actual data and zero values.
+## Color Scheme Applied
 
-**Solution:**
-Applied conditional color logic to all numeric columns:
-- **White (`#E8EEF6`)**: When value > 0 (has data)
-- **Gray (`#5C6B7E`)**: When value = 0 (no data)
+Each column in the daily breakdown table now has its own **distinct, vibrant color** when values > 0, making it easy to visually distinguish between different metrics at a glance.
 
-**Columns Updated:**
-1. **Impressions**: `${row.clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`
-2. **Valid Windows**: `${row.windows_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`
-3. **Valid Mac**: `${row.mac_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`
-4. **Valid Android**: `${row.android_clicks > 0 ? 'text-[#E8EEF6]' : 'text-[#5C6B7E]'}`
-5. **Conversions**: Already had conditional logic ✓
+### Color Palette
 
-**Additional Improvement:**
-- Hide the blue progress bar next to impressions when `clicks = 0`
+| Column | Color When > 0 | Hex Code | Visual |
+|--------|----------------|----------|--------|
+| **Impressions** | Blue | `#3B82F6` | 🔵 Bright blue |
+| **Valid Windows** | Light Blue | `#60A5FA` | 🔷 Sky blue |
+| **Valid Mac** | Purple | `#A78BFA` | 🟣 Violet |
+| **Valid Android** | Green | `#34D399` | 🟢 Emerald |
+| **Conversions** | Amber/Gold | `#FBBF24` | 🟡 Golden yellow |
+| **All zeros** | Gray | `#5C6B7E` | ⚫ Muted gray |
 
-**Before:**
+### Visual Example
+
 ```
-Sep 18, 2026    2    0    0    0
-                ↑    ↑    ↑    ↑
-              white white white white (hard to distinguish zeros)
+DATE          IMPRESSIONS  VALID WINDOWS  VALID MAC  VALID ANDROID  CONV
+Sep 24, 2026       1            1            0           0           10
+                   🔵           🔷           ⚫          ⚫          🟡
+
+Sep 18, 2026       2            0            0           0            0
+                   🔵           ⚫           ⚫          ⚫          ⚫
+
+Sep 15, 2026       4            1            0           0            0
+                   🔵           🔷           ⚫          ⚫          ⚫
+
+Sep 13, 2026      15            5            0           0            0
+                   🔵           🔷           ⚫          ⚫          ⚫
 ```
 
-**After:**
-```
-Sep 18, 2026    2    0    0    0
-                ↑    ↑    ↑    ↑
-              white gray gray gray (zeros clearly muted)
+## Benefits
+
+### 1. **Instant Visual Recognition**
+Each metric has its own color identity, making it easy to scan the table and identify patterns:
+- Blue tones for clicks (Impressions, Windows)
+- Purple for Mac
+- Green for Android
+- Gold for conversions
+
+### 2. **Clear Zero State**
+Gray color (`#5C6B7E`) for zeros makes it immediately obvious which cells have no data
+
+### 3. **Color Consistency**
+Colors match the visual theme:
+- Windows = Blue (matches Microsoft branding)
+- Mac = Purple (matches Apple's aesthetics)
+- Android = Green (matches Android branding)
+- Conversions = Gold (represents value/success)
+
+### 4. **Better Data Scanning**
+Users can quickly spot:
+- Which OS types are getting traffic (colored vs gray)
+- Days with conversions (gold stands out)
+- Overall traffic patterns (blue impressions column)
+
+## Technical Implementation
+
+```tsx
+// Impressions - Blue
+text-[#3B82F6] when > 0, text-[#5C6B7E] when = 0
+
+// Valid Windows - Light Blue  
+text-[#60A5FA] when > 0, text-[#5C6B7E] when = 0
+
+// Valid Mac - Purple
+text-[#A78BFA] when > 0, text-[#5C6B7E] when = 0
+
+// Valid Android - Green
+text-[#34D399] when > 0, text-[#5C6B7E] when = 0
+
+// Conversions - Amber/Gold
+text-[#FBBF24] when > 0, text-[#5C6B7E] when = 0
 ```
 
 ---
 
-### 2. ✅ OS Filter Chips - Show Only When Multiple OS Types Have Data
+## 2. ✅ OS Filter Chips - Show Only When Multiple OS Types Have Data
 **Problem:**
 The OS filter chips (Windows, Mac, Android) were showing even when only ONE OS type had clicks. This made the filters useless and cluttered the UI.
 
@@ -94,9 +137,9 @@ const showFilters = prefs.show_os !== false && platformsWithData >= 2
 ✅ Merge conflict resolved successfully  
 
 ## Deployment
-- Commit: `1fed3a5`
+- Commit: `d03fbba`
 - Branch: `main`
 - Status: Pushed and ready for CI/CD
 
 ## Summary
-The public stats page now provides better visual hierarchy with conditional colors and only shows OS filters when they serve a purpose (2+ OS types with data). This creates a cleaner, more professional look with better UX.
+The public stats page now uses a vibrant, colorful scheme where each metric has its own distinct color for better visual scanning and data recognition. OS filters only appear when useful (2+ OS types), creating a cleaner, more professional interface.
