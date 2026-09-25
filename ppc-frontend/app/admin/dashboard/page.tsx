@@ -1,5 +1,7 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+
 import { useState, useEffect, useCallback } from 'react'
 import { MousePointer, CheckCircle, Users, DollarSign, TrendingUp, Wallet, Settings2, X, Plus, Trash2, Globe, Link, RefreshCw } from 'lucide-react'
 import {
@@ -81,7 +83,7 @@ export default function AdminDashboard() {
         <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600">
           {(r.name || '?').charAt(0).toUpperCase()}
         </div>
-        <span className="font-medium text-gray-900">{r.name}</span>
+        <span className="font-medium text-gray-900">{r.name}<PublisherId publicId={r.public_id} publisherId={r.id || r.publisher_id} /></span>
       </div>
     )},
     { key: 'email', label: 'Email', render: (r: any) => <span className="text-gray-500 text-xs">{r.email}</span> },

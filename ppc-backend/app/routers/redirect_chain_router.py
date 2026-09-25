@@ -50,19 +50,31 @@ def _serialize_chain(chain: dict) -> dict:
 async def _validate_extra_domains(db, domains: List[str]) -> None:
     """
     Validate the configurable-length hops (Anchor → Inter → C → D → … → N).
-    Each extra hop must be an active redirection domain of ANY type — admins
-    chain existing domains in whatever order the flow requires.
+    Every extra hop uses the Inter role; other roles keep their own purpose.
     """
     for domain in domains:
         doc = await db.redirection_domains.find_one({
             "domain": domain,
+            "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
             "status": "active",
         })
         if not doc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Extra chain domain '{domain}' not found or not active",
+                detail=f"Extra hop '{domain}' must be an active Inter domain",
             )
+
+
+async def _validate_chain_layout(db, chain, exclude_id=None):
+    sequence = [chain['anchor_domain'], chain_inter_domain(chain), *(chain.get('extra_domains') or [])]
+    if len(set(sequence)) != len(sequence):
+        raise HTTPException(status_code=400, detail="A domain cannot appear twice in a chain")
+    if chain.get('status') == 'active':
+        query = {'anchor_domain': chain['anchor_domain'], 'status': 'active'}
+        if exclude_id:
+            query['_id'] = {'$ne': exclude_id}
+        if await db.redirect_chains.find_one(query):
+            raise HTTPException(status_code=400, detail="This Anchor already has an active chain")
 
 
 @router.get("", response_model=dict)
@@ -174,6 +186,7 @@ async def create_redirect_chain(
         "created_by": str(current_user.get("id", current_user.get("_id", "")))
     }
     
+    await _validate_chain_layout(db, chain_data)
     result = await db.redirect_chains.insert_one(chain_data)
     chain_data["_id"] = result.inserted_id
 
@@ -308,6 +321,7 @@ async def update_redirect_chain(
     if unset_legacy:
         update_ops["$unset"] = unset_legacy
 
+    await _validate_chain_layout(db, {**existing_chain, **update_data}, object_id)
     await db.redirect_chains.update_one({"_id": object_id}, update_ops)
     
     # Return updated chain

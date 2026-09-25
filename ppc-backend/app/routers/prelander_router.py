@@ -428,6 +428,24 @@ async def _resolve_next_hop(
     return None
 
 
+@router.post("/hop/{ticket}")
+async def advance_redirect_hop(ticket: str, request: Request, db=Depends(get_db)):
+    from app.services.redirect_hop_service import advance_hop
+    from app.utils.ip_utils import get_client_ip
+    try:
+        destination = await advance_hop(
+            get_redis_safe(), db, ticket, request.headers.get("host", ""),
+            get_client_ip(dict(request.headers), request.client.host if request.client else ""),
+            request.headers.get("user-agent", ""),
+        )
+    except Exception:
+        logger.exception("Inter ticket exchange failed")
+        destination = None
+    if not destination:
+        return await _denied_response(request)
+    return JSONResponse({"next_url": destination}, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/domain-type")
 async def get_domain_type(
     request: Request,
@@ -458,6 +476,10 @@ async def get_domain_type(
     from app.services.domain_service import normalize_domain
 
     h = normalize_domain(host)
+    if h != normalize_domain(request.headers.get("host", "")) or not slug:
+        return await _denied_response(request)
+    if not await get_authorized_session(request, slug, db):
+        return await _denied_response(request)
     if not h:
         return {"domain_type": "unknown", "prelander_domain": None, "last_domain": None, "bypass_redirect_url": None}
 
@@ -542,11 +564,10 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
     # X-Prelander-Host is the real browser domain even through the Next.js proxy.
     # Host header is set by nginx to $host so it's also reliable when nginx
     # routes /api/prelander directly to FastAPI (as in the catch-all block).
-    xph = request.headers.get("x-prelander-host", "").strip()
     host_header = request.headers.get("host", "").strip()
 
     # Prefer X-Prelander-Host; fall back to Host; normalize both
-    prelander_host = normalize_domain(xph or host_header)
+    prelander_host = normalize_domain(host_header)
 
     # Also check the raw host without port stripping (normalize_domain already strips port)
     if not prelander_host:
@@ -568,7 +589,7 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
 
         pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
         session = await pas.validate_prelander_session(pl_session_cookie, redis)
-        if session is None:
+        if session is None or session.prelander_host != prelander_host:
             return pas.build_session_unavailable_response(as_json=True)
 
         # The session IS the authorization — content follows the session
@@ -773,7 +794,8 @@ async def session_check(request: Request, db=Depends(get_db)):
         return pas.build_session_unavailable_response(503, as_json=True)
 
     session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
-    if session is None:
+    from app.services.domain_service import normalize_domain
+    if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
         return pas.build_session_unavailable_response(as_json=True)
     return {"authorized": True}
 

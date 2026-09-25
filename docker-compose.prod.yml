@@ -88,6 +88,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       PYTHONPATH: /app
       SKIP_INIT: "true"
+      PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
     depends_on:
       mongodb:
         condition: service_healthy

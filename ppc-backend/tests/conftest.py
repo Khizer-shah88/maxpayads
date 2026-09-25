@@ -26,6 +26,7 @@ import os
 
 # Must happen BEFORE any app module is imported at collection time
 os.environ["DB_NAME"] = "ppc_network_test"
+os.environ["PORTAL_HOSTNAMES"] = "test,localhost"
 
 import pytest
 import pytest_asyncio
@@ -80,15 +81,35 @@ async def async_client():
     """
     from app.main import app
 
+    async def public_host(request):
+        # Existing integration tests use one client for multiple host roles.
+        # Explicit Host headers are preserved so domain-isolation tests remain
+        # free to exercise denied requests.
+        if request.headers.get("host") != "test":
+            return
+        path = request.url.path
+        if path in ("/click", "/ad.js", "/go"):
+            request.headers["host"] = "test-anchor.example"
+        elif path.startswith("/public-stats/"):
+            request.headers["host"] = "test-stats.example"
+        elif path.startswith("/prelander/") and path != "/prelander/preview":
+            request.headers["host"] = "test-prelander.example"
+
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        event_hooks={"request": [public_host]},
     ) as ac:
         from app.database import get_database
         _db = get_database()
         if _db is not None and "test" in str(getattr(_db, "name", "")):
             for coll in await _db.list_collection_names():
                 await _db[coll].delete_many({})
+            await _db.redirection_domains.insert_many([
+                {"domain": "test-anchor.example", "domain_type": "anchor", "status": "active"},
+                {"domain": "test-prelander.example", "domain_type": "prelander", "status": "active"},
+            ])
+            await _db.system_settings.insert_one({"key": "stats_domain", "value": "test-stats.example"})
 
         yield ac
 

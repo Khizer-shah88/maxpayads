@@ -430,6 +430,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     chain = await resolve_active_chain(
         db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
     )
+    if ctx is not None:
+        ctx.redirect_chain = chain
     chain_inter = _absolute_base(chain_inter_domain(chain)) if chain else None
     chain_pool: list = []
     if chain:
@@ -448,6 +450,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         clean_url = _clean_campaign_url(resolved_offer_url)
         if ctx is not None:
             ctx.skip_prelander = True
+            ctx.bypass_url = clean_url
         
         # Spec flow (Bypass ON): Anchor (Smartlink host) → Inter /d/{slug}
         # (0.75s loader) → Campaign URL. The /d page on the Inter domain reads
@@ -530,7 +533,10 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         weighted_chain_pick = await select_active_prelander(
             db, [normalize_domain(b) for b in chain_pool]
         )
-        last_base = _absolute_base(weighted_chain_pick) if weighted_chain_pick else (chain_pool[0] if chain_pool else None)
+        last_base = _absolute_base(weighted_chain_pick) if weighted_chain_pick else None
+        if not last_base:
+            from app.services.redirect_pipeline import FALLBACK_URL
+            return FALLBACK_URL, referrer_suppression
     else:
         publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
         if publisher_prelander:

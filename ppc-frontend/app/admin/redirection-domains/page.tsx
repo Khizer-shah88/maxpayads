@@ -1,5 +1,8 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, Globe2, Link2, Layers, FileText, RefreshCw,
@@ -269,7 +272,7 @@ export default function RedirectionDomainsPage() {
           <div className="flex flex-wrap gap-1 max-w-[220px]">
             {(d.publisher_names?.length ? d.publisher_names : d.publisher_ids).slice(0, 3).map((name, i) => (
               <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-100 text-[11px] text-gray-700 font-medium">
-                <Users size={10} /> {name}
+                <Users size={10} /> {d.publisher_names?.[i] || 'Publisher'}<PublisherId publisherId={d.publisher_ids[i]} />
               </span>
             ))}
             {d.publisher_ids.length > 3 && (
@@ -540,7 +543,7 @@ export default function RedirectionDomainsPage() {
                             {p.publisher_type !== 'manual' && !p.email?.includes('@manual.invalid') && !p.email?.includes('@auto.invalid') && (
                               <p className="text-[11px] text-gray-400 truncate">{p.email}</p>
                             )}
-                            <p className="text-[11px] text-gray-300 font-mono truncate">{p.public_id}</p>
+                            <p className="text-[11px] text-gray-300 font-mono truncate">{formatPublisherId(p.public_id)}</p>
                           </div>
                           {p.publisher_type === 'manual' && (
                             <span className="ml-auto flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">Manual</span>

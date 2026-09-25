@@ -75,6 +75,11 @@ class Collection:
                 return SimpleNamespace(matched_count=1)
         return SimpleNamespace(matched_count=0)
 
+    async def update_many(self, query, update):
+        for doc in self.docs:
+            if matches(doc, query):
+                doc.update(deepcopy(update.get("$set", {})))
+
     async def find_one_and_update(self, query, update, upsert=False, **kwargs):
         if not await self.find_one(query) and upsert:
             await self.insert_one({**query, **update.get("$setOnInsert", {})})
@@ -98,10 +103,12 @@ class Collection:
 
 @pytest.fixture
 def stats_db():
-    return SimpleNamespace(**{name: Collection() for name in (
+    db = SimpleNamespace(**{name: Collection() for name in (
         "publishers", "direct_links", "stats_profiles", "system_settings", "clicks",
-        "direct_link_events", "direct_link_manual_conversions", "conversion_overrides",
+        "direct_link_events", "direct_link_manual_conversions", "conversion_overrides", "redirection_domains",
     )})
+    db.system_settings.docs.append({"key": "stats_domain", "value": "stats.example"})
+    return db
 
 
 def stats_app(db):
@@ -121,7 +128,7 @@ async def test_new_publisher_all_stats_actions(stats_db, publisher_type):
            "status": "active", "publisher_type": publisher_type, "public_id": "PUB_NEW123"}
     stats_db.publishers.docs.append(pub)
     pid = str(pub["_id"])
-    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="https://admin.example") as client:
+    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="https://stats.example") as client:
         # Sharing is also supported before any settings modal has been opened.
         initial = await client.post("/direct-links/generate-stats-token", json={"publisher_id": pid})
         assert initial.status_code == 200
@@ -225,7 +232,7 @@ async def test_stats_setup_rejects_unavailable_publishers(stats_db, case, expect
     pid = ObjectId()
     if case not in ("invalid", "missing"):
         stats_db.publishers.docs.append({"_id": pid, "role": "admin" if case == "admin" else "publisher", "status": case})
-    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="https://stats.example") as client:
         response = await client.post(f"/direct-links/publisher/{'invalid' if case == 'invalid' else pid}/stats-link")
     assert response.status_code == expected
     assert stats_db.direct_links.docs == []
@@ -301,7 +308,7 @@ async def test_public_os_counts_only_valid_clicks(stats_db, os_name, bucket):
         {**base, "publisher_id": str(ObjectId()), "is_valid": True},
         {**base, "timestamp": now - timedelta(days=100), "is_valid": True},
     ])
-    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=stats_app(stats_db)), base_url="https://stats.example") as client:
         response = await client.get("/public-stats/test-share")
     assert response.status_code == 200
     report = response.json()["data"]

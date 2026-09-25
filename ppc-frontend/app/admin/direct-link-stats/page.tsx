@@ -1,5 +1,7 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+
 import { useState, useEffect, useCallback } from 'react'
 import {
   Edit3, Copy, RefreshCw,
@@ -33,6 +35,7 @@ interface DirectLink {
 }
 
 interface Publisher {
+  public_id?: string
   id: string
   name: string
   email: string
@@ -109,7 +112,7 @@ export default function DirectLinkStatsPage() {
   const [selectedPublisherId, setSelectedPublisherId] = useState<string>('')
 
   // Share stats modal
-  const [shareModal, setShareModal] = useState<{ name: string; url: string } | null>(null)
+  const [shareModal, setShareModal] = useState<{ name: string; url: string; publisherId: string } | null>(null)
   const [generatingShare, setGeneratingShare] = useState<string | null>(null)
   // Regenerate public stats URL (expires the old link, keeps config & data)
   const [regenerating, setRegenerating] = useState<string | null>(null)
@@ -230,6 +233,7 @@ export default function DirectLinkStatsPage() {
     setSavingDomain(true)
     try {
       await adminApi.setStatsDomain(statsDomain.trim())
+      setShareModal(null)
       toast.success('Stats domain saved — new share links will use this domain')
     } catch {
       toast.error('Failed to save stats domain')
@@ -261,6 +265,7 @@ export default function DirectLinkStatsPage() {
     setSavingPubDomain(true)
     try {
       await directLinkApi.update(pubDomainModal.linkId, { stats_domain: pubDomainModal.value.trim() })
+      setShareModal(null)
       toast.success(pubDomainModal.value.trim()
         ? `Dedicated stats domain saved for ${pubDomainModal.pubName}`
         : 'Dedicated domain cleared — publisher falls back to the global stats domain')
@@ -428,7 +433,7 @@ export default function DirectLinkStatsPage() {
       const res = await directLinkApi.shareStatsLink(link.id)
       const url = res.data?.stats_url
       if (url) {
-        setShareModal({ name: publisherName, url })
+        setShareModal({ name: publisherName, url, publisherId })
       } else {
         throw new Error('No URL returned')
       }
@@ -448,7 +453,7 @@ export default function DirectLinkStatsPage() {
       const res = await directLinkApi.regenerateStatsLink(link.id)
       const url = res.data?.stats_url
       if (url) {
-        setShareModal({ name: publisherName, url })
+        setShareModal({ name: publisherName, url, publisherId })
         toast.success('New link generated — the previous link has expired')
       } else {
         throw new Error('No URL returned')
@@ -610,6 +615,7 @@ export default function DirectLinkStatsPage() {
                           <div className="min-w-0">
                             <p className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">{pub.name}</p>
                             <p className="text-xs text-gray-400 truncate max-w-[200px]">{pub.email}</p>
+                            <PublisherId publicId={pub.public_id} publisherId={pub.id} />
                           </div>
                         </div>
                       </td>
@@ -828,15 +834,24 @@ export default function DirectLinkStatsPage() {
                   <Copy size={15} /> Copy Link
                 </button>
                 <a
-                  href={(() => {
-                    // For preview, add query params to show context
-                    const pub = publishers.find(p => p.name === shareModal.name)
-                    if (!pub) return shareModal.url.split('?')[0]
-                    const link = links.find(l => l.publisher_id === pub.id)
-                    const cleanUrl = shareModal.url.split('?')[0]
-                    if (!link) return cleanUrl
-                    return `${cleanUrl}?linkName=${encodeURIComponent(link.name)}&publisherName=${encodeURIComponent(pub.name)}&publisherId=${encodeURIComponent(pub.id)}`
-                  })()}
+                  href={shareModal.url.split('?')[0]}
+                  onClick={async event => {
+                    event.preventDefault()
+                    const preview = window.open('about:blank', '_blank')
+                    if (preview) preview.opener = null
+                    try {
+                      const link = await resolveStatsLink(shareModal.publisherId)
+                      const res = await directLinkApi.shareStatsLink(link.id)
+                      const url = res.data?.stats_url
+                      if (!url) throw new Error('No URL returned')
+                      setShareModal({ ...shareModal, url })
+                      if (preview) preview.location.replace(url)
+                      else toast.error('Allow popups to preview the stats page')
+                    } catch {
+                      preview?.close()
+                      toast.error('Failed to load the current stats link')
+                    }
+                  }}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
@@ -845,7 +860,7 @@ export default function DirectLinkStatsPage() {
                 </a>
                 <button
                   onClick={async () => {
-                    const pub = publishers.find(p => p.name === shareModal.name)
+                    const pub = publishers.find(p => p.id === shareModal.publisherId)
                     if (!pub) { toast.error('Publisher not found'); return }
                     await regenerateStatsUrl(pub.id, pub.name)
                   }}
@@ -896,8 +911,8 @@ export default function DirectLinkStatsPage() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-400 mt-2">
-                    Point this domain&apos;s DNS to the same server and make sure it is listed in
-                    the portal/infra exemptions (public-stats paths are already exempt from the portal gate).
+                    Point this domain&apos;s DNS to the same server. Saving it here assigns it to
+                    this publisher&apos;s statistics. Other domain roles cannot serve this link.
                   </p>
                 </div>
               </div>

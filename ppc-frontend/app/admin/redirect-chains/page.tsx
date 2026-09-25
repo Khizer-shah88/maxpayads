@@ -200,7 +200,7 @@ export default function RedirectChainsPage() {
       inter_domain: chain.inter_domain,
       extra_domains: [...(chain.extra_domains || [])],
       prelander_pool: [...chain.prelander_pool],
-      session_validation: chain.session_validation,
+      session_validation: true,
       cookie_lifetime: chain.cookie_lifetime,
       status: chain.status,
     })
@@ -431,7 +431,7 @@ export default function RedirectChainsPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <Shield size={14} />
-                          <span>Validation: {chain.session_validation ? 'Enabled' : 'Disabled'}</span>
+                          <span>Validation: Required</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <Shuffle size={14} />
@@ -578,7 +578,7 @@ export default function RedirectChainsPage() {
                     >
                       <option value="">Add intermediate hop...</option>
                       {domains
-                        .filter(d => d.status === 'active' && !form.extra_domains.includes(d.domain))
+                        .filter(d => d.status === 'active' && d.domain_type === 'inter' && d.domain !== form.inter_domain && !form.extra_domains.includes(d.domain))
                         .map(domain => (
                           <option key={domain.id} value={domain.domain}>
                             [{domain.domain_type}] {domain.domain}
@@ -705,12 +705,11 @@ export default function RedirectChainsPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Session Validation</label>
                     <select
-                      value={form.session_validation ? 'enabled' : 'disabled'}
-                      onChange={e => setForm(prev => ({ ...prev, session_validation: e.target.value === 'enabled' }))}
+                      value="enabled"
+                      disabled
                       className={inputClass}
                     >
-                      <option value="enabled">Enabled</option>
-                      <option value="disabled">Disabled</option>
+                      <option value="enabled">Required (one use per hop)</option>
                     </select>
                   </div>
 

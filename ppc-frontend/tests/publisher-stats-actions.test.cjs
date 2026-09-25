@@ -23,6 +23,7 @@ function pageHarness({ failSetup = false } = {}) {
   const copy = value => JSON.parse(JSON.stringify(value));
   const jsx = (type, props) => ({ type, props });
   const imports = {
+    '@/components/shared/PublisherId': { default: () => null },
     react: {
       useState(initial) {
         const index = cursor++;
@@ -79,7 +80,11 @@ function pageHarness({ failSetup = false } = {}) {
     },
   };
   const exports = {};
-  vm.runInNewContext(outputText, { exports, console, URL, require(name) { assert.ok(name in imports, name); return imports[name]; } });
+  vm.runInNewContext(outputText, {
+    exports, console, URL,
+    window: { open() { return { opener: {}, location: { replace: url => calls.push(['preview', url]) }, close() {} }; } },
+    require(name) { assert.ok(name in imports, name); return imports[name]; },
+  });
   return {
     calls, errors, links,
     render() { cursor = 0; const tree = exports.default(); mounted = true; return tree; },
@@ -165,4 +170,19 @@ test('failed setup shows an error and restores action buttons for retry', async 
     button(row(), title);
   }
   assert.equal(page.links.length, 4);
+});
+
+test('Preview refreshes the canonical share URL without legacy query parameters', async () => {
+  const page = pageHarness();
+  page.render();
+  await page.load();
+  await button(page.render(), 'Share stats link').props.onClick();
+  const preview = nodes(page.render()).find(n => n.type === 'a' && text(n).includes('Preview'));
+  const sharesBefore = page.calls.filter(([action]) => action === 'share').length;
+  await preview.props.onClick({ preventDefault() {} });
+  assert.equal(page.calls.filter(([action]) => action === 'share').length, sharesBefore + 1);
+  const url = page.calls.find(([action]) => action === 'preview')[1];
+  assert.equal(url, preview.props.href);
+  assert.equal(new URL(url).search, '');
+  assert.equal(new URL(url).hostname, 'stats.example');
 });

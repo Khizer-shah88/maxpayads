@@ -170,6 +170,9 @@ async def create_domain(db, data: dict) -> dict:
     domain_type = normalize_domain_type(data.get("domain_type"), default=DOMAIN_TYPE_ANCHOR)
     if not domain or domain_type not in DOMAIN_TYPES:
         raise ValueError("Valid domain and domain_type are required")
+    from app.services.domain_access_service import domain_role
+    if await domain_role(db, domain) in ("portal", "stats"):
+        raise ValueError("This hostname already has a portal or stats role")
     if not re.match(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$", domain):
         raise ValueError("Invalid domain format")
 
@@ -230,6 +233,9 @@ async def update_domain(db, domain_id: str, data: dict) -> Optional[dict]:
         domain = normalize_domain(data["domain"])
         if not domain:
             raise ValueError("Domain cannot be empty")
+        from app.services.domain_access_service import domain_role
+        if await domain_role(db, domain) in ("portal", "stats"):
+            raise ValueError("This hostname already has a portal or stats role")
         # Global duplicate check — any hostname may exist only once, whatever
         # its type (example.com as Anchor blocks example.com as Inter too).
         dup = await db.redirection_domains.find_one({
@@ -373,17 +379,7 @@ async def resolve_domain_url(
     if pool:
         return domain_to_url(pool["domain"])
 
-    # 4. Legacy system_settings fallback
-    legacy_key = _SETTINGS_KEYS.get(canonical_type, "platform_domain")
-    legacy = await db.system_settings.find_one({"key": legacy_key})
-    if legacy and legacy.get("value"):
-        return _to_absolute_url(legacy["value"])
-
-    if canonical_type == DOMAIN_TYPE_ANCHOR:
-        legacy = await db.system_settings.find_one({"key": "platform_domain"})
-        if legacy and legacy.get("value"):
-            return _to_absolute_url(legacy["value"])
-
+    # Only registered, active domains can receive public traffic.
     return None
 
 

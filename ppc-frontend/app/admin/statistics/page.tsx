@@ -1,5 +1,8 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Download, MousePointer, CheckCircle, XCircle, DollarSign, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -24,7 +27,7 @@ export default function StatisticsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [publishers, setPublishers] = useState<{id: string; name: string; email: string}[]>([])
+  const [publishers, setPublishers] = useState<{id: string; name: string; email: string; public_id?: string}[]>([])
   const [websites, setWebsites] = useState<{id: string; domain: string; publisher_id: string}[]>([])
   const [showCharts, setShowCharts] = useState(true)
   const [filtersReady, setFiltersReady] = useState(false)
@@ -53,7 +56,7 @@ export default function StatisticsPage() {
           adminApi.getPublishers({ limit: 200 }),
           adminApi.getWebsites(),
         ])
-        setPublishers(pubRes.data.publishers?.map((p: any) => ({ id: p.id, name: p.name, email: p.email })) || [])
+        setPublishers(pubRes.data.publishers?.map((p: any) => ({ id: p.id, name: p.name, email: p.email, public_id: p.public_id })) || [])
         setWebsites(webRes.data.websites?.map((w: any) => ({ id: w.id, domain: w.domain, publisher_id: w.publisher_id })) || [])
       } catch {}
     }
@@ -111,7 +114,7 @@ export default function StatisticsPage() {
     { key: 'timestamp', label: 'Time', render: (c: Click) => <span className="text-[11px] font-mono text-gray-600">{format(new Date(c.timestamp), 'MM/dd HH:mm')}</span> },
     { key: 'publisher_id', label: 'Publisher', render: (c: Click) => {
       const pub = publishers.find(p => p.id === c.publisher_id)
-      return <span className="text-[11px] font-medium text-gray-600">{pub ? pub.name : c.publisher_id.slice(-8)}</span>
+      return <span className="text-[11px] font-medium text-gray-600">{pub?.name || 'Publisher'}<PublisherId publicId={pub?.public_id} publisherId={c.publisher_id} /></span>
     }},
     { key: 'website', label: 'Website', render: (c: Click) => {
       const domain = (c as any).website_domain || c.website_id
@@ -315,7 +318,7 @@ export default function StatisticsPage() {
             <input type="date" value={filters.date_to} onChange={e => setFilters(p => ({...p, date_to: e.target.value}))} className={sel} />
             <select value={filters.publisher_id} onChange={e => setFilters(p => ({...p, publisher_id: e.target.value, website_id: ''}))} className={sel}>
               <option value="">All Publishers</option>
-              {publishers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {publishers.map(p => <option key={p.id} value={p.id}>{publisherOption(p)}</option>)}
             </select>
             <select value={filters.website_id} onChange={e => setFilters(p => ({...p, website_id: e.target.value}))} className={sel}>
               <option value="">All Websites</option>

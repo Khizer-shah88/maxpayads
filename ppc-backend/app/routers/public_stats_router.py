@@ -16,7 +16,7 @@ campaign details, domain names and admin information are not exposed.
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
 
 from app.dependencies import get_db
 from app.core.glossary import normalize_os
@@ -29,6 +29,7 @@ _EXPIRED_DETAIL = "This statistics link has expired."
 @router.get("/{share_id}")
 async def get_public_stats(
     share_id: str,
+    request: Request,
     days: int = Query(30, ge=1, le=90, description="Number of days to include"),
     db=Depends(get_db),
 ):
@@ -44,6 +45,12 @@ async def get_public_stats(
     link = await db.direct_links.find_one({"stats_share_id": share_id})
     if not link or link.get("status") not in ("active", "paused"):
         raise HTTPException(status_code=410, detail=_EXPIRED_DETAIL)
+
+    from app.services.domain_access_service import stats_host, domain_role
+    from app.services.domain_service import normalize_domain
+    host = normalize_domain(request.headers.get("host", ""))
+    if host != await stats_host(db, link) or await domain_role(db, host) != "stats":
+        raise HTTPException(status_code=404, detail="Not found")
 
     publisher_id = link.get("publisher_id", "")
     if not publisher_id:

@@ -1,5 +1,7 @@
 'use client'
 
+import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Edit, Trash2, Search, ChevronDown, X, Users, Globe, Monitor, Smartphone, Apple, Lock } from 'lucide-react'
 import { toast } from 'sonner'
@@ -394,7 +396,7 @@ export default function OffersPage() {
   }
 
   // Build selector items
-  const publisherItems = publishers.map(p => ({ key: p.id, label: p.name, extra: p.email }))
+  const publisherItems = publishers.map(p => ({ key: p.id, label: publisherOption(p), extra: p.email }))
   const websiteItems = websites.map((w: any) => ({ key: w.id || w._id, label: w.name || w.domain, extra: w.domain, publisher_id: w.publisher_id }))
   const osItems = OS_OPTIONS.map(o => ({ key: o.key, label: o.label }))
   const countryItems = COUNTRIES.map(c => ({ key: c.code, label: `${c.flag} ${c.label}`, extra: c.code }))
@@ -423,7 +425,7 @@ export default function OffersPage() {
       const Icon = DEVICE_ICONS_MAP[c.device_os] || Globe
       return <div className="flex items-center gap-1.5"><Icon size={14} className="text-gray-500" /><span className="text-xs">{c.name}</span></div>
     }},
-    { key: 'publishers', label: 'Publishers', render: (o: Offer) => tagDisplay(o.publisher_ids, 'Publishers', publishers as any) },
+    { key: 'publishers', label: 'Publishers', render: (o: Offer) => tagDisplay(o.publisher_ids, 'Publishers', publishers.map(p => ({ ...p, name: publisherOption(p) }))) },
     { key: 'os', label: 'OS', render: (o: Offer) => tagDisplay(o.os_types, 'OS') },
     { key: 'countries', label: 'Countries', render: (o: Offer) => tagDisplay(o.country_codes, 'Countries') },
     { key: 'status', label: 'Status', render: (o: Offer) => <StatusBadge status={o.status} /> },

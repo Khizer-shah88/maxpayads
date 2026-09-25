@@ -823,7 +823,11 @@ async def set_stats_domain(
     When set, share links use this domain instead of the admin panel domain.
     Example: 'stats.yournetwork.com' → link becomes https://stats.yournetwork.com/public-stats/...
     """
-    domain = data.get("domain", "").strip().rstrip("/")
+    from app.services.domain_access_service import validate_stats_domain
+    try:
+        domain = await validate_stats_domain(db, data.get("domain", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await db.system_settings.update_one(
         {"key": "stats_domain"},
         {"$set": {"key": "stats_domain", "value": domain, "updated_at": datetime.utcnow()}},

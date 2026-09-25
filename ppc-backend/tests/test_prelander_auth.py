@@ -140,7 +140,7 @@ async def test_http_valid_session_can_reload_then_expires(session_api, redis):
     from httpx import AsyncClient, ASGITransport
 
     app, content = session_api
-    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis, prelander_host="test")
     pl_id = await pas.establish_prelander_session(session, redis)
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", cookies={pas.PL_SESSION_COOKIE: pl_id},

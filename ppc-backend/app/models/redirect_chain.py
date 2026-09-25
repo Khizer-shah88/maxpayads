@@ -18,7 +18,7 @@ Field names follow the glossary: `anchor_domain`, `inter_domain`,
 directly. Request bodies accept either spelling.
 """
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -111,7 +111,7 @@ class CreateRedirectChainRequest(BaseModel):
         default_factory=list, max_length=20,
         description="Ordered intermediate hops between Inter and the Prelander pool",
     )
-    session_validation: bool = Field(True)
+    session_validation: Literal[True] = True
     cookie_lifetime: int = Field(60, ge=5, le=1440)  # 5 minutes to 24 hours
     status: RedirectChainStatus = Field(RedirectChainStatus.ACTIVE)
 
@@ -133,7 +133,7 @@ class UpdateRedirectChainRequest(BaseModel):
         None, max_length=20,
         description="Ordered intermediate hops between Inter and the Prelander pool",
     )
-    session_validation: Optional[bool] = None
+    session_validation: Optional[Literal[True]] = None
     cookie_lifetime: Optional[int] = Field(None, ge=5, le=1440)
     status: Optional[RedirectChainStatus] = None
 

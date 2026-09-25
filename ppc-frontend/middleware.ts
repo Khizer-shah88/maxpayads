@@ -42,32 +42,10 @@ const ENTRY_GUARD_EXEMPT_PREFIXES: ReadonlyArray<string> = ['/d/'];
  */
 const ENTRY_GUARD_PROTECTED_PATHS: ReadonlyArray<string> = ['/'];
 
-// ─── Portal hostnames ─────────────────────────────────────────────────────────
-// The marketing/admin/publisher portal (root landing page, dashboard, etc.) may
-// only be served on these hostnames. Redirection domains (Anchor / Inter /
-// Prelander) and any other hostname pointing at this server reach the catch-all
-// nginx server block; without this check they would all render the
-// VertexMonetize landing page. Anything not listed here gets a 404 for
-// portal-only pages while infrastructure routes (/d/[slug], /click, /ad.js,
-// APIs) keep working on every domain.
-const PORTAL_HOSTNAMES: ReadonlyArray<string> = (
-  process.env.PORTAL_HOSTNAMES ??
-  'maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com,localhost'
-)
-  .split(',')
-  .map(h => h.trim().toLowerCase())
-  .filter(Boolean);
-
 function requestHostname(request: NextRequest): string {
-  // X-Forwarded-Host survives the nginx proxy; nextUrl.host falls back for
-  // direct dev access. Strip any port before comparing.
-  const forwarded = request.headers.get('x-forwarded-host');
-  const raw = forwarded?.split(',')[0]?.trim() || request.nextUrl.host || '';
+  // Trust the Host header preserved by nginx and the internal API proxy.
+  const raw = request.headers.get('host') || request.nextUrl.host || '';
   return raw.split(':')[0].toLowerCase();
-}
-
-function isPortalHost(hostname: string): boolean {
-  return PORTAL_HOSTNAMES.includes(hostname);
 }
 
 function isEntryGuardProtected(pathname: string): boolean {
@@ -109,6 +87,30 @@ function referrerHostname(referrer: string | undefined): string {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = requestHostname(request);
+
+  // The API owns domain roles. DNS pointing here does not grant access.
+  let role: string;
+  try {
+    const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+    const check = await fetch(`${backendUrl}/domain-access?path=${encodeURIComponent(pathname)}`, {
+      headers: { host: request.headers.get('host') || host },
+      cache: 'no-store',
+      redirect: 'manual',
+    });
+    if (!check.ok) return new NextResponse(null, { status: check.status >= 500 ? 503 : 404 });
+    role = (await check.json()).role;
+  } catch {
+    return new NextResponse(null, { status: 503 });
+  }
+  if (pathname.startsWith('/d/') && request.headers.get('sec-fetch-site') === 'none') {
+    return prelanderFallbackResponse();
+  }
+  if (role === 'anchor' && pathname === '/') {
+    if (!request.nextUrl.search) return new NextResponse(null, { status: 404 });
+    const click = request.nextUrl.clone();
+    click.pathname = '/click';
+    return NextResponse.redirect(click, 302);
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // Authorization uses server-side sessions for all browser navigations.
@@ -170,38 +172,8 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
   // ════════════════════════════════════════════════════════════════════════════
-  // Any hostname pointing at this server (newly added redirection domains hit
-  // the nginx catch-all) must not render the VertexMonetize landing page or
-  // the dashboards. Infrastructure routes stay reachable on every domain:
-  //   /d/[slug]  — prelander pages
-  //   /click, /go, /ad.js, /health, /docs — backend endpoints (served by nginx)
-  //   /api/*     — API routes (proxied by nginx to FastAPI or rewritten here)
-  //   /_next/*   — static assets
-  const isInfraPath =
-    pathname.startsWith('/d/') ||
-    pathname.startsWith('/api/') ||
-    pathname.startsWith('/_next/') ||
-    // One-time prelander authorization bootstrap (exchanges the cross-domain
-    // handoff for the prelander-domain session cookie — backend route).
-    pathname.startsWith('/_auth/') ||
-    // White-label public stats share links work on any configured domain
-    // (including the optional dedicated stats share domain)
-    pathname.startsWith('/public-stats/') ||
-    // Public static assets served from prelander domains (video tutorials etc.)
-    /\.(mp4|webm|png|jpg|jpeg|gif|ico|svg|txt|xml|webmanifest)$/i.test(pathname) ||
-    // Service-worker scripts must stay fetchable at the origin root on EVERY
-    // hostname, portal or not. A 404 here does more than disable the feature:
-    // it removes the browser's only channel for fetching an UPDATE, so a
-    // previously installed worker keeps running its old code indefinitely.
-    // That is precisely how the source-deterrent reload loop survived -- the
-    // fix could not be delivered to the clients that needed it.
-    pathname === '/source-deterrent-sw.js' ||
-    pathname === '/unregister-source-deterrent.js' ||
-    pathname === '/favicon.ico';
-
-  if (!isPortalHost(host) && !isInfraPath) {
-    // Validate the session before serving protected content.
-    if (pathname === '/') {
+  // Only the registered Prelander role can resolve the clean root session.
+  if (role === 'prelander' && pathname === '/') {
       // Incognito/new-browser pastes have no session cookie. Return the
       // navigation-only fallback immediately, without a loader or API call.
       if (!request.cookies.get('mpa_pls')?.value) {
@@ -214,7 +186,7 @@ export async function middleware(request: NextRequest) {
         const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
         const cookieHeader = request.headers.get('cookie') || '';
         const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
-          headers: { cookie: cookieHeader },
+          headers: { cookie: cookieHeader, host: request.headers.get('host') || host },
           redirect: 'manual',
           cache: 'no-store',
         });
@@ -235,12 +207,6 @@ export async function middleware(request: NextRequest) {
       } catch (err) {
         return prelanderFallbackResponse(503);
       }
-    }
-    console.log(
-      `[PORTAL_HOST_BLOCKED] host=${host} path=${pathname} — ` +
-        `serving 404 (portal pages only allowed on: ${PORTAL_HOSTNAMES.join(', ')})`,
-    );
-    return new NextResponse(null, { status: 404 });
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -501,6 +467,6 @@ export const config = {
      * Run middleware on all routes except static assets, API proxy, and SEO files.
      * Entry guard only protects `/` — other matched paths use auth middleware only.
      */
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|api).*)',
+    '/:path*',
   ],
 };

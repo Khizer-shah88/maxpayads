@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     # Redirection domains — public IP for DNS verification (A record target)
     SERVER_PUBLIC_IP: str = ""
+    PORTAL_HOSTNAMES: str = "maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com,localhost"
     # Redirection / Entry
     ENTRY_FALLBACK_URL: str = "https://www.google.com/"
     ALLOWED_ENTRY_DOMAINS: str = ""

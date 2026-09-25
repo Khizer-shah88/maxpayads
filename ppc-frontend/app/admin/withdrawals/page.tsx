@@ -1,5 +1,7 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CheckCircle, XCircle, CreditCard, Trash2, Paperclip, ExternalLink, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
@@ -133,7 +135,7 @@ export default function AdminWithdrawalsPage() {
   const inputClass = "w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm"
 
   const columns = [
-    { key: 'publisher_name', label: 'Publisher', render: (w: Withdrawal) => <span className="font-medium text-gray-900">{w.publisher_name}</span> },
+    { key: 'publisher_name', label: 'Publisher', render: (w: Withdrawal) => <span className="font-medium text-gray-900">{w.publisher_name}<PublisherId publisherId={w.publisher_id} /></span> },
     { key: 'amount', label: 'Amount', render: (w: Withdrawal) => <span className="text-red-600 font-mono font-bold">${w.amount.toFixed(2)}</span> },
     { key: 'payment_method', label: 'Method', render: (w: Withdrawal) => <span className="capitalize text-sm">{w.payment_method.replace(/_/g, ' ')}</span> },
     { key: 'status', label: 'Status', render: (w: Withdrawal) => <StatusBadge status={w.status} /> },

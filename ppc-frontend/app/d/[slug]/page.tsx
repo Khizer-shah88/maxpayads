@@ -26,6 +26,7 @@ export default function PrelanderSlugPage() {
   const [denied, setDenied] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   const [returning, setReturning] = useState(false)
+  const startedHop = useRef('')
 
   useEffect(() => {
     (async () => {
@@ -41,6 +42,27 @@ export default function PrelanderSlugPage() {
       }
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+
+      if (slug.startsWith('h_')) {
+        // React strict mode may rerun effects; consume this ticket only once.
+        if (startedHop.current === slug) return
+        startedHop.current = slug
+        setTransitioning(true)
+        try {
+          const response = await fetch(`/api/prelander/hop/${encodeURIComponent(slug)}`, {
+            method: 'POST', credentials: 'include', cache: 'no-store',
+          })
+          if (!response.ok) throw new Error('Expired redirect')
+          const hop = await response.json()
+          if (!hop.next_url) throw new Error('Missing destination')
+          await new Promise(resolve => setTimeout(resolve, 750))
+          window.location.replace(hop.next_url)
+        } catch {
+          setReturning(true)
+          returnToPreviousPage()
+        }
+        return
+      }
 
       if (slug === 'session') {
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {

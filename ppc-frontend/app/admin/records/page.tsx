@@ -1,5 +1,7 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+
 import { useState, useEffect, useCallback } from 'react'
 import { ChevronDown, ChevronRight, Download, Trash2, Globe, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -123,7 +125,7 @@ export default function RecordsPage() {
                         {pub.name?.[0]?.toUpperCase()}
                       </div>
                       <div>
-                        <p className="font-semibold text-gray-900">{pub.name}</p>
+                        <p className="font-semibold text-gray-900">{pub.name}</p><PublisherId publicId={pub.public_id} publisherId={pub.id} />
                         <p className="text-xs text-gray-500">{pub.email}</p>
                       </div>
                       <StatusBadge status={pub.status} />

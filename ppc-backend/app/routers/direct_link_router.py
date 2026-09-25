@@ -416,6 +416,17 @@ async def create_link(
         "created_at": now,
         "updated_at": now,
     }
+    from app.services.domain_access_service import validate_stats_domain
+    previous = await db.direct_links.find_one(
+        {"publisher_id": data.publisher_id, "stats_domain": {"$nin": [None, ""]}},
+        sort=[("updated_at", -1)],
+    )
+    try:
+        doc["stats_domain"] = await validate_stats_domain(
+            db, data.stats_domain or (previous or {}).get("stats_domain", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     result = await db.direct_links.insert_one(doc)
     doc["_id"] = result.inserted_id
     return {
@@ -434,6 +445,12 @@ async def update_link(
     db=Depends(get_db),
 ):
     update_data = data.model_dump(exclude_unset=True)
+    if "stats_domain" in update_data:
+        from app.services.domain_access_service import validate_stats_domain
+        try:
+            update_data["stats_domain"] = await validate_stats_domain(db, update_data["stats_domain"] or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     update_data["updated_at"] = datetime.utcnow()
     result = await db.direct_links.update_one(
         {"_id": _oid(link_id)}, {"$set": update_data}
@@ -441,6 +458,12 @@ async def update_link(
     if result.matched_count == 0:
         raise NotFoundError("Direct Link")
     doc = await db.direct_links.find_one({"_id": _oid(link_id)})
+    if "stats_domain" in update_data:
+        # The assignment is for the publisher, including any older stats links.
+        await db.direct_links.update_many(
+            {"publisher_id": doc["publisher_id"]},
+            {"$set": {"stats_domain": update_data["stats_domain"]}},
+        )
     return {"success": True, "link": _serialize(doc), "message": "Direct link updated"}
 
 
@@ -808,31 +831,12 @@ async def delete_conversion_override(
 
 async def _build_stats_url(request: Request, db, share_id: str, link: Optional[dict] = None) -> str:
     """Build the public stats URL for a share ID using the configured domain."""
-    # Default: current admin panel origin — always works regardless of hosting.
-    forwarded_proto = request.headers.get("x-forwarded-proto", "https")
-    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
-    if forwarded_host:
-        base_url = f"{forwarded_proto}://{forwarded_host}"
-    else:
-        base_url = str(request.base_url).rstrip("/")
+    from app.services.domain_access_service import stats_host, domain_role
+    host = await stats_host(db, link)
+    if not host or await domain_role(db, host) != "stats":
+        raise HTTPException(status_code=400, detail="Configure a dedicated stats domain before sharing statistics")
+    return f"https://{host}/public-stats/{share_id}"
 
-    # PER-PUBLISHER white-label domain wins (Admin → Direct Link Stats →
-    # per-publisher domain assignment, e.g. fisherhub.com for one pub only).
-    link_domain = ((link or {}).get("stats_domain") or "").strip().rstrip("/")
-    if link_domain:
-        if not link_domain.startswith("http"):
-            link_domain = f"https://{link_domain}"
-        return f"{link_domain}/public-stats/{share_id}"
-
-    # Optional GLOBAL custom white-label stats domain (Admin → Settings).
-    stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
-    if stats_domain_doc and stats_domain_doc.get("value", "").strip():
-        custom_domain = stats_domain_doc["value"].strip().rstrip("/")
-        if not custom_domain.startswith("http"):
-            custom_domain = f"https://{custom_domain}"
-        base_url = custom_domain
-
-    return f"{base_url}/public-stats/{share_id}"
 
 
 @router.post("/{link_id}/share-stats-link")

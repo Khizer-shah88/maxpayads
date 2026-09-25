@@ -1,5 +1,8 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Plus, Edit, Trash2, Link, Copy, CheckCircle, RefreshCw,
@@ -452,7 +455,7 @@ export default function DirectLinksPage() {
           <select value={pubFilter} onChange={e => setPubFilter(e.target.value)}
             className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none">
             <option value="">All Publishers</option>
-            {publishers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {publishers.map(p => <option key={p.id} value={p.id}>{publisherOption(p)}</option>)}
           </select>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="px-3 py-2 border border-gray-200 rounded-xl text-sm text-gray-700 bg-white focus:outline-none">
@@ -487,7 +490,7 @@ export default function DirectLinksPage() {
                     <tr key={l.id} className="hover:bg-gray-50/50">
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{l.name}</p>
-                        <p className="text-xs text-gray-400">{l.publisher_name || l.publisher_id.slice(-8)}</p>
+                        <p className="text-xs text-gray-400">{l.publisher_name || 'Publisher'}<PublisherId publicId={publishers.find(p => p.id === l.publisher_id)?.public_id} publisherId={l.publisher_id} /></p>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 max-w-[240px]">
@@ -554,7 +557,7 @@ export default function DirectLinksPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Publisher <span className="text-red-500">*</span></label>
                   <select value={form.publisher_id} onChange={e => setForm(p => ({ ...p, publisher_id: e.target.value }))} className={inp}>
                     <option value="">Select publisher…</option>
-                    {publishers.map(p => <option key={p.id} value={p.id}>{p.name} ({p.email})</option>)}
+                    {publishers.map(p => <option key={p.id} value={p.id}>{publisherOption(p)} ({p.email})</option>)}
                   </select>
                 </div>
 

@@ -25,6 +25,7 @@ function harness(initial = report()) {
   let respond = async () => initial;
   const jsx = (type, props) => ({ type, props });
   const imports = {
+    '@/lib/publisher-id': { formatPublisherId: id => (id || '').replace(/^PUB_/, '') },
     react: {
       useState(value) {
         const index = cursor++;
@@ -93,7 +94,8 @@ test('header shows the publisher identity from the API and keeps OS filters in t
   const identity = nodes(header).find(n => n.props?.['aria-label'] === 'Publisher identity');
   assert.ok(identity);
   assert.match(text(identity), /Publisher from API/);
-  assert.match(text(identity), /PUB_PUBLIC123/);
+  assert.match(text(identity), /PUBLIC123/);
+  assert.doesNotMatch(text(identity), /PUB_/);
   assert.doesNotMatch(text(tree), /Private publisher|Private link|PUB_PRIVATE|#L1/);
   assert.doesNotMatch(text(main), /Publisher from API|PUB_PUBLIC123/);
   assert.doesNotMatch(text(header), /Windows|Mac|Android/);

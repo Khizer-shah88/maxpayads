@@ -1,5 +1,7 @@
 'use client'
 
+import { formatPublisherId } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback, useRef, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react'
 import { useParams } from 'next/navigation'
 import { AlertCircle, RefreshCw, Eye, Download, BarChart3, TrendingUp, CalendarDays } from 'lucide-react'
@@ -385,7 +387,7 @@ export default function PublisherStatsPage() {
                 {stats.identity.publisher_name && stats.identity.pub_id && <span aria-hidden="true" className="hidden text-[#3D4A5E] sm:inline">·</span>}
                 {stats.identity.pub_id && (
                   <span className="min-w-0 max-w-full font-mono text-xs text-[#8695A8] [overflow-wrap:anywhere]">
-                    {stats.identity.pub_id}
+                    {formatPublisherId(stats.identity.pub_id)}
                   </span>
                 )}
               </div>

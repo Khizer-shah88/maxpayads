@@ -160,6 +160,7 @@ async function runRoot({ cookie = '', check = new Response('{"authorized":true}'
     '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
   }, {
     async fetch(url) {
+      if (url.includes('/domain-access')) return new Response('{"role":"prelander"}');
       b.events.push(['server-fetch', url]);
       return check;
     },

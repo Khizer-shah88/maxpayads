@@ -125,7 +125,10 @@ async def track_click(
     try:
         ctx = context_from_request(request, pub_value, site_value)
         await resolve_redirect(ctx, db, redis)
-        response = build_redirect(ctx.destination_url, ctx.referrer_suppression)
+        # A document navigation from the Anchor distinguishes a legitimate
+        # entry from pasting an Inter URL, even when /click was typed directly.
+        managed_hop = "/d/h_" in ctx.destination_url or "/_auth/" in ctx.destination_url
+        response = build_redirect(ctx.destination_url, ctx.referrer_suppression or managed_hop)
     except Exception:
         # The visitor must ALWAYS leave with a URL — a bare JSON 500 on the
         # publisher's page is a dead flow. Log the real cause server-side and

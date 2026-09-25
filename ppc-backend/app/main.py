@@ -15,6 +15,7 @@ from app.core.exceptions import (
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.redirect_chain_middleware import RedirectChainMiddleware
+from app.middleware.domain_access_middleware import DomainAccessMiddleware
 from app.middleware.security_middleware import (
     SecurityHeadersMiddleware,
     RequestValidationMiddleware,
@@ -84,6 +85,7 @@ app.add_middleware(APISecurityMiddleware)  # API security checks
 app.add_middleware(RedirectChainMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(DomainAccessMiddleware)
 
 # Exception handlers
 app.add_exception_handler(AppException, app_exception_handler)
@@ -125,6 +127,19 @@ app.include_router(stats_profile_router.router)
 @app.get("/health", tags=["System"])
 async def health_check():
     return {"status": "healthy", "version": settings.APP_VERSION, "name": settings.APP_NAME}
+
+
+@app.get("/domain-access", include_in_schema=False)
+async def domain_access(request: Request, path: str = "/"):
+    from app.database import get_database
+    from app.services.domain_access_service import allow_path
+    from fastapi.responses import JSONResponse, Response
+    # Nginx passes the original URI on its internal auth subrequest.
+    path = request.headers.get("x-original-uri", path).split("?", 1)[0]
+    role = await allow_path(get_database(), request.headers.get("host", ""), path)
+    if not role:
+        return Response(status_code=403, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"role": role}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/ad.js", response_class=PlainTextResponse, tags=["Ad Server"])

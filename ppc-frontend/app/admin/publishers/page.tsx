@@ -1,5 +1,8 @@
 'use client'
 
+import PublisherId from '@/components/shared/PublisherId'
+import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
+
 import { useState, useEffect, useCallback } from 'react'
 import { Search, Download, Trash2, Edit, DollarSign, Plus, Globe, Link2, Copy, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -250,7 +253,7 @@ export default function PublishersPage() {
       render: (p: Publisher) => (
         <div>
           <span className="font-medium text-gray-900">{p.name}</span>
-          {p.public_id && <span className="block text-xs font-mono text-gray-400">{p.public_id.replace(/^PUB_/, '')}</span>}
+          <PublisherId publicId={p.public_id} publisherId={p.id} />
         </div>
       )
     },
@@ -632,7 +635,7 @@ export default function PublishersPage() {
                 {smartlinkModal.data?.publisher_type === 'manual' ? 'Smartlink' : 'Smartlink'} — {smartlinkModal.publisher.name}
               </h3>
               <p className="text-sm text-gray-400 mb-4">
-                Publisher ID: <span className="font-mono font-bold text-gray-700">{smartlinkModal.data?.public_id}</span>
+                Publisher ID: <span className="font-mono font-bold text-gray-700">{formatPublisherId(smartlinkModal.data?.public_id)}</span>
                 {' · '}Type:{' '}
                 {smartlinkModal.data?.publisher_type === 'manual' ? (
                   <span className="text-amber-700 font-semibold">Manual (?pub={smartlinkModal.data?.public_id})</span>

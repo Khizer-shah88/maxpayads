@@ -135,6 +135,8 @@ class RedirectResolutionContext:
     # ── resolve_chain ─────────────────────────────────────────────────────────
     anchor_domain: Optional[str] = None
     inter_url: Optional[str] = None
+    redirect_chain: Optional[dict] = None
+    bypass_url: Optional[str] = None
     prelander_url: Optional[str] = None
 
     # ── stage_authorize_prelander ─────────────────────────────────────────────
@@ -621,16 +623,8 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
 
     # Chain context — the id of the admin-built chain that drove this click,
     # when one matched (resolved by route_click via resolve_active_chain).
-    chain_id = ""
-    try:
-        from app.services.traffic_router import resolve_active_chain
-        chain = await resolve_active_chain(
-            db, ctx.publisher_id, getattr(ctx, "request_host", None),
-        )
-        if chain and chain.get("_id") is not None:
-            chain_id = str(chain["_id"])
-    except Exception:
-        chain_id = ""
+    chain = ctx.redirect_chain
+    chain_id = str(chain["_id"]) if chain and chain.get("_id") is not None else ""
 
     session = await pas.create_authorization(
         click_id=ctx.click_id or "",
@@ -649,10 +643,35 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
         device_type=ctx.device_type or "",
         country_code=ctx.country_code or "",
         referrer=ctx.referrer or "",
+        ttl=int(chain.get("cookie_lifetime", 60)) * 60 if chain else None,
     )
     # Keep the token on the context so the /click handler can mint the signed
     # cookie reference from it (click_router).
     ctx.prelander_auth_token = session.token if session else ""
+    # Each Inter gets its own opaque ticket. The exact chain selected on the
+    # Anchor is retained, so shared Inter hosts cannot select another chain.
+    from app.services.domain_access_service import domain_role
+    from app.services.redirect_hop_service import issue_hop
+    if not session:
+        ctx.destination_url = FALLBACK_URL
+    else:
+        entry_host = normalize_domain(dest)
+        role = await domain_role(db, entry_host)
+        if role == "inter":
+            hosts = [entry_host]
+            if chain and not ctx.skip_prelander:
+                hosts.extend(normalize_domain(h) for h in (chain.get("extra_domains") or []))
+            if len(set(hosts)) != len(hosts) or any([
+                await domain_role(db, h) != "inter" for h in hosts
+            ]):
+                ctx.destination_url = FALLBACK_URL
+            else:
+                ctx.destination_url = await issue_hop(redis, session, hosts, ctx.bypass_url or "") or FALLBACK_URL
+        elif role == "prelander":
+            handoff = await pas.mint_handoff(session, redis, target_host=entry_host)
+            ctx.destination_url = f"https://{entry_host}/_auth/{handoff}" if handoff else FALLBACK_URL
+        else:
+            ctx.destination_url = FALLBACK_URL
     ctx.record(
         STAGE_PRELANDER, "authorized" if session else "authorization_skipped",
         click_id=ctx.click_id or None, host=prelander_host or None,
