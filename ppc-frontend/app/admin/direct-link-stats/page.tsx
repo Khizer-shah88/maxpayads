@@ -835,23 +835,6 @@ export default function DirectLinkStatsPage() {
                 </button>
                 <a
                   href={shareModal.url.split('?')[0]}
-                  onClick={async event => {
-                    event.preventDefault()
-                    const preview = window.open('about:blank', '_blank')
-                    if (preview) preview.opener = null
-                    try {
-                      const link = await resolveStatsLink(shareModal.publisherId)
-                      const res = await directLinkApi.shareStatsLink(link.id)
-                      const url = res.data?.stats_url
-                      if (!url) throw new Error('No URL returned')
-                      setShareModal({ ...shareModal, url })
-                      if (preview) preview.location.replace(url)
-                      else toast.error('Allow popups to preview the stats page')
-                    } catch {
-                      preview?.close()
-                      toast.error('Failed to load the current stats link')
-                    }
-                  }}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
@@ -860,7 +843,7 @@ export default function DirectLinkStatsPage() {
                 </a>
                 <button
                   onClick={async () => {
-                    const pub = publishers.find(p => p.id === shareModal.publisherId)
+                    const pub = publishers.find(p => p.name === shareModal.name)
                     if (!pub) { toast.error('Publisher not found'); return }
                     await regenerateStatsUrl(pub.id, pub.name)
                   }}
