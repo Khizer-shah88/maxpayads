@@ -40,7 +40,9 @@ class TestAdminPublisherCreation:
         assert publisher["is_admin_created"] is True
         assert publisher["created_by"] is not None  # Admin ID
         assert "public_id" in publisher
-        assert publisher["public_id"].startswith("PUB_")
+        # New format: 8-char alphanumeric hash without PUB_ prefix
+        assert len(publisher["public_id"]) == 8
+        assert publisher["public_id"].isalnum()
         
         # Teardown
         await db.publishers.delete_one({"email": "testpub@example.com"})
@@ -368,7 +370,9 @@ class TestPublicIDUniqueness:
         # Generate second ID — the generator must not re-use an existing ID
         pub_id_2 = await generate_unique_publisher_id(db)
         assert pub_id_1 != pub_id_2
-        assert pub_id_2.startswith("PUB_")
+        # New format: 8-char alphanumeric hash without PUB_ prefix
+        assert len(pub_id_2) == 8
+        assert pub_id_2.isalnum()
         
         # Cleanup
         await db.publishers.delete_many({"email": {"$in": ["pub1_unique@test.com"]}})

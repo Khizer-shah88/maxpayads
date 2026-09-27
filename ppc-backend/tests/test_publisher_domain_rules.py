@@ -30,7 +30,9 @@ class TestManualPublisher:
         assert pub is not None
         assert pub["publisher_type"] == "manual"
         assert pub["status"] == "active"
-        assert pub["public_id"].startswith("PUB_")
+        # New format: 8-char alphanumeric hash without PUB_ prefix
+        assert len(pub["public_id"]) == 8
+        assert pub["public_id"].isalnum()
         assert pub["is_admin_created"] is True
 
     async def test_manual_publisher_requires_unique_name(self, db):

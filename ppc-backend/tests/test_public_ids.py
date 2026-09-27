@@ -28,30 +28,37 @@ class TestPublicIDGeneration:
     """Test public ID generation utilities."""
     
     def test_generate_public_id_format(self):
-        """Test that generated IDs match expected format."""
+        """Test that generate_public_id with an explicit prefix still works."""
+        # generate_public_id with a prefix still returns PREFIX_XXXXXXXX
         pub_id = generate_public_id("PUB")
         assert pub_id.startswith("PUB_")
         assert len(pub_id) == 12  # PUB_ + 8 chars
-        # Entropy now spans upper + lower + digits for a stronger, harder-to-
-        # guess random part.
         assert pub_id[4:].isalnum()
-        # Across a run, the expanded alphabet mixes case (proving lower-case is
-        # in play) yet stays unique. Checked over the batch to stay deterministic.
         samples = [generate_public_id("PUB")[4:] for _ in range(100)]
         assert len(set(samples)) == 100  # All unique
         assert any(not s.isupper() for s in samples)  # some contain lower/digit
-    
+
+        # Publisher IDs (no prefix) return bare 8-char hash
+        bare_id = generate_public_id("")
+        assert len(bare_id) == 8
+        assert bare_id.isalnum()
+
     def test_generate_unique_ids(self):
         """Test that generated IDs are unique."""
+        # With prefix
         ids = {generate_public_id("PUB") for _ in range(100)}
         assert len(ids) == 100  # All unique
+        # Without prefix (publisher format)
+        bare_ids = {generate_public_id("") for _ in range(100)}
+        assert len(bare_ids) == 100  # All unique
     
     @pytest.mark.asyncio
     async def test_generate_unique_publisher_id(self, db):
         """Test publisher ID generation with uniqueness check."""
         pub_id = await generate_unique_publisher_id(db)
-        assert pub_id.startswith("PUB_")
-        assert len(pub_id) == 12
+        # New format: 8-char alphanumeric hash, no PUB_ prefix
+        assert len(pub_id) == 8
+        assert pub_id.isalnum()
     
     @pytest.mark.asyncio
     async def test_generate_unique_website_id(self, db):
@@ -66,10 +73,13 @@ class TestPublicIDFormat:
     
     def test_is_public_id_format_publisher(self):
         """Test publisher ID format validation."""
-        assert is_public_id_format("PUB_ABCD1234", "publisher") is True
-        assert is_public_id_format("PUB_ABC123", "publisher") is False  # Too short
+        # New format: 8-char alphanumeric hash (no prefix)
+        assert is_public_id_format("ABCD1234", "publisher") is True
+        assert is_public_id_format("xBwS9hWz", "publisher") is True
+        assert is_public_id_format("ABC123", "publisher") is False   # Too short
         assert is_public_id_format("SITE_ABCD1234", "publisher") is False  # Wrong prefix
-        assert is_public_id_format("abcd1234", "publisher") is False
+        # Legacy PUB_ format still accepted for backward compat
+        assert is_public_id_format("PUB_ABCD1234", "publisher") is True
     
     def test_is_public_id_format_website(self):
         """Test website ID format validation."""
@@ -79,9 +89,16 @@ class TestPublicIDFormat:
     
     def test_is_public_id_format_any(self):
         """Test generic ID format validation."""
+        # New publisher format (8-char bare hash)
+        assert is_public_id_format("ABCD1234") is True
+        assert is_public_id_format("xBwS9hWz") is True
+        # Legacy PUB_ format still accepted
         assert is_public_id_format("PUB_ABCD1234") is True
+        # Website format
         assert is_public_id_format("SITE_XYZ789AB") is True
+        # Invalid
         assert is_public_id_format("OTHER_123456") is False
+        assert is_public_id_format("AB12") is False  # Too short
 
 
 @pytest.mark.asyncio
