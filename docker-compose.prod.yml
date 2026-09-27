@@ -13,8 +13,8 @@ services:
       - mongodb_backup:/backup
     command: >
       mongod
-      --wiredTigerCacheSizeGB 6
-      --maxConns 1000
+      --wiredTigerCacheSizeGB 4
+      --maxConns 500
       --quiet
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -27,9 +27,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
+          memory: 6G
         reservations:
-          memory: 4G
+          memory: 2G
 
   redis:
     image: redis:7.2-alpine
