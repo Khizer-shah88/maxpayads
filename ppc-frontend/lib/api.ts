@@ -62,6 +62,7 @@ export const adminApi = {
   updatePublisher: (id: string, data: object) =>
     api.patch(`/admin/publishers/${id}`, data),
   deletePublisher: (id: string) => api.delete(`/admin/publishers/${id}`),
+  deletePublisherStats: (id: string) => api.delete(`/admin/publishers/${id}/stats`),
   downloadPublisherCSV: (id: string) =>
     api.get(`/admin/publishers/${id}/download-csv`, { responseType: 'blob' }),
   adjustBalance: (id: string, amount: number, reason?: string) =>
@@ -275,8 +276,8 @@ export const directLinkApi = {
 // ==================== PUBLIC STATS (NO AUTH) ====================
 // URL: /public-stats/{share_id} — the share ID is the access secret.
 export const publicStatsApi = {
-  getPublisherStats: (shareId: string) =>
-    api.get(`/public-stats/${shareId}`),
+  getPublisherStats: (shareId: string, days: number = 30) =>
+    api.get(`/public-stats/${shareId}`, { params: { days } }),
 }
 
 // ==================== STATS PROFILES (DIRECT LINK STATS) ====================

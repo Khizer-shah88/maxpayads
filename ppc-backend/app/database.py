@@ -13,18 +13,19 @@ def _init_db_handles():
     global client, db
 
     if client is None or db is None:
-        # Simplified connection settings for stability
         client = AsyncIOMotorClient(
             settings.MONGODB_URL,
-            maxPoolSize=100,  # Reduced from 200 to be more conservative
-            minPoolSize=10,   # Reduced from 50 
-            maxIdleTimeMS=60000,  # Back to default 60s
-            waitQueueTimeoutMS=30000,  # Increased timeout
-            serverSelectionTimeoutMS=30000,  # Increased timeout
-            connectTimeoutMS=20000,   # Increased timeout
-            socketTimeoutMS=60000,    # Increased timeout
-            retryWrites=True,         
-            heartbeatFrequencyMS=30000,  # Less frequent heartbeat
+            maxPoolSize=300,         # 16 workers × ~18 concurrent = headroom
+            minPoolSize=20,          # Keep warm connections ready
+            maxIdleTimeMS=120000,    # 2 min idle before closing
+            waitQueueTimeoutMS=10000,
+            serverSelectionTimeoutMS=15000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=45000,
+            retryWrites=True,
+            heartbeatFrequencyMS=20000,
+            # Use compression to reduce bandwidth
+            compressors=["zlib"],
         )
         db = client[settings.DB_NAME]
 
@@ -75,6 +76,12 @@ async def create_indexes():
     await db.clicks.create_index("status")
     await db.clicks.create_index([("publisher_id", ASCENDING), ("timestamp", DESCENDING)])
     await db.clicks.create_index([("ip_address", ASCENDING), ("publisher_id", ASCENDING), ("timestamp", DESCENDING)])
+    # Compound indexes for statistics page filters (avoid collection scans)
+    await db.clicks.create_index([("status", ASCENDING), ("timestamp", DESCENDING)])
+    await db.clicks.create_index([("publisher_id", ASCENDING), ("status", ASCENDING), ("timestamp", DESCENDING)])
+    await db.clicks.create_index([("ip_address", ASCENDING), ("timestamp", DESCENDING)])
+    await db.clicks.create_index([("country_code", ASCENDING), ("timestamp", DESCENDING)])
+    await db.clicks.create_index([("os", ASCENDING), ("timestamp", DESCENDING)])
 
     # Withdrawals
     await db.withdrawals.create_index("publisher_id")

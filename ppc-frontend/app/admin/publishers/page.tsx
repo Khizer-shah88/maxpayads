@@ -393,12 +393,8 @@ export default function PublishersPage() {
           </div>
           <div className="flex gap-2">
             <button onClick={() => { setManualModal(true); setManualForm({ ...EMPTY_MANUAL_FORM }) }}
-              className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2">
-              <UserPlus size={18} /> Manual Publisher
-            </button>
-            <button onClick={() => { setAddModal(true); setAddForm({ ...EMPTY_PUB_FORM }) }}
               className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2">
-              <Plus size={18} /> Add Publisher
+              <UserPlus size={18} /> Manual Publisher
             </button>
           </div>
         </div>

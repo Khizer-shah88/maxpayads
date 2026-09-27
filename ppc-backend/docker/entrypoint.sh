@@ -92,9 +92,10 @@ echo "--- Starting FastAPI ---"
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
-    --workers 12 \
-    --log-level info \
-    --access-log \
-    --backlog 2048 \
-    --limit-max-requests 1000 \
-    --timeout-keep-alive 5
+    --workers 16 \
+    --log-level warning \
+    --no-access-log \
+    --backlog 4096 \
+    --timeout-keep-alive 10 \
+    --loop uvloop \
+    --http httptools

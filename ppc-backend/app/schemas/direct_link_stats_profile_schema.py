@@ -75,7 +75,7 @@ class ManualConversionCreate(BaseModel):
     profile_slug: str
     date: str  # YYYY-MM-DD format
     conversions: int = Field(..., ge=0)
-    reason: str = Field(..., min_length=5)
+    reason: Optional[str] = Field(None, description="Optional reason for conversion entry")
     metadata: dict = Field(default_factory=dict)
 
     @field_validator("date")
@@ -92,7 +92,7 @@ class ManualConversionCreate(BaseModel):
 class ManualConversionUpdate(BaseModel):
     """Update a manual conversion override."""
     conversions: Optional[int] = Field(None, ge=0)
-    reason: Optional[str] = Field(None, min_length=5)
+    reason: Optional[str] = Field(None, description="Optional reason for conversion entry")
     metadata: Optional[dict] = None
 
 

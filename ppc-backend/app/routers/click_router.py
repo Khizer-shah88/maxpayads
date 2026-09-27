@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
 from typing import Optional
+import re
 from bson import ObjectId
 from app.dependencies import get_db, get_redis_client, get_current_admin
 from app.utils.date_utils import timestamp_range_query
@@ -227,6 +228,7 @@ async def get_clicks(
     browser: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    ip_address: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, le=200),
     current_user: dict = Depends(get_current_admin),
@@ -248,6 +250,8 @@ async def get_clicks(
         query["os"] = {"$regex": os, "$options": "i"}
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
+    if ip_address:
+        query["ip_address"] = {"$regex": re.escape(ip_address), "$options": "i"}
 
     tr = timestamp_range_query(date_from, date_to)
     if tr:

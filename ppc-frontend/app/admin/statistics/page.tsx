@@ -38,6 +38,7 @@ export default function StatisticsPage() {
     status: '', country_code: '', device_type: '', os: '', browser: '',
     publisher_id: '', website_id: '',
     date_from: '', date_to: '',
+    ip_address: '',  // Add IP search field
   })
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export default function StatisticsPage() {
       if (filters.browser) params.browser = filters.browser
       if (filters.date_from) params.date_from = filters.date_from
       if (filters.date_to) params.date_to = filters.date_to
+      if (filters.ip_address) params.ip_address = filters.ip_address  // Add IP filter to API call
       const [res, aggRes] = await Promise.all([
         clickApi.getClicks(params),
         analyticsApi.getClickStats(params).catch(() => null),
@@ -356,6 +358,12 @@ export default function StatisticsPage() {
             </select>
             <input value={filters.country_code} onChange={e => setFilters(p => ({...p, country_code: e.target.value.toUpperCase()}))}
               placeholder="CC" maxLength={2} className={`${sel} w-14`} />
+            <input 
+              value={filters.ip_address} 
+              onChange={e => setFilters(p => ({...p, ip_address: e.target.value}))}
+              placeholder="Search IP..." 
+              className={`${sel} w-32`} 
+            />
             <button onClick={() => { setPage(1); loadClicks() }} className="bg-primary hover:bg-primary-dark text-white px-3 py-1.5 rounded-lg text-xs font-medium">
               Apply
             </button>

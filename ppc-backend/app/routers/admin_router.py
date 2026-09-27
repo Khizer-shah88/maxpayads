@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from app.schemas.publisher_schema import AdminPublisherUpdate, BalanceAdjustment
 from app.services.publisher_service import (
     get_all_publishers, get_publisher_by_id, update_publisher,
-    delete_publisher_and_records, count_publishers, get_publisher_stats,
+    delete_publisher_and_records, delete_publisher_stats_only, count_publishers, get_publisher_stats,
     create_manual_publisher,
 )
 from app.services.earnings_service import adjust_publisher_balance
@@ -428,6 +428,29 @@ async def delete_publisher(
     if not deleted:
         raise NotFoundError("Publisher")
     return {"success": True, "message": "Publisher and all records deleted"}
+
+
+@router.delete("/publishers/{publisher_id}/stats")
+async def delete_publisher_stats(
+    publisher_id: str,
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Delete only statistics data for a publisher (clicks, withdrawals, fraud logs).
+    The publisher account remains active.
+    """
+    # Verify publisher exists
+    publisher = await get_publisher_by_id(publisher_id, db)
+    if not publisher:
+        raise NotFoundError("Publisher")
+    
+    result = await delete_publisher_stats_only(publisher_id, db)
+    return {
+        "success": True,
+        "message": "Statistics deleted successfully. Publisher account remains active.",
+        "deleted": result,
+    }
 
 
 @router.post("/publishers/{publisher_id}/balance")

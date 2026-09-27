@@ -127,6 +127,7 @@ export default function PublisherStatsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [chartRange, setChartRange] = useState<'7' | '14' | '30'>('7')
+  const [dateRange, setDateRange] = useState<number>(30) // Date range selector for daily breakdown
   // Platform click filters — empty set = show all platforms
   const [platformFilters, setPlatformFilters] = useState<Set<'windows' | 'mac' | 'android'>>(new Set())
   // Chart series visibility + hover crosshair + refresh timestamp
@@ -144,7 +145,7 @@ export default function PublisherStatsPage() {
     requestInFlight.current = true
     setRefreshing(true)
     try {
-      const response = await publicStatsApi.getPublisherStats(shareId)
+      const response = await publicStatsApi.getPublisherStats(shareId, dateRange)
       const d = response.data.data
 
       const daily: DayRow[] = (d.daily_breakdown || []).map((r: any) => ({
@@ -213,7 +214,7 @@ export default function PublisherStatsPage() {
       setRefreshing(false)
       setLoading(false)
     }
-  }, [shareId])
+  }, [shareId, dateRange])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -731,11 +732,24 @@ export default function PublisherStatsPage() {
 
         {/* Daily breakdown — responsive table with horizontal scroll on mobile */}
         <section className="bg-[#111721] border border-[#1D2634] rounded-[10px] overflow-hidden">
-          <div className="px-3 sm:px-4 py-3.5 border-b border-[#1D2634]">
-            <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
-            <p className="text-xs text-[#8695A8] mt-0.5">
-              {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS and conversions per day'}
-            </p>
+          <div className="px-3 sm:px-4 py-3.5 border-b border-[#1D2634] flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-[#E8EEF6]">Daily breakdown</h2>
+              <p className="text-xs text-[#8695A8] mt-0.5">
+                {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS and conversions per day'}
+              </p>
+            </div>
+            <select 
+              value={dateRange} 
+              onChange={(e) => setDateRange(Number(e.target.value))}
+              className="px-3 py-1.5 rounded-lg bg-[#0D131C] border border-[#1D2634] text-[#E8EEF6] text-xs font-medium hover:bg-[#111721] transition-colors cursor-pointer"
+            >
+              <option value={7}>Last 7 Days</option>
+              <option value={14}>Last 14 Days</option>
+              <option value={30}>Last 30 Days</option>
+              <option value={60}>Last 60 Days</option>
+              <option value={90}>Last 90 Days</option>
+            </select>
           </div>
           <div className="overflow-x-auto -mx-px">
             <table className="w-full min-w-[640px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -760,8 +774,8 @@ export default function PublisherStatsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {/* Show newest dates first in the table */}
-                  {[...filteredRows].reverse().slice(0, 10).map((row, i) => {
+                  {/* Show newest dates first in the table - show all rows based on selected date range */}
+                  {[...filteredRows].reverse().map((row, i) => {
                     const maxImpRow = Math.max(...filteredRows.map(r => r.clicks), 1)
                     const isNewest = i === 0
                     return (

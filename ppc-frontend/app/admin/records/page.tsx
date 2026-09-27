@@ -67,8 +67,8 @@ export default function RecordsPage() {
     if (!deleteModal) return
     setDeleting(true)
     try {
-      await adminApi.deletePublisher(deleteModal.publisher.id)
-      toast.success('Publisher and all records deleted')
+      await adminApi.deletePublisherStats(deleteModal.publisher.id)
+      toast.success('Statistics deleted. Publisher account remains active.')
       setDeleteModal(null)
       load()
     } catch { toast.error('Delete failed') }
@@ -194,12 +194,12 @@ export default function RecordsPage() {
               <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-red-50">
                 <Trash2 className="text-red-600" size={24} />
               </div>
-              <h3 className="text-lg font-bold text-gray-900 mb-2">Delete Publisher Record</h3>
-              <p className="text-gray-500 text-sm mb-6">Delete all records for <strong className="text-gray-900">{deleteModal.publisher.name}</strong>? This cannot be undone.</p>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Delete Statistics</h3>
+              <p className="text-gray-500 text-sm mb-6">Delete all statistics (clicks, withdrawals, fraud logs) for <strong className="text-gray-900">{deleteModal.publisher.name}</strong>? The publisher account will remain active. This cannot be undone.</p>
               <div className="flex gap-3">
                 <button onClick={handleDelete} disabled={deleting}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center">
-                  {deleting ? <Spinner size={16} /> : 'Yes, Delete All'}
+                  {deleting ? <Spinner size={16} /> : 'Yes, Delete Stats'}
                 </button>
                 <button onClick={() => setDeleteModal(null)}
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>

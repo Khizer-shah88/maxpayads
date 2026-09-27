@@ -24,8 +24,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Constants
-PUB_PREFIX = "PUB"
-SITE_PREFIX = "SITE"
+PUB_PREFIX = ""  # Remove prefix - just use random hash
+SITE_PREFIX = "SITE"  # Keep SITE prefix for websites
 ID_LENGTH = 8
 # Larger alphabet (upper + lower + digits) makes the random part of each public
 # ID far harder to guess/brute-force than the original uppercase-only 36-char
@@ -51,6 +51,10 @@ def generate_public_id(prefix: str, length: int = ID_LENGTH) -> str:
     import random as _random
     rnd = _random.Random(int.from_bytes(entropy[:16], "big"))
     random_part = "".join(rnd.choice(CHARS) for _ in range(length))
+    
+    # For publishers, return just the random part (no prefix)
+    if not prefix:
+        return random_part
     return f"{prefix}_{random_part}"
 
 
@@ -83,14 +87,21 @@ async def resolve_publisher_id(db, identifier: str) -> Optional[str]:
     Resolve a publisher identifier to internal MongoDB _id.
     Accepts:
     - MongoDB ObjectId string
-    - Public ID (PUB_XXXXXXXX)
+    - Public ID (8-character hash without prefix)
+    - Legacy Public ID (PUB_XXXXXXXX) for backward compatibility
     
     Returns internal _id string or None if not found.
     """
     from bson import ObjectId
     
-    # Try public_id lookup first (most common case for new links)
-    if identifier.startswith(PUB_PREFIX):
+    # Try public_id lookup first (new format - no prefix)
+    if len(identifier) == 8 and identifier.isalnum():
+        publisher = await db.publishers.find_one({"public_id": identifier})
+        if publisher:
+            return str(publisher["_id"])
+    
+    # Backward compatibility: Try legacy PUB_ format
+    if identifier.startswith("PUB_"):
         publisher = await db.publishers.find_one({"public_id": identifier})
         if publisher:
             return str(publisher["_id"])
@@ -185,10 +196,14 @@ def is_public_id_format(identifier: str, id_type: str = "any") -> bool:
         return False
     
     if id_type == "publisher":
-        # Check prefix and minimum reasonable length (at least 7 chars after prefix)
-        return identifier.startswith(f"{PUB_PREFIX}_") and len(identifier) >= len(PUB_PREFIX) + 1 + 7
+        # New format: 8-character alphanumeric hash OR legacy PUB_ format
+        return (len(identifier) == 8 and identifier.isalnum()) or identifier.startswith("PUB_")
     elif id_type == "website":
         # Check prefix and minimum reasonable length (at least 7 chars after prefix)
         return identifier.startswith(f"{SITE_PREFIX}_") and len(identifier) >= len(SITE_PREFIX) + 1 + 7
     else:  # any
-        return (identifier.startswith(f"{PUB_PREFIX}_") or identifier.startswith(f"{SITE_PREFIX}_"))
+        return (
+            (len(identifier) == 8 and identifier.isalnum()) or  # New publisher format
+            identifier.startswith("PUB_") or  # Legacy publisher format
+            identifier.startswith(f"{SITE_PREFIX}_")  # Website format
+        )

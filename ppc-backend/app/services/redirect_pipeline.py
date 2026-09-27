@@ -373,9 +373,12 @@ async def stage_screen_traffic(ctx: RedirectResolutionContext, db, redis) -> Non
         logger.warning(f"Redis rate limit check failed: {e}")
 
     # Duplicate IP + website — soft flag, still routed.
+    # Per-day validation: same IP today is valid if it came yesterday
     try:
+        from datetime import datetime
+        today = datetime.utcnow().strftime("%Y-%m-%d")
         site_suffix = f":{ctx.website_id}" if ctx.website_id else ""
-        dup_key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ctx.ip}{site_suffix}"
+        dup_key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ctx.ip}{site_suffix}:{today}"
         if await redis.exists(dup_key):
             return _verdict(False, True, "duplicate_ip", 0.85, fds.TRAFFIC_DUPLICATE, "flagged")
         await redis.setex(dup_key, DUPLICATE_CLICK_WINDOW_SECONDS, "1")

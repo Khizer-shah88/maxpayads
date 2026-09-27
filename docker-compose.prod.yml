@@ -1,10 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Max Pay Ads — Production Docker Compose (InterServer VPS)
-# Target: 9 slices ≈ 9 vCPU / 18GB RAM / ~270GB SSD (Compose v2 honors deploy.limits)
+# Max Pay Ads — Production Docker Compose
+# Target: 9 slices ≈ 9 vCPU / 18GB RAM — tuned for 4000-5000+ req/s
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
-  # ── Infrastructure ──────────────────────────────────────────────────────────
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:7.0
     container_name: ppc_mongodb
@@ -13,9 +13,10 @@ services:
       - mongodb_backup:/backup
     command: >
       mongod
-      --wiredTigerCacheSizeGB 4
-      --maxConns 500
+      --wiredTigerCacheSizeGB 5
+      --maxConns 1000
       --quiet
+      --setParameter diagnosticDataCollectionEnabled=false
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -27,10 +28,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
+          memory: 7G
         reservations:
-          memory: 2G
+          memory: 3G
 
+  # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7.2-alpine
     container_name: ppc_redis
@@ -39,12 +41,16 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --maxmemory 1gb
+      --maxmemory 1500mb
       --maxmemory-policy allkeys-lru
-      --save 60 1000
-      --tcp-backlog 511
+      --save 300 1000
+      --tcp-backlog 65535
       --timeout 300
-      --tcp-keepalive 300
+      --tcp-keepalive 60
+      --hz 20
+      --dynamic-hz yes
+      --lazyfree-lazy-eviction yes
+      --lazyfree-lazy-expire yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -56,10 +62,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1.2G
+          memory: 1.8G
         reservations:
           memory: 512M
 
+  # ── RabbitMQ ──────────────────────────────────────────────────────────────────
   rabbitmq:
     image: rabbitmq:3.13-alpine
     container_name: ppc_rabbitmq
@@ -84,7 +91,7 @@ services:
         reservations:
           memory: 256M
 
-  # ── Backend ─────────────────────────────────────────────────────────────────
+  # ── FastAPI backend ───────────────────────────────────────────────────────────
   fastapi:
     build:
       context: ./ppc-backend
@@ -100,6 +107,9 @@ services:
       PYTHONPATH: /app
       SKIP_INIT: "true"
       PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
+      # Python performance
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -110,7 +120,6 @@ services:
     volumes:
       - ./ppc-backend/app/ml/models:/app/app/ml/models
       - ./ppc-backend/uploads:/app/uploads
-      # MaxMind GeoLite2 country DB (see deployment/README.md — must exist before `up`)
       - ./ppc-backend/GeoLite2-Country.mmdb:/app/GeoLite2-Country.mmdb:ro
     restart: unless-stopped
     networks:
@@ -118,16 +127,19 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 5G
         reservations:
           memory: 2G
 
+  # ── Celery worker ─────────────────────────────────────────────────────────────
   celery_worker:
     build:
       context: ./ppc-backend
       dockerfile: docker/Dockerfile
     container_name: ppc_celery
-    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=8", "--max-tasks-per-child=1000"]
+    command: ["celery", "-A", "app.tasks.celery_app", "worker",
+              "--loglevel=warning", "--concurrency=8",
+              "--max-tasks-per-child=2000", "--prefetch-multiplier=4"]
     env_file:
       - ./ppc-backend/.env
     environment:
@@ -156,12 +168,13 @@ services:
         reservations:
           memory: 1G
 
+  # ── Celery beat ───────────────────────────────────────────────────────────────
   celery_beat:
     build:
       context: ./ppc-backend
       dockerfile: docker/Dockerfile
     container_name: ppc_celery_beat
-    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=warning"]
     env_file:
       - ./ppc-backend/.env
     environment:
@@ -184,7 +197,7 @@ services:
         limits:
           memory: 256M
 
-  # ── Frontend ────────────────────────────────────────────────────────────────
+  # ── Next.js frontend ──────────────────────────────────────────────────────────
   nextjs:
     build:
       context: ./ppc-frontend
@@ -195,18 +208,11 @@ services:
     environment:
       NODE_ENV: production
       NEXT_BACKEND_URL: http://fastapi:8000
-      # Hostnames allowed to serve the portal (landing page, admin, publisher).
-      # Every other hostname (redirection domains etc.) gets 404 for portal
-      # pages while /d/[slug], /api/* and static assets keep working.
       PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
-      # Entry guard — values are injected from deployment/.env.production
-      # via the ALLOWED_ENTRY_DOMAINS / ENTRY_* variables set in that file.
       ALLOWED_ENTRY_DOMAINS: ${ALLOWED_ENTRY_DOMAINS:-}
       ENTRY_FALLBACK_URL: ${ENTRY_FALLBACK_URL:-https://www.google.com/}
       ENTRY_SESSION_TTL: ${ENTRY_SESSION_TTL:-900}
       ENTRY_SESSION_SECRET: ${ENTRY_SESSION_SECRET:-}
-      # Source deterrent system — redirects view-source tabs to rendered page
-      # Set to "true" to enable the feature in production
       ENABLE_SOURCE_DETERRENT: "true"
       SOURCE_DETERRENT_ALLOW_LOCALHOST: "true"
     depends_on:
@@ -221,7 +227,7 @@ services:
         reservations:
           memory: 512M
 
-  # ── Nginx + SSL ─────────────────────────────────────────────────────────────
+  # ── Nginx ─────────────────────────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     container_name: ppc_nginx
@@ -230,7 +236,6 @@ services:
       - "443:443"
     volumes:
       - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
-      # Cloudflare Origin certificate (see deployment/certs/README.md)
       - ./deployment/certs/origin.crt:/etc/ssl/certs/origin.crt:ro
       - ./deployment/certs/origin.key:/etc/ssl/private/origin.key:ro
     depends_on:
@@ -239,6 +244,10 @@ services:
     restart: unless-stopped
     networks:
       - ppc_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
 volumes:
   mongodb_data:
@@ -249,3 +258,5 @@ volumes:
 networks:
   ppc_network:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1500

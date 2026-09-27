@@ -57,13 +57,13 @@ class ManualConversionCreate(BaseModel):
     publisher_id: str = Field(..., description="Publisher ID")
     link_id: Optional[str] = Field(None, description="Specific link ID (optional, applies to all links if not set)")
     conversions: int = Field(..., ge=0, description="Number of conversions")
-    reason: str = Field(..., min_length=1, max_length=500, description="Reason for manual entry")
+    reason: Optional[str] = Field(None, max_length=500, description="Optional reason for manual entry")
 
 
 class ManualConversionUpdate(BaseModel):
     """Update existing manual conversion entry"""
     conversions: int = Field(..., ge=0)
-    reason: str = Field(..., min_length=1, max_length=500)
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class ManualConversionResponse(BaseModel):

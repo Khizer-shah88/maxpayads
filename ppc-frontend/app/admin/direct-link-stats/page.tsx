@@ -4,7 +4,7 @@ import PublisherId from '@/components/shared/PublisherId'
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Edit3, Copy, RefreshCw,
+  Edit3, Copy, RefreshCw, Search,
   Plus, Link, ExternalLink, Share2, X, Link2, MousePointerClick, Target, Globe2, Settings2, History,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -110,6 +110,29 @@ export default function DirectLinkStatsPage() {
   const [publisherDomains, setPublisherDomains] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [selectedPublisherId, setSelectedPublisherId] = useState<string>('')
+
+  // Search and pagination
+  const [searchTerm, setSearchTerm] = useState('')
+  const [page, setPage] = useState(1)
+  const [limit, setLimit] = useState(50)
+  const [total, setTotal] = useState(0)
+  
+  // Filtered data based on search
+  const filteredPublishers = publishers.filter(pub =>
+    pub.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    pub.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    pub.public_id?.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+  
+  // Pagination logic
+  const totalPages = Math.ceil(filteredPublishers.length / limit)
+  const startIndex = (page - 1) * limit
+  const paginatedPublishers = filteredPublishers.slice(startIndex, startIndex + limit)
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setPage(1)
+  }, [searchTerm, limit])
 
   // Share stats modal
   const [shareModal, setShareModal] = useState<{ name: string; url: string; publisherId: string } | null>(null)
@@ -338,7 +361,7 @@ export default function DirectLinkStatsPage() {
     if (!historyModal) return
     if (!addConvDate) { toast.error('Date is required'); return }
     if (addConvValue < 0) { toast.error('Conversions must be ≥ 0'); return }
-    if (!addConvReason.trim()) { toast.error('Reason is required'); return }
+    // Reason is now optional - no validation needed
     setAddingConversion(true)
     try {
       await directLinkApi.createManualConversion({
@@ -346,7 +369,7 @@ export default function DirectLinkStatsPage() {
         publisher_id: historyModal.pubId,
         link_id: null,
         conversions: addConvValue,
-        reason: addConvReason.trim(),
+        reason: addConvReason.trim() || undefined,  // Send undefined if empty
       })
       toast.success('Conversion entry added')
       setShowAddConv(false)
@@ -398,7 +421,7 @@ export default function DirectLinkStatsPage() {
   const selectedPublisher = publishers.find(p => p.id === selectedPublisherId)
 
   // Aggregated stats per publisher — only count active/paused links, not archived
-  const publisherStats = publishers
+  const publisherStats = paginatedPublishers
     .map(pub => {
       const pubLinks = links.filter(l => l.publisher_id === pub.id)
       const activeLinks = pubLinks.filter(l => l.status !== 'archived')
@@ -485,6 +508,37 @@ export default function DirectLinkStatsPage() {
                 Publisher statistics — clicks, conversions and white-label stats links
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Search and Pagination Controls */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-6">
+          <div className="flex flex-wrap gap-4 items-center">
+            <div className="relative flex-1 min-w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input 
+                value={searchTerm} 
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="Search by publisher name, email, or ID..." 
+                className={`${inp} pl-9`} 
+              />
+            </div>
+            
+            <select 
+              value={limit} 
+              onChange={e => setLimit(parseInt(e.target.value))} 
+              className={inp}
+              style={{ width: 'auto', minWidth: '120px' }}
+            >
+              <option value={10}>10 per page</option>
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+              <option value={100}>100 per page</option>
+            </select>
+            
+            <span className="text-gray-500 text-sm whitespace-nowrap">
+              {filteredPublishers.length} publishers found
+            </span>
           </div>
         </div>
 
@@ -732,7 +786,60 @@ export default function DirectLinkStatsPage() {
                 </tbody>
               </table>
             </div>
+            
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
+                <div className="text-sm text-gray-600">
+                  Showing {startIndex + 1}-{Math.min(startIndex + limit, filteredPublishers.length)} of {filteredPublishers.length}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (page <= 3) {
+                        pageNum = i + 1;
+                      } else if (page >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = page - 2 + i;
+                      }
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setPage(pageNum)}
+                          className={`w-8 h-8 rounded-lg text-sm font-medium ${
+                            page === pageNum
+                              ? 'bg-primary text-white'
+                              : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+        </div>
         )}
 
         {/* Selected publisher links table removed — Direct Link Stats tracks
@@ -1027,7 +1134,7 @@ export default function DirectLinkStatsPage() {
                     </div>
                   </div>
                   <div className="mt-3">
-                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Reason</label>
+                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Reason (Optional)</label>
                     <input value={addConvReason}
                       onChange={e => setAddConvReason(e.target.value)}
                       placeholder="e.g. Postback missed — entered manually"

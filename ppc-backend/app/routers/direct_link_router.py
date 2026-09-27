@@ -674,7 +674,7 @@ async def create_manual_conversion_override(
         "reason": "Manual adjustment due to tracking issues"
     }
     """
-    required_fields = ["date", "publisher_id", "manual_conversions", "reason"]
+    required_fields = ["date", "publisher_id", "manual_conversions"]
     for field in required_fields:
         if field not in data:
             raise HTTPException(status_code=400, detail=f"{field} is required")
@@ -683,13 +683,10 @@ async def create_manual_conversion_override(
     publisher_id = data["publisher_id"]
     link_id = data.get("link_id")
     manual_conversions = data["manual_conversions"]
-    reason = data["reason"].strip()
+    reason = data.get("reason", "").strip()  # Optional, default to empty string
     
     if manual_conversions < 0:
         raise HTTPException(status_code=400, detail="Manual conversions must be non-negative")
-    
-    if not reason:
-        raise HTTPException(status_code=400, detail="Reason cannot be empty")
     
     # Parse and validate date
     try:

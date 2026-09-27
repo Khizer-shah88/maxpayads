@@ -226,6 +226,27 @@ async def delete_publisher_and_records(publisher_id: str, db) -> bool:
     return result.deleted_count > 0
 
 
+async def delete_publisher_stats_only(publisher_id: str, db) -> dict:
+    """
+    Delete only statistics data for a publisher (clicks, withdrawals, fraud logs).
+    The publisher account and websites remain intact.
+    
+    Returns: Dictionary with count of deleted records
+    """
+    clicks_result = await db.clicks.delete_many({"publisher_id": publisher_id})
+    withdrawals_result = await db.withdrawals.delete_many({"publisher_id": publisher_id})
+    fraud_result = await db.fraud_logs.delete_many({"publisher_id": publisher_id})
+    
+    # Also clear direct link stats overrides
+    await db.direct_link_manual_conversions.delete_many({"publisher_id": publisher_id})
+    
+    return {
+        "clicks_deleted": clicks_result.deleted_count,
+        "withdrawals_deleted": withdrawals_result.deleted_count,
+        "fraud_logs_deleted": fraud_result.deleted_count,
+    }
+
+
 async def get_publisher_stats(publisher_id: str, db) -> dict:
     """Calculate comprehensive publisher statistics."""
     now = datetime.utcnow()
