@@ -51,8 +51,27 @@ class Collection:
                 return dict(doc)
         return None
 
-    def find(self, query):
-        return Cursor([doc for doc in self.docs if matches(doc, query)])
+    def find(self, query, projection=None):
+        matching_docs = [doc for doc in self.docs if matches(doc, query)]
+        
+        # Apply projection if specified
+        if projection:
+            projected_docs = []
+            for doc in matching_docs:
+                projected_doc = {}
+                # Always include _id unless explicitly excluded
+                if "_id" not in projection or projection.get("_id", 1):
+                    projected_doc["_id"] = doc.get("_id")
+                
+                # Include requested fields
+                for field, include in projection.items():
+                    if include and field in doc:
+                        projected_doc[field] = doc[field]
+                
+                projected_docs.append(projected_doc)
+            return Cursor(projected_docs)
+        
+        return Cursor(matching_docs)
 
     async def update_many(self, query, update):
         for doc in self.docs:
@@ -82,8 +101,12 @@ def db():
         ]
     ]
     return SimpleNamespace(
-        redirection_domains=Collection(), prelander_templates=Collection(templates),
+        redirection_domains=Collection(), 
+        prelander_templates=Collection(templates),
         landing_pages=Collection(),
+        system_settings=Collection(),  # Add missing system_settings collection
+        direct_links=Collection(),     # Add missing direct_links collection  
+        publishers=Collection(),       # Add missing publishers collection
         campaigns=SimpleNamespace(find_one=AsyncMock(return_value={
             "name": "Campaign", "default_offer_url": "https://offer.example/download", "password": "test-password",
         })),
