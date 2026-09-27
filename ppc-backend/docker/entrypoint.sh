@@ -3,7 +3,6 @@ set -e
 
 MONGODB_URL="${MONGODB_URL:-mongodb://localhost:27017}"
 REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
-RABBITMQ_URL="${CELERY_BROKER_URL:-amqp://guest:guest@localhost:5672//}"
 
 # ── Wait for MongoDB ──────────────────────────────────────────────────────────
 wait_for_mongo() {
@@ -13,7 +12,7 @@ import sys, pymongo
 try:
     c = pymongo.MongoClient('$MONGODB_URL', serverSelectionTimeoutMS=3000)
     c.admin.command('ping')
-except Exception as e:
+except Exception:
     sys.exit(1)
 " 2>/dev/null; do
         sleep 2
@@ -29,7 +28,7 @@ import sys, redis
 try:
     r = redis.from_url('$REDIS_URL', socket_connect_timeout=3)
     r.ping()
-except Exception as e:
+except Exception:
     sys.exit(1)
 " 2>/dev/null; do
         sleep 2
@@ -37,44 +36,29 @@ except Exception as e:
     echo "Redis connected"
 }
 
-# ── Wait for RabbitMQ (AMQP-level check, not just TCP) ───────────────────────
-# TCP port open does NOT mean the broker is ready to accept AMQP connections.
-# Use kombu to do a real AMQP handshake — same library Celery uses.
-wait_for_rabbitmq() {
-    echo "Waiting for RabbitMQ (AMQP ready)..."
-    until python -c "
-import sys
-try:
-    from kombu import Connection
-    with Connection('$RABBITMQ_URL', connect_timeout=5) as conn:
-        conn.ensure_connection(max_retries=1, timeout=5)
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" 2>/dev/null; do
-        sleep 3
-    done
-    echo "RabbitMQ connected"
-}
-
-wait_for_mongo
-wait_for_redis
-wait_for_rabbitmq
-
 # ── Determine if we are running as API server or Celery worker ────────────────
 FIRST_ARG="${1:-}"
 
 if [ "$FIRST_ARG" = "celery" ]; then
+    # Celery workers also need MongoDB + Redis but RabbitMQ is their broker
+    wait_for_mongo
+    wait_for_redis
     echo "Starting Celery: $*"
     exec "$@"
 fi
 
-# ── API server ────────────────────────────────────────────────────────────────
+# ── API server: only needs MongoDB + Redis ────────────────────────────────────
+# RabbitMQ is only used by Celery workers for background tasks.
+# The API server connects to it lazily when tasks are dispatched - no need
+# to wait for it at startup. This was the cause of the startup hang.
+wait_for_mongo
+wait_for_redis
+
 if [ "${SKIP_INIT:-false}" = "true" ]; then
     echo "--- Skipping database seeding (SKIP_INIT=true) ---"
 else
     echo "--- Seeding database ---"
-    python scripts/seed_admin.py    2>&1 | grep -v "^$" | tail -3
+    python scripts/seed_admin.py     2>&1 | grep -v "^$" | tail -3
     python scripts/seed_campaigns.py 2>&1 | grep -v "^$" | tail -4
     python app/seed/seed_smartlink_structures.py 2>&1 | grep -v "^$" | tail -4
     echo "Database ready"
@@ -86,9 +70,6 @@ else
 fi
 
 echo "--- Starting FastAPI ---"
-# NOTE: --loop and --http flags are NOT compatible with --workers (multi-process).
-# uvicorn[standard] already installs uvloop + httptools and uses them automatically
-# per worker process. Do not set --loop/--http here.
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
