@@ -15,9 +15,14 @@ async def connect_redis():
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=5,
+        max_connections=200,  # Increased connection pool size
+        retry_on_timeout=True,
+        health_check_interval=30,
+        socket_keepalive=True,
+        socket_keepalive_options={},
     )
     await redis_client.ping()
-    logger.info("Connected to Redis")
+    logger.info("Connected to Redis with optimized connection pool")
 
 
 async def disconnect_redis():

@@ -13,7 +13,20 @@ def _init_db_handles():
     global client, db
 
     if client is None or db is None:
-        client = AsyncIOMotorClient(settings.MONGODB_URL)
+        # Optimized connection settings for high concurrency
+        client = AsyncIOMotorClient(
+            settings.MONGODB_URL,
+            maxPoolSize=200,  # Maximum connections in pool (increased from default 100)
+            minPoolSize=50,   # Minimum connections maintained (default 0)
+            maxIdleTimeMS=45000,  # Close connections idle for 45s (default 60s)
+            waitQueueTimeoutMS=10000,  # Wait 10s for connection (default 120s)
+            serverSelectionTimeoutMS=10000,  # Server selection timeout
+            connectTimeoutMS=10000,   # Connection timeout
+            socketTimeoutMS=30000,    # Socket timeout
+            retryWrites=True,         # Retry writes on failure
+            heartbeatFrequencyMS=10000,  # Heartbeat every 10s
+            maxConnecting=10          # Max simultaneous connections being established
+        )
         db = client[settings.DB_NAME]
 
 async def connect_db():
