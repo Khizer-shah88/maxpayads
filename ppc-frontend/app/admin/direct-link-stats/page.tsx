@@ -369,7 +369,7 @@ export default function DirectLinkStatsPage() {
         publisher_id: historyModal.pubId,
         link_id: null,
         conversions: addConvValue,
-        reason: addConvReason.trim() || undefined,  // Send undefined if empty
+        reason: addConvReason.trim() || '',  // Empty string if no reason provided
       })
       toast.success('Conversion entry added')
       setShowAddConv(false)
