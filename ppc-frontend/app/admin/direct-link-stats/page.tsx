@@ -839,7 +839,6 @@ export default function DirectLinkStatsPage() {
               </div>
             )}
           </div>
-        </div>
         )}
 
         {/* Selected publisher links table removed — Direct Link Stats tracks
