@@ -93,7 +93,6 @@ exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
     --workers 12 \
-    --worker-class uvicorn.workers.UvicornWorker \
     --log-level info \
     --access-log \
     --backlog 2048 \
