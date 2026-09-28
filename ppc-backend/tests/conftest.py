@@ -30,6 +30,9 @@ os.environ["PORTAL_HOSTNAMES"] = "test,localhost"
 # Hot-path Redis cache off in tests: every test reads fresh database state,
 # so cached routing/campaign results can never mask or leak between tests.
 os.environ["CLICK_HOT_CACHE"] = "false"
+# Enable redirect trace in tests so test_destination_and_trace_are_persisted passes.
+# Production disables it for performance; tests need it to verify pipeline stages.
+os.environ["REDIRECT_TRACE_ENABLED"] = "true"
 
 import pytest
 import pytest_asyncio

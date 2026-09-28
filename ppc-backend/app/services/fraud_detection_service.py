@@ -360,13 +360,15 @@ async def classify_traffic(
     user_agent   = request_data.get("user_agent", "")
     headers      = request_data.get("headers", {})
 
-    # 1. User agent analysis (weight: 15)
+    # 1. User agent analysis — known bots get high weight (40 = suspicious)
     is_bot_ua, bot_reason = detect_bot_user_agent(user_agent)
     if is_bot_ua:
         if any(crawler in user_agent.lower() for crawler in KNOWN_CRAWLERS):
+            # Legitimate crawlers (googlebot etc.) — low weight
             score.add_signal("known_crawler", 10, bot_reason)
         else:
-            score.add_signal("bot_ua", 15, bot_reason)
+            # Automation tools, script clients, etc. — straight to suspicious
+            score.add_signal("bot_ua", 40, bot_reason)
 
     # 2. User agent structure analysis (weight: 10)
     is_suspicious_ua, ua_reason = analyze_user_agent_structure(user_agent)

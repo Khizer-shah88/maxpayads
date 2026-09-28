@@ -79,10 +79,10 @@ async def parse_smartlink_from_request(
             return pub_value, site_value, struct.get("name", "Unknown")
     
     # BACKWARD COMPATIBILITY: Fall back to legacy hardcoded parameters
-    # This ensures old links with ?pub=X&site=Y still work even if no structures exist
-    legacy_pub = query_params.get("pub")
-    legacy_site = query_params.get("site")
-    
+    # Supports both ?pub=X&site=Y and ?tag=X&sid=Y formats
+    legacy_pub = query_params.get("pub") or query_params.get("tag")
+    legacy_site = query_params.get("site") or query_params.get("sid")
+
     if legacy_pub:
         logger.debug(
             "[Smartlink Parser] Using legacy fallback (pub=%s, site=%s)",
