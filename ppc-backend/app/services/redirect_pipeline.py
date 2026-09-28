@@ -576,14 +576,14 @@ async def stage_resolve_cpc(ctx: RedirectResolutionContext, db) -> None:
 
 async def _finalize(ctx: RedirectResolutionContext, db, outcome: str) -> None:
     """
-    Close the trace and persist destination_url + trace (if enabled).
-    The DB update is fire-and-forget — the visitor response is not held up.
+    Close the trace and persist destination_url + attribution to the click doc.
+    This is a synchronous await — it's a single lightweight update_one and
+    campaign/offer attribution must be written before the async click task runs.
     """
-    import asyncio
     from app.config import settings
 
     ctx.record(STAGE_DELIVER, outcome, url=ctx.destination_url)
-    logger.debug(ctx.summary())   # debug only — avoid file I/O on every click
+    logger.debug(ctx.summary())   # debug only — no file I/O overhead in production
 
     if not ctx.click_id:
         return
@@ -596,15 +596,11 @@ async def _finalize(ctx: RedirectResolutionContext, db, outcome: str) -> None:
     if getattr(settings, "REDIRECT_TRACE_ENABLED", False):
         update["resolution_trace"] = ctx.trace_as_list()
 
-    async def _write():
-        try:
-            from bson import ObjectId
-            await db.clicks.update_one({"_id": ObjectId(ctx.click_id)}, {"$set": update})
-        except Exception as e:
-            logger.debug(f"Failed to persist click update: {e}")
-
-    # Fire-and-forget: visitor gets their redirect immediately.
-    asyncio.ensure_future(_write())
+    try:
+        from bson import ObjectId
+        await db.clicks.update_one({"_id": ObjectId(ctx.click_id)}, {"$set": update})
+    except Exception as e:
+        logger.debug(f"Failed to persist click update: {e}")
 
 
 async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -> None:
