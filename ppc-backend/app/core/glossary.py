@@ -17,6 +17,7 @@ Operating systems
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from app.core.constants import (
@@ -146,3 +147,80 @@ def normalize_os(value: Any, default: Optional[str] = None) -> Optional[str]:
         if alias and key.startswith(alias + " "):
             return _OS_ALIASES[alias]
     return key if key in VALID_OS_TYPES else default
+
+
+# ── OS statistics filters ─────────────────────────────────────────────────────
+
+# Statistics filter terms map onto a bucket, and each bucket carries every OS
+# spelling found on stored click documents. Clicks store the OS exactly as the
+# user-agent parser reports it ("Mac OS X", "Windows", "iOS", ...) while the
+# Statistics pages filter with display names ("macOS"), so a bare substring
+# regex cannot work ("macos" is not a substring of "Mac OS X").
+#
+# Unlike the routing glossary above, iOS is its OWN bucket here: the Statistics
+# filter lists macOS and iOS as separate choices, and "Darwin" user agents are
+# CLI tools, not iOS devices.
+_OS_FILTER_TERMS: Dict[str, str] = {
+    OS_WINDOWS: OS_WINDOWS,
+    "win": OS_WINDOWS,
+    "win32": OS_WINDOWS,
+    OS_MAC: OS_MAC,
+    "mac os": OS_MAC,
+    "mac os x": OS_MAC,
+    "macos": OS_MAC,
+    "os x": OS_MAC,
+    "osx": OS_MAC,
+    "darwin": OS_MAC,
+    OS_ANDROID: OS_ANDROID,
+    "apk": OS_ANDROID,
+    OS_IOS: OS_IOS,
+    "iphone": OS_IOS,
+    "ipad": OS_IOS,
+    "ipados": OS_IOS,
+    "linux": "linux",
+    "ubuntu": "linux",
+    "chrome os": "chrome os",
+    "chromeos": "chrome os",
+}
+
+_OS_FILTER_PATTERNS: Dict[str, str] = {
+    OS_WINDOWS: r"^(windows|win32)",
+    OS_MAC: r"^(mac os|macos|mac|os x|darwin)",
+    OS_ANDROID: r"^android",
+    OS_IOS: r"^(ios|iphone|ipad|ipados)",
+    "linux": r"^(linux|ubuntu|fedora|debian|centos)",
+    "chrome os": r"^chrom(e|ium)? ?os",
+}
+
+
+def os_filter(value: Any) -> Optional[dict]:
+    """
+    Build a Mongo filter fragment for an OS statistics filter.
+
+    The Statistics pages filter with display names ("macOS") while click
+    documents store the raw user-agent OS family ("Mac OS X"), so filter
+    terms resolve onto a bucket whose pattern matches every stored spelling:
+
+        {"os": os_filter("macOS")}
+        -> {"os": {"$regex": "^(mac os|macos|mac|os x|darwin)", "$options": "i"}}
+
+    Versioned terms ("Mac OS X 10.15") resolve via the longest-alias prefix,
+    and unrecognised terms degrade to the previous escaped-substring match so
+    the filter never gets stricter than before. Returns None when there is no
+    term to filter on.
+    """
+    text = (value or "").strip() if isinstance(value, str) else ""
+    if not text:
+        return None
+    key = text.lower()
+    bucket = _OS_FILTER_TERMS.get(key)
+    if bucket is None:
+        # Longest-alias-first prefix match: "mac os x 10.15" → "mac os x" → mac.
+        for alias in sorted(_OS_FILTER_TERMS, key=len, reverse=True):
+            if alias and key.startswith(alias + " "):
+                bucket = _OS_FILTER_TERMS[alias]
+                break
+    if bucket is None:
+        # Unknown term: keep the previous substring behaviour, escaped.
+        return {"$regex": re.escape(text), "$options": "i"}
+    return {"$regex": _OS_FILTER_PATTERNS[bucket], "$options": "i"}

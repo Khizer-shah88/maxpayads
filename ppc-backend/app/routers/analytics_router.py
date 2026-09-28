@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from app.dependencies import get_db, get_current_admin
 from app.utils.date_utils import timestamp_range_query
+from app.core.glossary import os_filter
 import csv
 import io
 
@@ -331,7 +332,7 @@ async def click_stats(
     if device_type:
         query["device_type"] = device_type
     if os:
-        query["os"] = {"$regex": os, "$options": "i"}
+        query["os"] = os_filter(os)
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
     tr = timestamp_range_query(date_from, date_to)

@@ -6,6 +6,7 @@ from bson import ObjectId
 from app.schemas.publisher_schema import PublisherUpdate
 from app.services.publisher_service import get_publisher_stats, update_publisher
 from app.utils.date_utils import timestamp_range_query
+from app.core.glossary import os_filter
 from app.dependencies import get_db, get_redis_client, get_current_active_publisher
 from app.core.exceptions import NotFoundError
 from app.core.exceptions import ValidationError
@@ -114,7 +115,7 @@ async def publisher_reports(
     if device_type:
         query["device_type"] = device_type
     if os:
-        query["os"] = {"$regex": os, "$options": "i"}
+        query["os"] = os_filter(os)
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
     if country_code:
@@ -194,7 +195,7 @@ async def publisher_reports_csv(
     if device_type:
         query["device_type"] = device_type
     if os:
-        query["os"] = {"$regex": os, "$options": "i"}
+        query["os"] = os_filter(os)
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
     if country_code:

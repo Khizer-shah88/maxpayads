@@ -6,6 +6,7 @@ import re
 from bson import ObjectId
 from app.dependencies import get_db, get_redis_client, get_current_admin
 from app.utils.date_utils import timestamp_range_query
+from app.core.glossary import os_filter
 from app.services.redirect_pipeline import context_from_request, resolve_redirect
 from app.routing_engine.redirect_manager import build_redirect
 import logging
@@ -247,7 +248,7 @@ async def get_clicks(
     if device_type:
         query["device_type"] = device_type
     if os:
-        query["os"] = {"$regex": os, "$options": "i"}
+        query["os"] = os_filter(os)
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
     if ip_address:
@@ -335,7 +336,7 @@ async def export_clicks_csv(
     if device_type:
         query["device_type"] = device_type
     if os:
-        query["os"] = {"$regex": os, "$options": "i"}
+        query["os"] = os_filter(os)
     if browser:
         query["browser"] = {"$regex": browser, "$options": "i"}
     tr = timestamp_range_query(date_from, date_to)
