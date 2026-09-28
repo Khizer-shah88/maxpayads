@@ -1,21 +1,18 @@
 'use client'
 
-import PublisherId from '@/components/shared/PublisherId'
-import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
-
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, Globe2, Link2, Layers, FileText, RefreshCw,
-  CheckCircle2, XCircle, Clock, Star, Users, Info, ArrowRight,
+  CheckCircle2, XCircle, Clock, Star, Info, ArrowRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi, prlanderTemplateApi } from '@/lib/api'
+import { adminApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
-import type { RedirectionDomain, RedirectionDomainType, Publisher } from '@/types'
+import type { RedirectionDomain, RedirectionDomainType } from '@/types'
 
 const DOMAIN_TYPES: {
   key: RedirectionDomainType
@@ -54,12 +51,8 @@ const DOMAIN_TYPES: {
 const EMPTY_FORM = {
   domain: '',
   domain_type: 'anchor' as RedirectionDomainType,
-  publisher_ids: [] as string[],
   is_default: false,
   status: 'active' as 'active' | 'paused',
-  template: 'default' as 'default' | 'windows' | 'mac',
-  template_id: '',
-  weight: 100,
   notes: '',
 }
 
@@ -88,8 +81,6 @@ function DnsBadge({ status }: { status: string }) {
 export default function RedirectionDomainsPage() {
   const { initialize } = useAuth()
   const [domains, setDomains] = useState<RedirectionDomain[]>([])
-  const [publishers, setPublishers] = useState<Publisher[]>([])
-  const [templates, setTemplates] = useState<{ id: string; name: string; status: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<RedirectionDomainType>('anchor')
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
@@ -99,8 +90,7 @@ export default function RedirectionDomainsPage() {
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
   const [serverIp, setServerIp] = useState('')
 
-  // Delete confirmation modal — domain deletion requires confirmation; the
-  // backend reports chains that referenced the domain so admin can reconfigure.
+  // Delete confirmation modal
   const [deleteModal, setDeleteModal] = useState<RedirectionDomain | null>(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deleteLoading, setDeleteLoading] = useState(false)
@@ -109,15 +99,9 @@ export default function RedirectionDomainsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [domRes, pubRes, tplRes] = await Promise.all([
-        adminApi.getRedirectionDomains(),
-        adminApi.getPublishers({ limit: 200 }),
-        prlanderTemplateApi.getAll(),
-      ])
+      const domRes = await adminApi.getRedirectionDomains()
       setDomains(domRes.data?.domains ?? [])
-      setTemplates(tplRes.data?.templates ?? [])
       setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')
-      setPublishers(((pubRes.data?.publishers) ?? []).filter((p: Publisher) => p.role !== 'admin'))
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to load redirection domains')
     } finally {
@@ -125,9 +109,9 @@ export default function RedirectionDomainsPage() {
     }
   }, [])
 
-  useEffect(() => { 
+  useEffect(() => {
     initialize()
-    load() 
+    load()
   }, [])
 
   const filtered = domains.filter(d => d.domain_type === activeTab)
@@ -144,24 +128,11 @@ export default function RedirectionDomainsPage() {
     setForm({
       domain: d.domain,
       domain_type: d.domain_type,
-      publisher_ids: d.publisher_ids || [],
       is_default: d.is_default,
       status: d.status,
-      template: d.template || 'default',
-      template_id: d.template_id || '',
-      weight: (d as any).weight ?? 100,
       notes: d.notes || '',
     })
     setModal('edit')
-  }
-
-  const togglePublisher = (pubId: string) => {
-    setForm(prev => ({
-      ...prev,
-      publisher_ids: prev.publisher_ids.includes(pubId)
-        ? prev.publisher_ids.filter(id => id !== pubId)
-        : [...prev.publisher_ids, pubId],
-    }))
   }
 
   const handleSave = async () => {
@@ -171,18 +142,12 @@ export default function RedirectionDomainsPage() {
     }
     setSaving(true)
     try {
-      const payload = {
-        ...form,
-        template_id: form.domain_type === 'prelander' ? form.template_id || null : null,
-      }
       if (modal === 'edit' && editId) {
-        const res = await adminApi.updateRedirectionDomain(editId, payload)
-        // Update in place instead of full reload
+        const res = await adminApi.updateRedirectionDomain(editId, form)
         setDomains(prev => prev.map(d => d.id === editId ? res.data.domain : d))
         toast.success('Domain updated')
       } else {
-        const res = await adminApi.createRedirectionDomain(payload)
-        // Add new domain to list instead of full reload
+        const res = await adminApi.createRedirectionDomain(form)
         setDomains(prev => [...prev, res.data.domain])
         toast.success('Domain added')
       }
@@ -211,7 +176,6 @@ export default function RedirectionDomainsPage() {
       } else {
         toast.success('Domain removed')
       }
-      // Remove from list instead of full reload
       setDomains(prev => prev.filter(d => d.id !== deleteModal.id))
       setDeleteModal(null)
       setDeleteConfirmText('')
@@ -229,7 +193,6 @@ export default function RedirectionDomainsPage() {
       const res = await adminApi.verifyRedirectionDomainDns(d.id)
       if (res.data.domain?.dns_status === 'verified') {
         toast.success('DNS verified — domain is pointing to the server')
-        // Update in place instead of full reload
         setDomains(prev => prev.map(dom => dom.id === d.id ? { ...dom, dns_status: 'verified' } : dom))
       } else {
         toast.error(res.data.message || 'DNS verification failed')
@@ -262,43 +225,19 @@ export default function RedirectionDomainsPage() {
       ),
     },
     {
-      key: 'publishers',
-      label: 'Assigned Users',
+      key: 'type',
+      label: 'Type',
       render: (d: RedirectionDomain) => {
-        if (!d.publisher_ids?.length) {
-          return <span className="text-xs text-gray-400">All publishers (pool)</span>
-        }
+        const typeInfo = DOMAIN_TYPES.find(t => t.key === d.domain_type)
+        if (!typeInfo) return <span className="text-xs text-gray-400">{d.domain_type}</span>
         return (
-          <div className="flex flex-wrap gap-1 max-w-[220px]">
-            {(d.publisher_names?.length ? d.publisher_names : d.publisher_ids).slice(0, 3).map((name, i) => (
-              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-100 text-[11px] text-gray-700 font-medium">
-                <Users size={10} /> {d.publisher_names?.[i] || 'Publisher'}<PublisherId publisherId={d.publisher_ids[i]} />
-              </span>
-            ))}
-            {d.publisher_ids.length > 3 && (
-              <span className="text-[11px] text-gray-400">+{d.publisher_ids.length - 3} more</span>
-            )}
-          </div>
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${typeInfo.color}`}>
+            <typeInfo.icon size={12} />
+            {typeInfo.short}
+          </span>
         )
       },
     },
-    ...(activeTab === 'prelander' ? [{
-      key: 'template',
-      label: 'Template',
-      render: (d: RedirectionDomain) => (
-        <span className="text-xs font-medium text-gray-600">
-          {d.template_id
-            ? templates.find(t => t.id === d.template_id)?.name || 'Unavailable template (using default)'
-            : 'OS default template'}
-        </span>
-      ),
-    }, {
-      key: 'weight',
-      label: 'Weight',
-      render: (d: RedirectionDomain) => (
-        <span className="text-xs font-medium text-gray-600 font-mono">{(d as any).weight ?? 100}</span>
-      ),
-    }] : []),
     {
       key: 'dns',
       label: 'DNS',
@@ -325,8 +264,10 @@ export default function RedirectionDomainsPage() {
           <button onClick={() => openEdit(d)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100">
             <Edit size={14} />
           </button>
-          <button onClick={() => { setDeleteModal(d); setDeleteConfirmText(''); setAffectedChains([]) }}
-            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50">
+          <button
+            onClick={() => { setDeleteModal(d); setDeleteConfirmText(''); setAffectedChains([]) }}
+            className="p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50"
+          >
             <Trash2 size={14} />
           </button>
         </div>
@@ -340,12 +281,13 @@ export default function RedirectionDomainsPage() {
     <div className="flex min-h-screen bg-[#f8f9fb]">
       <Sidebar />
       <div className="flex-1 lg:ml-64 p-6 lg:p-8 min-w-0 overflow-x-hidden">
+
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 pt-12 lg:pt-0">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Redirection Domain Manager</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Manage link, intermediate, and last domains — assign unique domains per publisher
+              Manage Anchor, Inter, and Prelander domains for the redirect chain
             </p>
           </div>
           <button
@@ -379,7 +321,8 @@ export default function RedirectionDomainsPage() {
             ))}
           </div>
           <p className="text-xs text-gray-500 mt-3">
-            Most campaigns use direct redirect and skip the Prelander domain. When enabled, the Prelander domain serves the download template with a copyable link at <code className="bg-gray-100 px-1 rounded">/d/&#123;slug&#125;</code>.
+            Most campaigns use direct redirect and skip the Prelander domain. When enabled, the Prelander domain serves the download template with a copyable link at{' '}
+            <code className="bg-gray-100 px-1 rounded">/d/&#123;slug&#125;</code>.
           </p>
         </div>
 
@@ -419,7 +362,9 @@ export default function RedirectionDomainsPage() {
               >
                 <t.icon size={16} />
                 {t.label}
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-gray-100'}`}>{count}</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${active ? 'bg-white/20' : 'bg-gray-100'}`}>
+                  {count}
+                </span>
               </button>
             )
           })}
@@ -438,16 +383,17 @@ export default function RedirectionDomainsPage() {
           />
         </div>
 
-        {/* Modal */}
+        {/* Create / Edit Modal */}
         {modal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
               <h3 className="text-lg font-bold text-gray-900 mb-1">
                 {modal === 'create' ? 'Add Redirection Domain' : 'Edit Domain'}
               </h3>
               <p className="text-xs text-gray-400 mb-5">{typeMeta.label} — {typeMeta.description}</p>
 
               <div className="space-y-4">
+                {/* Domain name */}
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-1">Domain name</label>
                   <input
@@ -459,6 +405,7 @@ export default function RedirectionDomainsPage() {
                   <p className="text-xs text-gray-400 mt-1">Hostname only — no https:// prefix</p>
                 </div>
 
+                {/* Domain type — only shown on create */}
                 {modal === 'create' && (
                   <div>
                     <label className="block text-sm font-medium text-gray-900 mb-1">Domain type</label>
@@ -474,99 +421,18 @@ export default function RedirectionDomainsPage() {
                   </div>
                 )}
 
-                {form.domain_type === 'prelander' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="col-span-2">
-                      <label htmlFor="prelander-template" className="block text-sm font-medium text-gray-900 mb-1">Prelander template</label>
-                      <select
-                        id="prelander-template"
-                        value={form.template_id}
-                        onChange={e => setForm(p => ({ ...p, template_id: e.target.value }))}
-                        className={inputClass}
-                      >
-                        <option value="">OS default template</option>
-                        {form.template_id && !templates.some(t => t.id === form.template_id) && (
-                          <option value={form.template_id} disabled>Unavailable template (using default)</option>
-                        )}
-                        {templates.map(t => (
-                          <option key={t.id} value={t.id} disabled={t.status !== 'active'}>
-                            {t.name}{t.status !== 'active' ? ` (${t.status}, using default)` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-xs text-gray-400 mt-1">This domain uses the selected active template. Choose OS default to remove the assignment.</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-900 mb-1">Page OS / default fallback</label>
-                      <select
-                        value={form.template}
-                        onChange={e => setForm(p => ({ ...p, template: e.target.value as typeof form.template }))}
-                        className={inputClass}
-                      >
-                        <option value="default">Auto (OS-based)</option>
-                        <option value="windows">Windows download page</option>
-                        <option value="mac">Mac Terminal page</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-900 mb-1">Weight</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.weight}
-                        onChange={e => setForm(p => ({ ...p, weight: parseInt(e.target.value) || 0 }))}
-                        className={inputClass}
-                      />
-                      <p className="text-xs text-gray-400 mt-1">Relative — 0 pauses traffic</p>
-                    </div>
-                  </div>
-                )}
+                {/* Global default toggle */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.is_default}
+                    onChange={e => setForm(p => ({ ...p, is_default: e.target.checked }))}
+                    className="rounded border-gray-300 text-primary focus:ring-primary/30"
+                  />
+                  <span className="text-sm text-gray-700">Global default for this type</span>
+                </label>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-2">
-                    Assign to publishers <span className="text-gray-400 font-normal">(optional)</span>
-                  </label>
-                  <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
-                    {publishers.length === 0 ? (
-                      <p className="text-xs text-gray-400 p-3">No publishers available</p>
-                    ) : (
-                      publishers.map(p => (
-                        <label key={p.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={form.publisher_ids.includes(p.id)}
-                            onChange={() => togglePublisher(p.id)}
-                            className="rounded border-gray-300 text-primary focus:ring-primary/30"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
-                            {p.publisher_type !== 'manual' && !p.email?.includes('@manual.invalid') && !p.email?.includes('@auto.invalid') && (
-                              <p className="text-[11px] text-gray-400 truncate">{p.email}</p>
-                            )}
-                            <p className="text-[11px] text-gray-300 font-mono truncate">{formatPublisherId(p.public_id)}</p>
-                          </div>
-                          {p.publisher_type === 'manual' && (
-                            <span className="ml-auto flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">Manual</span>
-                          )}
-                        </label>
-                      ))
-                    )}
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">Leave empty to use as a shared pool domain</p>
-                </div>
-
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.is_default}
-                      onChange={e => setForm(p => ({ ...p, is_default: e.target.checked }))}
-                      className="rounded border-gray-300 text-primary focus:ring-primary/30"
-                    />
-                    <span className="text-sm text-gray-700">Global default for this type</span>
-                  </label>
-                </div>
-
+                {/* Status */}
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-1">Status</label>
                   <select
@@ -579,6 +445,7 @@ export default function RedirectionDomainsPage() {
                   </select>
                 </div>
 
+                {/* Notes */}
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-1">Notes</label>
                   <textarea
@@ -610,7 +477,7 @@ export default function RedirectionDomainsPage() {
           </div>
         )}
 
-        {/* ── Delete Confirmation Modal ─────────────────────────────────────── */}
+        {/* Delete Confirmation Modal */}
         {deleteModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl border border-gray-100">
@@ -624,27 +491,34 @@ export default function RedirectionDomainsPage() {
               </p>
               {affectedChains.length > 0 && (
                 <p className="text-red-600 text-xs mb-3">
-                  {affectedChains.length} redirect chain(s) use this domain and must be reconfigured manually —
-                  no replacement will be assigned automatically.
+                  {affectedChains.length} redirect chain(s) use this domain and must be reconfigured manually.
                 </p>
               )}
               <input
                 value={deleteConfirmText}
                 onChange={e => setDeleteConfirmText(e.target.value)}
                 placeholder="Type DELETE to confirm"
-                className={inputClass}
+                className={`${inputClass} mb-4`}
               />
-              <div className="flex gap-3 mt-4">
-                <button onClick={handleDelete} disabled={deleteLoading || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300">
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteLoading || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300"
+                >
                   {deleteLoading ? <Spinner size={16} /> : 'Delete Domain'}
                 </button>
-                <button onClick={() => { setDeleteModal(null); setDeleteConfirmText('') }}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>
+                <button
+                  onClick={() => { setDeleteModal(null); setDeleteConfirmText('') }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
         )}
+
       </div>
     </div>
   )

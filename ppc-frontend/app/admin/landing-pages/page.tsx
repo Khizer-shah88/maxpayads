@@ -133,6 +133,8 @@ export default function LandingPagesPage() {
         prelander_domain: form.prelander_domain || null,
         prelander_template_id: form.prelander_template_id || null,
       }
+      const hadTemplateAssignment = form.prelander_domain && form.prelander_template_id
+      
       if (modal === 'edit' && editId) {
         await landingPageApi.update(editId, data)
         toast.success('Landing page updated')
@@ -140,6 +142,16 @@ export default function LandingPagesPage() {
         await landingPageApi.create(data)
         toast.success('Landing page created')
       }
+      
+      // Notify about bidirectional sync when template assignments are made
+      if (hadTemplateAssignment) {
+        setTimeout(() => {
+          toast.info('Prelander Templates page has been automatically updated to reflect this assignment', { 
+            duration: 4000 
+          })
+        }, 500)
+      }
+      
       setModal(null)
       load()
     } catch (err: any) {
@@ -311,7 +323,7 @@ export default function LandingPagesPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Landing Pages</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Weighted pre-lander rotation per campaign ({activePages.length} active, combined weight {totalWeight})
+              Weighted pre-lander rotation per campaign. Template assignments sync automatically with Prelander Templates.
             </p>
           </div>
           <button onClick={openCreate}

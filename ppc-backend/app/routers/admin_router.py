@@ -247,6 +247,11 @@ async def admin_get_publisher_smartlink(
     if not public_id:
         raise HTTPException(status_code=400, detail="Publisher has no public ID")
 
+    # Strip legacy PUB_ prefix — smartlinks should use the bare hash only.
+    # Old publishers stored as "PUB_8d2n5Uwt", new ones as "8d2n5Uwt".
+    if public_id.startswith("PUB_"):
+        public_id = public_id[4:]
+
     # ── Structure resolution ──────────────────────────────────────────────
     structure_doc = None
     if structure_id and ObjectId.is_valid(structure_id):

@@ -180,10 +180,11 @@ export default function RedirectChainsPage() {
   }
 
   // Keep an open Create modal's pool in sync with the loaded domain list —
-  // if domains finish loading after the modal opened (or a domain was added
-  // in another tab), the pool picks up every active prelander automatically.
+  // Auto-populate prelander pool with ALL active prelander domains when creating
+  // or editing a chain. New prelander domains are automatically added to the pool
+  // (Feature 12: Redirect Chains - Prelander Pool Auto-Sync)
   useEffect(() => {
-    if (modal !== 'create') return
+    if (!modal) return
     setForm(prev => {
       const missing = prelanderDomainNames.filter(d => !prev.prelander_pool.includes(d))
       if (missing.length === 0) return prev
@@ -321,7 +322,7 @@ export default function RedirectChainsPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Redirection Chain Builder</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Admin-configured chains of configurable length — every chain works for every publisher
+              Admin-configured chains — all active prelander domains are automatically included in the pool
             </p>
           </div>
           <button

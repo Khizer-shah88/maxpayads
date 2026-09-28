@@ -192,6 +192,13 @@ export default function PrlanderTemplatesPage() {
       toast.success('Prelander domain assignments saved')
       setAssignmentTarget(null)
       await load()
+      
+      // Notify user that Landing Pages are also updated
+      setTimeout(() => {
+        toast.info('Landing Pages have been automatically updated to reflect these changes', { 
+          duration: 4000 
+        })
+      }, 500)
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to save assignments')
     } finally {
@@ -252,7 +259,7 @@ export default function PrlanderTemplatesPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Prelander Templates</h1>
             <p className="text-gray-400 text-sm mt-0.5">
-              Design prelander templates and assign them to the domains where they should appear.
+              Design prelander templates and assign them to domains. Changes sync automatically with Landing Pages.
             </p>
           </div>
           <button onClick={openCreate}
