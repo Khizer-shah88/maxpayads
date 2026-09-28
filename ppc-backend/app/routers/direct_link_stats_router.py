@@ -575,13 +575,18 @@ async def update_manual_conversion(
         raise HTTPException(status_code=404, detail="Manual conversion not found")
     
     now = datetime.utcnow()
+    update_fields = {
+        "conversions": data.conversions,
+        "updated_at": now,
+    }
+    # Reason is optional on conversion entries: only overwrite it when the
+    # caller actually supplied one, so an edit that omits the field keeps
+    # the previously stored value instead of wiping it to None.
+    if data.reason is not None:
+        update_fields["reason"] = data.reason
     await db.direct_link_manual_conversions.update_one(
         {"_id": oid},
-        {"$set": {
-            "conversions": data.conversions,
-            "reason": data.reason,
-            "updated_at": now,
-        }}
+        {"$set": update_fields},
     )
     
     updated = await db.direct_link_manual_conversions.find_one({"_id": oid})
@@ -630,28 +635,47 @@ async def get_publisher_domains(
     db=Depends(get_db),
 ):
     """
-    Get all publishers with their assigned domains.
-    Returns domain information (anchor, inter, prelander) for each publisher.
+    Get all publishers with their assigned domains and real traffic stats.
+
+    Each row carries:
+    - domains: the Anchor/Inter/Prelander domains ASSIGNED to the publisher
+      (publisher_ids membership)
+    - defaults: the GLOBAL default domain per type (is_default flag) — the
+      domains the publisher falls back to when nothing is explicitly assigned
+    - clicks: REAL traffic numbers from the clicks collection (smartlink
+      traffic), plus today's conversions (tracked events + admin-entered
+      manual conversions). The link document's own counters only ever track
+      masked-page hits, so the Direct Link Stats table showed zeros for every
+      publisher whose traffic is smartlink-based.
     """
     from app.core.glossary import normalize_domain_type
     from app.core.constants import DOMAIN_TYPE_ANCHOR, DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
-    
+
     # Get all redirection domains
     domains_cursor = db.redirection_domains.find({"status": "active"})
     domains = await domains_cursor.to_list(length=1000)
-    
+
     # Get all publishers
     publishers_cursor = db.publishers.find({"role": "publisher"})
     publishers = await publishers_cursor.to_list(length=500)
-    
+
     # Build publisher -> domains mapping
     publisher_domains = {}
-    
+
+    # Global default domain per type (is_default on an active domain).
+    defaults: Dict[str, str] = {}
+    for domain in domains:
+        if not domain.get("is_default"):
+            continue
+        dtype = normalize_domain_type(domain.get("domain_type"), default="unknown")
+        if dtype in (DOMAIN_TYPE_ANCHOR, DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER):
+            defaults.setdefault(dtype, domain.get("domain", ""))
+
     for domain in domains:
         domain_type = normalize_domain_type(domain.get("domain_type"), default="unknown")
         publisher_ids = domain.get("publisher_ids", [])
         domain_name = domain.get("domain")
-        
+
         for pub_id in publisher_ids:
             if pub_id not in publisher_domains:
                 publisher_domains[pub_id] = {
@@ -659,14 +683,47 @@ async def get_publisher_domains(
                     "inter": [],
                     "prelander": [],
                 }
-            
+
             if domain_type == DOMAIN_TYPE_ANCHOR:
                 publisher_domains[pub_id]["anchor"].append(domain_name)
             elif domain_type == DOMAIN_TYPE_INTER:
                 publisher_domains[pub_id]["inter"].append(domain_name)
             elif domain_type == DOMAIN_TYPE_PRELANDER:
                 publisher_domains[pub_id]["prelander"].append(domain_name)
-    
+
+    # ── Real traffic stats per publisher (one aggregation per metric) ──────
+    # clicks: the publisher's smartlink traffic (clicks collection, timestamp).
+    click_pipeline = [
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": 1}}},
+    ]
+    click_rows = await db.clicks.aggregate(click_pipeline).to_list(length=None)
+    total_clicks_map = {str(r["_id"]): r.get("total", 0) for r in click_rows}
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_click_rows = await db.clicks.aggregate([
+        {"$match": {"timestamp": {"$gte": today_start}}},
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": 1}}},
+    ]).to_list(length=None)
+    today_clicks_map = {str(r["_id"]): r.get("total", 0) for r in today_click_rows}
+
+    # Today's conversions — tracked direct-link events…
+    today_conv_rows = await db.direct_link_events.aggregate([
+        {"$match": {"created_at": {"$gte": today_start}}},
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": 1}}},
+    ]).to_list(length=None)
+    today_conv_map = {str(r["_id"]): r.get("total", 0) for r in today_conv_rows}
+
+    # …plus admin-entered manual conversions dated today (both sources must
+    # count — an entry entered this morning for today is one of them).
+    today_str = today_start.strftime("%Y-%m-%d")
+    manual_rows = await db.direct_link_manual_conversions.aggregate([
+        {"$match": {"date": today_str}},
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": "$conversions"}}},
+    ]).to_list(length=None)
+    for r in manual_rows:
+        pid = str(r["_id"])
+        today_conv_map[pid] = today_conv_map.get(pid, 0) + (r.get("total", 0) or 0)
+
     # Build response
     results = []
     for pub in publishers:
@@ -676,7 +733,7 @@ async def get_publisher_domains(
             "inter": [],
             "prelander": [],
         })
-        
+
         results.append({
             "publisher_id": pub_id,
             "publisher_name": pub.get("name"),
@@ -686,9 +743,21 @@ async def get_publisher_domains(
                 "inter": domains_info.get("inter", []),
                 "prelander": domains_info.get("prelander", []),
                 "total": len(domains_info.get("anchor", [])) + len(domains_info.get("inter", [])) + len(domains_info.get("prelander", [])),
-            }
+            },
+            # Global default domains (used when nothing is explicitly assigned)
+            "defaults": {
+                "anchor": defaults.get(DOMAIN_TYPE_ANCHOR, ""),
+                "inter": defaults.get(DOMAIN_TYPE_INTER, ""),
+                "prelander": defaults.get(DOMAIN_TYPE_PRELANDER, ""),
+            },
+            # Real traffic stats for the table's Clicks / Today columns.
+            "clicks": {
+                "total": total_clicks_map.get(pub_id, 0),
+                "today": today_clicks_map.get(pub_id, 0),
+                "today_conversions": today_conv_map.get(pub_id, 0),
+            },
         })
-    
+
     return {
         "success": True,
         "publisher_domains": results,

@@ -126,11 +126,22 @@ def detect_bot_user_agent(user_agent: str) -> Tuple[bool, Optional[str]]:
 
 def detect_headless_signals(headers: Dict[str, str], user_agent: str) -> Tuple[bool, List[str]]:
     """
-    Detect headless browser/automation signals from headers.
+    Detect HEADLESS/automation signals from headers.
+
+    Only affirmative automation evidence counts here (headless UA strings,
+    Lighthouse, WebDriver). Missing soft headers (Accept-Language,
+    Accept-Encoding, Referer) are NOT automation evidence: in-app browsers
+    and Android WebViews routinely omit Accept-Language, and our own redirect
+    chain strips the Referer BY DESIGN (Referrer-Policy: no-referrer). They
+    were previously scored as headless signals (weight 25), which pushed a
+    completely legitimate visitor to score 30 → classified "duplicate" → the
+    click was marked invalid for EVERY publisher the visitor went on to
+    click (the reported "once they visit one publisher they are invalid for
+    all others" behaviour — the classification never varied by publisher).
     Returns (has_signals, list of signals found).
     """
     signals = []
-    
+
     # Check user agent for automation
     if user_agent:
         ua_lower = user_agent.lower()
@@ -138,23 +149,11 @@ def detect_headless_signals(headers: Dict[str, str], user_agent: str) -> Tuple[b
             signals.append("Headless in user agent")
         if 'chrome-lighthouse' in ua_lower:
             signals.append("Lighthouse audit")
-    
-    # Check for missing common headers
-    if not headers.get('accept-language'):
-        signals.append("Missing Accept-Language header")
-    
-    if not headers.get('accept-encoding'):
-        signals.append("Missing Accept-Encoding header")
-    
-    # Check for suspicious header combinations
-    accept = headers.get('accept', '').lower()
-    if accept == '*/*' and not any(bot in user_agent.lower() for bot in KNOWN_CRAWLERS):
-        signals.append("Generic Accept header from non-bot")
-    
-    # Check for webdriver
+
+    # webdriver affirmative signal
     if 'webdriver' in str(headers.get('user-agent', '')).lower():
         signals.append("WebDriver detected")
-    
+
     return len(signals) > 0, signals
 
 
@@ -397,10 +396,14 @@ async def classify_traffic(
     if is_ip_abuse:
         score.add_signal("ip_abuse", 30, f"IP abuse: {'; '.join(ip_reasons)}")
     
-    # 6. Missing referer (weight: 5)
-    if not referer:
-        score.add_signal("no_referer", 5, "Missing referer header")
-    
+    # 6. Missing referer — NOT scored. This platform's own redirect chain
+    # sends Referrer-Policy: no-referrer on every hop BY DESIGN, so the
+    # overwhelming majority of legitimate clicks arrive with no Referer.
+    # Scoring it (weight 5) on top of any other minor signal tipped real
+    # visitors into the "duplicate"/"suspicious" buckets, marking their
+    # clicks invalid across every publisher they visited.
+    _ = referer  # kept for signature compatibility / future signal use
+
     # 7. Empty user agent (weight: 15)
     if not user_agent:
         score.add_signal("no_ua", 15, "Empty user agent")

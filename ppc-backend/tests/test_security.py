@@ -97,17 +97,25 @@ class TestHeadlessDetection:
         assert any("headless" in s.lower() for s in signals)
     
     def test_detect_missing_headers(self):
-        """Test detection via missing headers."""
+        """Missing soft headers are NOT automation evidence.
+
+        In-app browsers/Android WebViews omit Accept-Language routinely, and
+        this platform's own redirect chain strips the Referer by design —
+        scoring them as headless signals classified legitimate visitors as
+        duplicates/invalid across every publisher (regression fixed here).
+        Only affirmative automation evidence (headless UA, WebDriver,
+        Lighthouse) counts.
+        """
         headers = {
             "user-agent": "Chrome/120.0",
             # Missing accept-language and accept-encoding
         }
         user_agent = headers["user-agent"]
-        
+
         has_signals, signals = fds.detect_headless_signals(headers, user_agent)
-        
-        assert has_signals is True
-        assert any("missing" in s.lower() for s in signals)
+
+        assert has_signals is False
+        assert not any("missing" in s.lower() for s in signals)
     
     def test_legitimate_browser_headers(self):
         """Test that legitimate browser headers don't trigger false positives."""

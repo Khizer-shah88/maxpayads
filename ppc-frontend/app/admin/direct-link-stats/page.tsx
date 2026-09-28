@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
 import { adminApi, directLinkApi } from '@/lib/api'
@@ -138,7 +139,10 @@ export default function DirectLinkStatsPage() {
   const [shareModal, setShareModal] = useState<{ name: string; url: string; publisherId: string } | null>(null)
   const [generatingShare, setGeneratingShare] = useState<string | null>(null)
   // Regenerate public stats URL (expires the old link, keeps config & data)
+  // Two-step confirmation: the row action opens a ConfirmDialog (typed
+  // REGENERATE), only then is the regeneration executed.
   const [regenerating, setRegenerating] = useState<string | null>(null)
+  const [regenConfirm, setRegenConfirm] = useState<{ pubId: string; pubName: string; source: 'row' | 'modal' } | null>(null)
 
   // Stats domain config (white-label domain for share links)
   const [statsDomain, setStatsDomain] = useState('')
@@ -161,14 +165,12 @@ export default function DirectLinkStatsPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [editingConversion, setEditingConversion] = useState<ManualConversionRow | null>(null)
   const [editConvValue, setEditConvValue] = useState(0)
-  const [editConvReason, setEditConvReason] = useState('')
   const [savingConversion, setSavingConversion] = useState(false)
   // Add-new-conversion form (inside the history modal — works even when the
   // list is empty, so the publisher's card action is never a dead end)
   const [showAddConv, setShowAddConv] = useState(false)
   const [addConvDate, setAddConvDate] = useState(() => new Date().toISOString().split('T')[0])
   const [addConvValue, setAddConvValue] = useState(0)
-  const [addConvReason, setAddConvReason] = useState('')
   const [addingConversion, setAddingConversion] = useState(false)
 
   // Date filter
@@ -210,12 +212,19 @@ export default function DirectLinkStatsPage() {
       setPublishers(allPubs)
       setLinks(allLinks)
 
-      // Process publisher domains
+      // Process publisher domains — each row now also carries the real
+      // traffic stats (clicks/today conversions) and the global default
+      // domains, which the table's Clicks / Today / Assigned Domain /
+      // Default Domain columns render.
       if (domainsResult.status === 'fulfilled') {
         const domainsData = domainsResult.value.data?.publisher_domains ?? []
         const domainsMap: Record<string, any> = {}
         domainsData.forEach((pd: any) => {
-          domainsMap[pd.publisher_id] = pd.domains
+          domainsMap[pd.publisher_id] = {
+            ...pd.domains,
+            defaults: pd.defaults || {},
+            clicks: pd.clicks || { total: 0, today: 0, today_conversions: 0 },
+          }
         })
         setPublisherDomains(domainsMap)
       }
@@ -361,7 +370,7 @@ export default function DirectLinkStatsPage() {
     if (!historyModal) return
     if (!addConvDate) { toast.error('Date is required'); return }
     if (addConvValue < 0) { toast.error('Conversions must be ≥ 0'); return }
-    // Reason is now optional - no validation needed
+    // No reason needed for a conversion entry (per spec).
     setAddingConversion(true)
     try {
       await directLinkApi.createManualConversion({
@@ -369,12 +378,10 @@ export default function DirectLinkStatsPage() {
         publisher_id: historyModal.pubId,
         link_id: null,
         conversions: addConvValue,
-        reason: addConvReason.trim() || '',  // Empty string if no reason provided
       })
       toast.success('Conversion entry added')
       setShowAddConv(false)
       setAddConvValue(0)
-      setAddConvReason('')
       await refreshHistory(historyModal.pubId)
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || err?.response?.data?.error || 'Failed to add the conversion entry'
@@ -387,12 +394,11 @@ export default function DirectLinkStatsPage() {
   const saveConversionEdit = async () => {
     if (!editingConversion) return
     if (editConvValue < 0) { toast.error('Conversions must be ≥ 0'); return }
-    if (!editConvReason.trim()) { toast.error('Reason is required'); return }
+    // No reason on conversion entries (per spec) — only the value is edited.
     setSavingConversion(true)
     try {
       await directLinkApi.updateManualConversion(editingConversion.id, {
         conversions: editConvValue,
-        reason: editConvReason.trim(),
       })
       toast.success('Conversion entry updated')
       setEditingConversion(null)
@@ -425,9 +431,17 @@ export default function DirectLinkStatsPage() {
     .map(pub => {
       const pubLinks = links.filter(l => l.publisher_id === pub.id)
       const activeLinks = pubLinks.filter(l => l.status !== 'archived')
-      const totalClicks = activeLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
+      const dom = publisherDomains[pub.id] || {}
+      const clickStats = dom.clicks || {}
+      // Real traffic from the clicks collection; fall back to the (rarely
+      // populated) link counters so legacy data still shows when present.
+      const linkClicks = activeLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
+      const totalClicks = Math.max(clickStats.total || 0, linkClicks)
       const totalConversions = activeLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
-      const todayConversions = activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0)
+      const todayConversions = Math.max(
+        clickStats.today_conversions || 0,
+        activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0),
+      )
       return {
         ...pub,
         linkCount: activeLinks.length,  // only count active links
@@ -436,6 +450,13 @@ export default function DirectLinkStatsPage() {
         totalClicks,
         totalConversions,
         todayConversions,
+        todayClicks: clickStats.today || 0,
+        assignedDomains: {
+          anchor: dom.anchor || [],
+          inter: dom.inter || [],
+          prelander: dom.prelander || [],
+        },
+        defaultDomains: dom.defaults || {},
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -468,7 +489,8 @@ export default function DirectLinkStatsPage() {
     }
   }
 
-  // Regenerate the public stats URL for a publisher's active link
+  // Regenerate the public stats URL for a publisher's active link.
+  // Executed only after the two-step confirmation (regenConfirm dialog).
   const regenerateStatsUrl = async (publisherId: string, publisherName: string) => {
     setRegenerating(publisherId)
     try {
@@ -487,6 +509,19 @@ export default function DirectLinkStatsPage() {
     } finally {
       setRegenerating(null)
     }
+  }
+
+  // STEP 1 of regeneration: open the typed-confirmation dialog.
+  const requestRegenerate = (pubId: string, pubName: string, source: 'row' | 'modal' = 'row') =>
+    setRegenConfirm({ pubId, pubName, source })
+
+  // STEP 2: the dialog confirmed — run it.
+  const confirmRegenerate = async () => {
+    if (!regenConfirm) return
+    const { pubId, pubName, source } = regenConfirm
+    setRegenConfirm(null)
+    if (source === 'modal') setShareModal(null) // close the share modal it was opened from
+    await regenerateStatsUrl(pubId, pubName)
   }
 
   const inp = 'w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm'
@@ -589,7 +624,7 @@ export default function DirectLinkStatsPage() {
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {[
             { label: 'Publishers', value: publisherStats.length.toLocaleString(), icon: Globe2, tone: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
-            { label: 'Total Clicks', value: links.reduce((s, l) => s + l.total_clicks, 0).toLocaleString(), icon: MousePointerClick, tone: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
+            { label: 'Total Clicks', value: publisherStats.reduce((s, p) => s + p.totalClicks, 0).toLocaleString(), icon: MousePointerClick, tone: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
             { label: 'Total Conversions', value: links.reduce((s, l) => s + l.total_conversions, 0).toLocaleString(), icon: Target, tone: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100' },
           ].map((s, i) => (
             <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
@@ -647,7 +682,8 @@ export default function DirectLinkStatsPage() {
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">CR</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Domains</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Assigned Domain</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Default Domain</th>
                     <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -679,17 +715,17 @@ export default function DirectLinkStatsPage() {
                         <StatusBadge status={pub.status} />
                       </td>
                       
-                      {/* Total Clicks */}
+                      {/* Total Clicks — real smartlink traffic */}
                       <td className="px-3 py-4 text-right">
                         <span className="font-mono text-sm text-gray-700 font-semibold">{pub.totalClicks.toLocaleString()}</span>
                       </td>
-                      
+
                       {/* Total Conversions */}
                       <td className="px-3 py-4 text-right">
                         <span className="font-mono text-sm text-gray-700 font-semibold">{pub.totalConversions.toLocaleString()}</span>
                       </td>
-                      
-                      {/* Today Conversions */}
+
+                      {/* Today Conversions (tracked events + manual entries today) */}
                       <td className="px-3 py-4 text-right">
                         <span className={`inline-flex items-center justify-center min-w-[2rem] h-7 px-2 rounded-lg font-mono text-sm font-bold ${
                           pub.todayConversions > 0 
@@ -709,32 +745,53 @@ export default function DirectLinkStatsPage() {
                         </span>
                       </td>
                       
-                      {/* Domain Stats */}
+                      {/* Assigned Domains — this publisher's own Anchor/Inter/Prelander */}
                       <td className="px-3 py-4">
-                        {publisherDomains[pub.id] && publisherDomains[pub.id].total > 0 ? (
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {publisherDomains[pub.id].anchor?.length > 0 && (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 border border-indigo-100">
-                                <span className="text-[9px] font-semibold text-indigo-700 uppercase">A</span>
-                                <span className="text-xs font-bold text-indigo-600">{publisherDomains[pub.id].anchor.length}</span>
-                              </span>
-                            )}
-                            {publisherDomains[pub.id].inter?.length > 0 && (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-purple-50 border border-purple-100">
-                                <span className="text-[9px] font-semibold text-purple-700 uppercase">I</span>
-                                <span className="text-xs font-bold text-purple-600">{publisherDomains[pub.id].inter.length}</span>
-                              </span>
-                            )}
-                            {publisherDomains[pub.id].prelander?.length > 0 && (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-teal-50 border border-teal-100">
-                                <span className="text-[9px] font-semibold text-teal-700 uppercase">P</span>
-                                <span className="text-xs font-bold text-teal-600">{publisherDomains[pub.id].prelander.length}</span>
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
+                        {(() => {
+                          const a = pub.assignedDomains
+                          const entries: { label: string; domains: string[]; cls: string }[] = [
+                            { label: 'A', domains: a.anchor, cls: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
+                            { label: 'I', domains: a.inter, cls: 'bg-purple-50 border-purple-100 text-purple-700' },
+                            { label: 'P', domains: a.prelander, cls: 'bg-teal-50 border-teal-100 text-teal-700' },
+                          ]
+                          const hasAny = entries.some(e => e.domains.length > 0)
+                          if (!hasAny) return <span className="text-xs text-gray-300">—</span>
+                          return (
+                            <div className="flex flex-col gap-1 max-w-[220px]">
+                              {entries.filter(e => e.domains.length > 0).map(e => (
+                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
+                                  <span className="text-xs text-gray-600 truncate" title={e.domains.join(', ')}>
+                                    {e.domains.length === 1 ? e.domains[0] : `${e.domains[0]} +${e.domains.length - 1}`}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
+                      </td>
+
+                      {/* Default (global) Domains — what the publisher falls back to */}
+                      <td className="px-3 py-4">
+                        {(() => {
+                          const d = pub.defaultDomains || {}
+                          const entries = [
+                            { label: 'A', domain: d.anchor, cls: 'text-indigo-600' },
+                            { label: 'I', domain: d.inter, cls: 'text-purple-600' },
+                            { label: 'P', domain: d.prelander, cls: 'text-teal-600' },
+                          ].filter(e => e.domain)
+                          if (entries.length === 0) return <span className="text-xs text-gray-300">—</span>
+                          return (
+                            <div className="flex flex-col gap-0.5 max-w-[200px]">
+                              {entries.map(e => (
+                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`text-[9px] font-bold flex-shrink-0 ${e.cls}`}>{e.label}</span>
+                                  <span className="text-xs text-gray-500 truncate" title={e.domain}>{e.domain}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </td>
                       
                       {/* Actions */}
@@ -772,7 +829,7 @@ export default function DirectLinkStatsPage() {
                             <History size={14} />
                           </button>
                           <button
-                            onClick={() => regenerateStatsUrl(pub.id, pub.name)}
+                            onClick={() => requestRegenerate(pub.id, pub.name, 'row')}
                             disabled={regenerating === pub.id}
                             title="Regenerate stats link"
                             className="p-2 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5 border border-transparent hover:border-primary/20 transition-colors disabled:opacity-60"
@@ -948,10 +1005,10 @@ export default function DirectLinkStatsPage() {
                   <ExternalLink size={15} /> Preview
                 </a>
                 <button
-                  onClick={async () => {
+                  onClick={() => {
                     const pub = publishers.find(p => p.name === shareModal.name)
                     if (!pub) { toast.error('Publisher not found'); return }
-                    await regenerateStatsUrl(pub.id, pub.name)
+                    requestRegenerate(pub.id, pub.name, 'modal')
                   }}
                   title="Expire this link and generate a new one — settings and data are kept"
                   className="px-4 py-2.5 rounded-xl text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
@@ -1102,7 +1159,6 @@ export default function DirectLinkStatsPage() {
                         setEditingConversion(null)
                         setAddConvDate(new Date().toISOString().split('T')[0])
                         setAddConvValue(0)
-                        setAddConvReason('')
                       }}
                       className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white transition-colors"
                     >
@@ -1132,13 +1188,6 @@ export default function DirectLinkStatsPage() {
                         onChange={e => setAddConvValue(parseInt(e.target.value) || 0)} className={inp} />
                     </div>
                   </div>
-                  <div className="mt-3">
-                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Reason (Optional)</label>
-                    <input value={addConvReason}
-                      onChange={e => setAddConvReason(e.target.value)}
-                      placeholder="e.g. Postback missed — entered manually"
-                      className={inp} />
-                  </div>
                   <div className="flex gap-2 mt-4">
                     <button onClick={addConversion} disabled={addingConversion}
                       className="px-4 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white disabled:bg-gray-300 flex items-center gap-1.5">
@@ -1166,7 +1215,6 @@ export default function DirectLinkStatsPage() {
                           setShowAddConv(true)
                           setAddConvDate(new Date().toISOString().split('T')[0])
                           setAddConvValue(0)
-                          setAddConvReason('')
                         }}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-primary hover:bg-primary-dark text-white transition-colors"
                       >
@@ -1178,7 +1226,7 @@ export default function DirectLinkStatsPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
                       <tr>
-                        {['Date', 'Conversions', 'Reason', ''].map(h => (
+                        {['Date', 'Conversions', ''].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -1193,12 +1241,6 @@ export default function DirectLinkStatsPage() {
                                 <input type="number" min={0} value={editConvValue}
                                   onChange={e => setEditConvValue(parseInt(e.target.value) || 0)}
                                   className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                              </td>
-                              <td className="px-4 py-3">
-                                <input value={editConvReason}
-                                  onChange={e => setEditConvReason(e.target.value)}
-                                  placeholder="Reason…"
-                                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <button onClick={saveConversionEdit} disabled={savingConversion}
@@ -1215,10 +1257,9 @@ export default function DirectLinkStatsPage() {
                             <>
                               <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(row.date)}</td>
                               <td className="px-4 py-3 font-mono font-bold text-gray-900">{row.conversions.toLocaleString()}</td>
-                              <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate" title={row.reason}>{row.reason || '—'}</td>
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <button
-                                  onClick={() => { setEditingConversion(row); setEditConvValue(row.conversions); setEditConvReason(row.reason || ''); setShowAddConv(false) }}
+                                  onClick={() => { setEditingConversion(row); setEditConvValue(row.conversions); setShowAddConv(false) }}
                                   title="Edit this conversion entry"
                                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 mr-1.5"
                                 >
@@ -1243,6 +1284,26 @@ export default function DirectLinkStatsPage() {
             </div>
           </div>
         )}
+
+        {/* ── Two-step Regenerate Stats confirmation ───────────────────────── */}
+        <ConfirmDialog
+          open={regenConfirm !== null}
+          title="Regenerate Stats Link"
+          tone="warning"
+          requireText="REGENERATE"
+          confirmLabel="Regenerate Link"
+          message={
+            <>
+              Regenerate the stats link for <strong className="text-gray-900">{regenConfirm?.pubName}</strong>?
+              The current share URL stops working immediately and all publishers&apos; visitors
+              on the old link will see &quot;This statistics link has expired.&quot;
+              Settings and data are kept. Type <strong>REGENERATE</strong> to confirm.
+            </>
+          }
+          loading={regenerating !== null}
+          onConfirm={confirmRegenerate}
+          onCancel={() => setRegenConfirm(null)}
+        />
 
       </div>
     </div>

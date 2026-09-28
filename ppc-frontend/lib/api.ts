@@ -258,7 +258,7 @@ export const directLinkApi = {
     publisher_id: string
     link_id?: string | null
     conversions: number
-    reason: string
+    reason?: string
   }) => api.post('/direct-links/manual-conversions', data),
   listManualConversions: (params?: {
     publisher_id?: string
@@ -266,7 +266,7 @@ export const directLinkApi = {
     date_from?: string
     date_to?: string
   }) => api.get('/direct-links/manual-conversions', { params }),
-  updateManualConversion: (id: string, data: { conversions: number; reason: string }) =>
+  updateManualConversion: (id: string, data: { conversions: number; reason?: string }) =>
     api.put(`/direct-links/manual-conversions/${id}`, data),
   deleteManualConversion: (id: string) =>
     api.delete(`/direct-links/manual-conversions/${id}`),
@@ -294,14 +294,14 @@ export const statsProfileApi = {
     publisher_id: string
     link_id?: string | null
     conversions: number
-    reason: string
+    reason?: string
   }) => api.post('/direct-links/manual-conversions', data),
   listManualConversions: (params?: {
     publisher_id?: string
     date_from?: string
     date_to?: string
   }) => api.get('/direct-links/manual-conversions', { params }),
-  updateManualConversion: (id: string, data: { conversions: number; reason: string }) =>
+  updateManualConversion: (id: string, data: { conversions: number; reason?: string }) =>
     api.put(`/direct-links/manual-conversions/${id}`, data),
   deleteManualConversion: (id: string) =>
     api.delete(`/direct-links/manual-conversions/${id}`),

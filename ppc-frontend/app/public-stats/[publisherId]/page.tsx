@@ -126,7 +126,8 @@ export default function PublisherStatsPage() {
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
-  const [chartRange, setChartRange] = useState<'7' | '14' | '30'>('7')
+  // The 7d/14d/30d chart filter was removed by request — the chart always
+  // shows the full daily breakdown the report was generated with.
   const [dateRange, setDateRange] = useState<number>(30) // Date range selector for daily breakdown
   // Platform click filters — empty set = show all platforms
   const [platformFilters, setPlatformFilters] = useState<Set<'windows' | 'mac' | 'android'>>(new Set())
@@ -293,8 +294,8 @@ export default function PublisherStatsPage() {
   const filteredClicks = filteredRows.reduce((s, r) => s + r.clicks, 0)
   const filteredConversions = filteredRows.reduce((s, r) => s + r.conversions, 0)
 
-  const chartDays = parseInt(chartRange)
-  const chartData = filteredRows.slice(-chartDays)
+  // Chart shows the FULL breakdown — no day-range filter (removed).
+  const chartData = filteredRows
 
   const fmtDate = (d: string) => {
     try {
@@ -396,19 +397,6 @@ export default function PublisherStatsPage() {
           </div>
 
           <div className="flex items-center gap-2 justify-self-center sm:col-start-2 sm:row-start-1 sm:justify-self-end lg:col-start-3">
-            <div className="flex bg-[#111721] border border-[#1D2634] rounded-lg p-0.5">
-              {(['7', '14', '30'] as const).map(d => (
-                <button
-                  key={d}
-                  onClick={() => setChartRange(d)}
-                  className={`px-2.5 py-1 rounded-md text-[12.5px] transition-colors ${
-                    chartRange === d ? 'bg-[#3B82F6] text-white font-medium' : 'text-[#8695A8] hover:text-[#E8EEF6]'
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
             <button
               onClick={() => loadStats()}
               disabled={refreshing}

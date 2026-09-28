@@ -594,13 +594,18 @@ async def record_conversion(
             fraud_score = 0.8
         # Check rate limiting (too many clicks from same IP)
         elif not is_unique:
-            # Additional check: count clicks in last hour
+            # Additional check: count clicks in last hour — PER LINK, not
+            # globally per IP. A global per-IP count made visitor traffic on
+            # one publisher's link rate-limit their clicks on every OTHER
+            # publisher's link too (shared IPs made this routine). The
+            # per-link unique check above is already the duplicate detector.
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)
             recent_clicks = await db.direct_link_events.count_documents({
                 "ip_address": ip,
+                "link_id": link_id,
                 "created_at": {"$gte": one_hour_ago}
             })
-            if recent_clicks >= 10:  # More than 10 clicks/hour = suspicious
+            if recent_clicks >= 10:  # More than 10 clicks/hour on THIS link = suspicious
                 is_valid = False
                 fraud_reason = "rate_limit"
                 fraud_score = 0.7
