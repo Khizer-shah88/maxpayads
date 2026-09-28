@@ -350,7 +350,7 @@ def make_ctx(**overrides):
 def stub_stages(monkeypatch):
     from app.services import redirect_pipeline as rp
 
-    async def fake_identify(ctx, db):
+    async def fake_identify(ctx, db, redis=None):
         ctx.publisher_id = "pub-1"
         ctx.website_id = "site-1" if ctx.raw_site else None
         ctx.record(STAGE_IDENTIFY, "publisher_only", publisher_id=ctx.publisher_id)

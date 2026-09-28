@@ -76,7 +76,7 @@ def stub_stages(monkeypatch):
     """
     calls = {"route": 0, "cpc": 0, "screen_log": 0}
 
-    async def fake_identify(ctx, db):
+    async def fake_identify(ctx, db, redis=None):
         ctx.publisher_id = "pub-1"
         ctx.website_id = "site-1" if ctx.raw_site else None
         ctx.record(STAGE_IDENTIFY, "publisher_only", publisher_id=ctx.publisher_id)
@@ -180,7 +180,7 @@ async def test_valid_click_routes_and_defers_cpc(stub_stages):
 
 
 async def test_unknown_publisher_falls_back_without_routing(monkeypatch, stub_stages):
-    async def no_publisher(ctx, db):
+    async def no_publisher(ctx, db, redis=None):
         ctx.record(STAGE_IDENTIFY, "unknown_publisher")
         return False
 

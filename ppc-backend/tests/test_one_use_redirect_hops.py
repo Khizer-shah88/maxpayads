@@ -21,11 +21,17 @@ from test_publisher_stats_actions import Collection
 
 async def routed_click(monkeypatch, bypass=False):
     monkeypatch.setattr(settings, 'PORTAL_HOSTNAMES', 'portal.example')
-    db = SimpleNamespace(redirection_domains=Collection([
-        {'domain': host, 'domain_type': role, 'status': 'active'} for host, role in (
-            ('inter.example', 'inter'), ('extra.example', 'inter'), ('last.example', 'prelander'),
-        )
-    ]))
+    db = SimpleNamespace(
+        redirection_domains=Collection([
+            {'domain': host, 'domain_type': role, 'status': 'active'} for host, role in (
+                ('inter.example', 'inter'), ('extra.example', 'inter'), ('last.example', 'prelander'),
+            )
+        ]),
+        # domain_role falls back to stats lookups when no redirection role
+        # matches (e.g. a paused host) — those collections must exist.
+        system_settings=Collection(),
+        direct_links=Collection(),
+    )
     redis = FakeRedis()
     ctx = RedirectResolutionContext(raw_pub='PUB_123', raw_site=None, ip='1.2.3.4', user_agent='Browser')
     ctx.click_id = 'click-1'

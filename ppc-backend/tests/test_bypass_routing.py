@@ -66,7 +66,7 @@ async def test_bypass_off_returns_prelander_url():
             
             with patch("app.services.domain_service.resolve_domain_url") as mock_domain:
                 # Return the Prelander domain URL
-                async def domain_resolver(db, domain_type, publisher_id):
+                async def domain_resolver(db, domain_type, publisher_id, **kwargs):
                     if domain_type == DOMAIN_TYPE_PRELANDER:
                         return "https://prelander.example.com"
                     return None

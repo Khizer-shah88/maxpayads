@@ -51,7 +51,7 @@ async def parse_smartlink_from_request(
     try:
         structures = await cached_json(redis, STRUCTURES_KEY, 60, _load_structures) or []
     except Exception as e:
-        logger.warning(f\"Failed to load smartlink structures: {e}\")
+        logger.warning(f"Failed to load smartlink structures: {e}")
         structures = []
     
     # Try to match against registered structures
