@@ -78,5 +78,5 @@ exec uvicorn app.main:app \
     --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}" \
     --log-level warning \
     --no-access-log \
-    --backlog 4096 \
-    --timeout-keep-alive 10
+    --backlog 8192 \
+    --timeout-keep-alive 75

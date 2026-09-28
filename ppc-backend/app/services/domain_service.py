@@ -341,10 +341,15 @@ async def resolve_domain_url(
     publisher_id: Optional[str] = None,
     *,
     require_verified: bool = False,
+    redis=None,
 ) -> Optional[str]:
     """
     Resolve the best active domain URL for a publisher.
     Priority: publisher-assigned → global default → legacy system_settings.
+
+    Cached briefly (KV_TTL_DOMAIN_URL) — the /click hot path resolves the
+    Inter and Prelander domains on every routed click; admin domain edits
+    surface within the TTL. Pass redis=None (tests) to always hit the DB.
     """
     if db is None:
         return None
@@ -353,34 +358,45 @@ async def resolve_domain_url(
     if not canonical_type:
         return None
 
-    base_query: dict = {"domain_type": domain_type_filter(canonical_type), "status": "active"}
-    if require_verified:
-        base_query["dns_status"] = "verified"
+    from app.cache.kv_cache import cached_json
+    from app.config import settings
 
-    # 1. Publisher-specific assignment
-    if publisher_id:
-        assigned = await db.redirection_domains.find_one({
+    cache_key = f"kv:durl:{canonical_type}:{publisher_id or '-'}:{int(require_verified)}"
+
+    async def _load():
+        base_query: dict = {"domain_type": domain_type_filter(canonical_type), "status": "active"}
+        if require_verified:
+            base_query["dns_status"] = "verified"
+
+        # 1. Publisher-specific assignment
+        if publisher_id:
+            assigned = await db.redirection_domains.find_one({
+                **base_query,
+                "publisher_ids": publisher_id,
+            })
+            if assigned:
+                return domain_to_url(assigned["domain"])
+
+        # 2. Global default for this type
+        default_doc = await db.redirection_domains.find_one({**base_query, "is_default": True})
+        if default_doc:
+            return domain_to_url(default_doc["domain"])
+
+        # 3. Any active unassigned pool domain
+        pool = await db.redirection_domains.find_one({
             **base_query,
-            "publisher_ids": publisher_id,
+            "$or": [{"publisher_ids": {"$size": 0}}, {"publisher_ids": {"$exists": False}}],
         })
-        if assigned:
-            return domain_to_url(assigned["domain"])
+        if pool:
+            return domain_to_url(pool["domain"])
 
-    # 2. Global default for this type
-    default_doc = await db.redirection_domains.find_one({**base_query, "is_default": True})
-    if default_doc:
-        return domain_to_url(default_doc["domain"])
+        # Only registered, active domains can receive public traffic.
+        return None
 
-    # 3. Any active unassigned pool domain
-    pool = await db.redirection_domains.find_one({
-        **base_query,
-        "$or": [{"publisher_ids": {"$size": 0}}, {"publisher_ids": {"$exists": False}}],
-    })
-    if pool:
-        return domain_to_url(pool["domain"])
-
-    # Only registered, active domains can receive public traffic.
-    return None
+    result = await cached_json(redis, cache_key, settings.KV_TTL_DOMAIN_URL, _load)
+    # json round-trip turns None into a null payload cached_json decodes as
+    # None — a legitimate miss and a cached "no domain" both arrive here.
+    return result or None
 
 
 def _to_absolute_url(raw: str) -> str:

@@ -27,6 +27,9 @@ import os
 # Must happen BEFORE any app module is imported at collection time
 os.environ["DB_NAME"] = "ppc_network_test"
 os.environ["PORTAL_HOSTNAMES"] = "test,localhost"
+# Hot-path Redis cache off in tests: every test reads fresh database state,
+# so cached routing/campaign results can never mask or leak between tests.
+os.environ["CLICK_HOT_CACHE"] = "false"
 
 import pytest
 import pytest_asyncio

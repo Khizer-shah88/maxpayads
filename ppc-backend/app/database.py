@@ -80,6 +80,23 @@ async def create_indexes():
     await db.clicks.create_index([("ip_address", ASCENDING), ("timestamp", DESCENDING)])
     await db.clicks.create_index([("country_code", ASCENDING), ("timestamp", DESCENDING)])
     await db.clicks.create_index([("os", ASCENDING), ("timestamp", DESCENDING)])
+    # Duplicate-click check (fraud_detection_service.check_duplicate_click):
+    # without this compound index every /click full-scanned the collection.
+    await db.clicks.create_index([("fingerprint", ASCENDING), ("timestamp", DESCENDING)])
+
+    # Offers / landing pages / redirect chains — queried on every click.
+    await db.offers.create_index([("campaign_id", ASCENDING), ("status", ASCENDING)])
+    await db.offers.create_index("status")
+    await db.offers.create_index("publisher_ids")
+    await db.landing_pages.create_index([("campaign_id", ASCENDING), ("status", ASCENDING)])
+    await db.redirect_chains.create_index([("anchor_domain", ASCENDING), ("status", ASCENDING)])
+
+    # Geo rules by visitor country (campaign resolution step 2 + targeting).
+    await db.geo_rules.create_index([("country_code", ASCENDING), ("status", ASCENDING)])
+
+    # Fraud IP blacklist lookups and audit-log scans.
+    await db.ip_blacklist.create_index("ip_address")
+    await db.security_audit_log.create_index([("created_at", DESCENDING)])
 
     # Withdrawals
     await db.withdrawals.create_index("publisher_id")

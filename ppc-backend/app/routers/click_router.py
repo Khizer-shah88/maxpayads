@@ -97,7 +97,7 @@ async def track_click(
     # Parse the request using registered smartlink structures
     from app.services.smartlink_parser import parse_smartlink_from_request
     
-    pub_value, site_value, structure_name = await parse_smartlink_from_request(request, db)
+    pub_value, site_value, structure_name = await parse_smartlink_from_request(request, db, redis)
     
     if not pub_value:
         logger.warning(

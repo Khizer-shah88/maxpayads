@@ -125,7 +125,7 @@ def build_prelander_slug(
     return base64.urlsafe_b64encode(xored).decode().rstrip("=")
 
 
-async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Optional[str] = None) -> Optional[dict]:
+async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Optional[str] = None, redis=None) -> Optional[dict]:
     """
     Resolve the admin-configured Redirection Chain for a click.
 
@@ -140,9 +140,14 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
 
     The stored anchor hostname is normalized on both sides, so chains saved
     with protocol/case variants still match the incoming host.
+
+    Cached briefly per anchor host (KV_TTL_CHAIN): the slow path here used to
+    load up to 200 chain documents on EVERY click that did not direct-match.
     """
     try:
         from app.services.domain_service import normalize_domain
+        from app.cache.kv_cache import cached_json
+        from app.config import settings as _settings
 
         if not request_host:
             # No host specified - cannot match a chain
@@ -161,14 +166,30 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
         if not chain:
             # Chains may store the domain with protocol/case variants —
             # normalize both sides before deciding there is no match.
-            chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
-            chain = next(
-                (
-                    c for c in chains
-                    if normalize_domain(c.get("anchor_domain")) == host
-                ),
-                None,
+            # Cached: no-chain anchors (the common case) must not rescan the
+            # collection per click.
+            async def _scan_chains():
+                chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
+                return next(
+                    (
+                        c for c in chains
+                        if normalize_domain(c.get("anchor_domain")) == host
+                    ),
+                    None,
+                )
+
+            chain = await cached_json(
+                redis, f"kv:chainscan:{host}", _settings.KV_TTL_CHAIN, _scan_chains,
             )
+            if chain and chain.get("_id"):
+                # Cached chain docs come back as plain dicts (ids as strings);
+                # reload the live document so identity fields stay real
+                # ObjectIds when one exists.
+                from bson import ObjectId as _OId
+                try:
+                    chain = await db.redirect_chains.find_one({"_id": _OId(chain["_id"])}) or chain
+                except Exception:
+                    pass
 
         if chain:
             logger.info(f"[CHAIN] Matched chain '{chain.get('name')}' for anchor domain: {host}")
@@ -332,15 +353,23 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     os_name = click_data.get("os")
     
     # --- Step 1: Resolve campaign for this click ---
-    campaign_id = await resolve_campaign_for_click(click_data, db)
+    campaign_id = await resolve_campaign_for_click(click_data, db, redis=redis)
     
     if not campaign_id:
         logger.warning("[ROUTE] No campaign found, using fallback")
-        # Global default offer URL
-        setting = await db.system_settings.find_one({"key": "global_default_offer_url"})
-        if setting:
-            _record(ctx, STAGE_CAMPAIGN, "none_global_default", url=setting["value"])
-            return setting["value"], False
+        # Global default offer URL — cached (KV_TTL_FALLBACK); one point read
+        # per click otherwise.
+        from app.cache.kv_cache import cached_json as _cj, GLOBAL_FALLBACK_KEY
+        from app.config import settings as _settings
+
+        async def _global_fallback():
+            setting = await db.system_settings.find_one({"key": "global_default_offer_url"})
+            return (setting or {}).get("value") or ""
+
+        setting_value = await _cj(redis, GLOBAL_FALLBACK_KEY, _settings.KV_TTL_FALLBACK, _global_fallback)
+        if setting_value:
+            _record(ctx, STAGE_CAMPAIGN, "none_global_default", url=setting_value)
+            return setting_value, False
         _record(ctx, STAGE_CAMPAIGN, "none_hardcoded_fallback", url=FALLBACK_URL)
         return FALLBACK_URL, False
     
@@ -349,7 +378,16 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         ctx.campaign_id = str(campaign_id)
     _record(ctx, STAGE_CAMPAIGN, "matched", campaign_id=str(campaign_id))
     
-    # --- Step 2: Build click context for targeting engine ---
+    # --- Step 3: Use centralized targeting engine to resolve destination ---
+    # The full rule evaluation (offers to_list(200), geo/device/campaign/fallback
+    # lookups) is deterministic per (campaign, publisher, website, geo, os) —
+    # cached briefly (KV_TTL_DESTINATION) so repeat clicks for one campaign do
+    # not re-run the heaviest resolution. Admin offer/rule edits surface within
+    # the TTL; pass redis=None (tests) to always evaluate fresh.
+    from app.cache.kv_cache import cached_json
+    from app.config import settings as _settings
+
+    engine = TargetingEngine(db, redis)
     context = ClickContext(
         publisher_id=publisher_id,
         website_id=website_id,
@@ -358,10 +396,24 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         os=os_name,
         campaign_id=campaign_id,
     )
-    
-    # --- Step 3: Use centralized targeting engine to resolve destination ---
-    engine = TargetingEngine(db, redis)
-    resolved_offer_url, referrer_suppression, metadata = await engine.resolve_destination(context)
+
+    async def _resolve_dest():
+        return await engine.resolve_destination(context)
+
+    dest_key = (
+        f"kv:dest:{campaign_id}:{publisher_id or '-'}:{website_id or '-'}:"
+        f"{(country_code or '-').upper()}:{device_type}:{os_name or '-'}"
+    )
+    resolved = await cached_json(
+        redis, dest_key, _settings.KV_TTL_DESTINATION, _resolve_dest,
+    )
+    if resolved is None:
+        # Cache disabled (or loader returned nothing) — evaluate directly.
+        resolved_offer_url, referrer_suppression, metadata = await _resolve_dest()
+    else:
+        resolved_offer_url, referrer_suppression, metadata = resolved
+    if resolved_offer_url is None:
+        resolved_offer_url = FALLBACK_URL
     
     logger.info(
         f"[ROUTE] Targeting resolved: url={resolved_offer_url}, "
@@ -395,11 +447,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     # This function only determines what URL to send as the FINAL destination.
     is_bypass_on = False
     bypass_source = None
-    try:
+    # Both bypass flags are stable per campaign/offer — cached briefly
+    # (KV_TTL_BYPASS) instead of two Mongo point-reads per click.
+    from app.cache.kv_cache import cached_json as _cached_json
+
+    async def _campaign_bypass():
         from bson import ObjectId
         campaign_oid = ObjectId(campaign_id) if isinstance(campaign_id, str) else campaign_id
-        campaign = await db.campaigns.find_one({"_id": campaign_oid})
-        if campaign and campaign.get("direct_redirect_mode"):
+        campaign = await db.campaigns.find_one({"_id": campaign_oid}, {"direct_redirect_mode": 1})
+        return bool(campaign and campaign.get("direct_redirect_mode"))
+
+    try:
+        if await _cached_json(redis, f"kv:cbypass:{campaign_id}", _settings.KV_TTL_BYPASS, _campaign_bypass):
             is_bypass_on = True
             bypass_source = "campaign"
             logger.info("[ROUTE] Bypass ON (campaign) — will skip prelander, go direct to campaign URL")
@@ -408,10 +467,18 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
     # Also check matched offer for bypass setting
     if not is_bypass_on and metadata.get("rule_type") == "offer" and metadata.get("source_id"):
-        try:
+        source_id = metadata["source_id"]
+
+        async def _offer_bypass():
             from bson import ObjectId as OId
-            offer = await db.offers.find_one({"_id": OId(metadata["source_id"])})
-            if offer and offer.get("direct_redirect_mode"):
+            try:
+                offer = await db.offers.find_one({"_id": OId(source_id)}, {"direct_redirect_mode": 1})
+            except Exception:
+                offer = await db.offers.find_one({"_id": source_id}, {"direct_redirect_mode": 1})
+            return bool(offer and offer.get("direct_redirect_mode"))
+
+        try:
+            if await _cached_json(redis, f"kv:obypass:{source_id}", _settings.KV_TTL_BYPASS, _offer_bypass):
                 is_bypass_on = True
                 bypass_source = "offer"
                 logger.info("[ROUTE] Bypass ON (offer) — will skip prelander, go direct to campaign URL")
@@ -429,6 +496,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     # and the browser would resolve it against the publisher's page.
     chain = await resolve_active_chain(
         db, publisher_id, getattr(ctx, "request_host", None) if ctx is not None else None,
+        redis=redis,
     )
     if ctx is not None:
         ctx.redirect_chain = chain
@@ -462,7 +530,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
         if not entry_base:
             try:
                 from app.services.domain_service import resolve_domain_url
-                resolved_inter = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+                resolved_inter = await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id, redis=redis)
                 if resolved_inter:
                     entry_base = _absolute_base(resolved_inter)
             except Exception:
@@ -500,21 +568,37 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     
     os_param = slug_os_param(os_name)
 
-    campaign_filter = campaign_id_filter(campaign_id)
-    landing_pages = await db.landing_pages.find({
-        **campaign_filter,
-        "status": "active",
-    }).to_list(length=100)
+    # Landing pages for this campaign (or global ones) — cached briefly
+    # (KV_TTL_LANDING) since this used to be two collection queries per click.
+    from app.cache.kv_cache import cached_json as _cached_json_landing
+    from app.config import settings as _settings_landing
 
-    if not landing_pages:
-        landing_pages = await db.landing_pages.find({
+    _campaign_filter = campaign_id_filter(campaign_id)
+
+    async def _load_landing_pages():
+        pages = await db.landing_pages.find({
+            **_campaign_filter,
             "status": "active",
-            "$or": [
-                {"campaign_id": None},
-                {"campaign_id": {"$exists": False}},
-                {"campaign_id": ""},
-            ],
         }).to_list(length=100)
+        if not pages:
+            pages = await db.landing_pages.find({
+                "status": "active",
+                "$or": [
+                    {"campaign_id": None},
+                    {"campaign_id": {"$exists": False}},
+                    {"campaign_id": ""},
+                ],
+            }).to_list(length=100)
+        for p in pages:
+            if p.get("_id") is not None:
+                p["_id"] = str(p["_id"])
+            if p.get("campaign_id") is not None and not isinstance(p.get("campaign_id"), str):
+                p["campaign_id"] = str(p["campaign_id"])
+        return pages
+
+    landing_pages = await _cached_json_landing(
+        redis, f"kv:lpages:{campaign_id}", _settings_landing.KV_TTL_LANDING, _load_landing_pages,
+    ) or []
 
     landing_page = select_weighted_landing_page(landing_pages)
 
@@ -538,7 +622,7 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             from app.services.redirect_pipeline import FALLBACK_URL
             return FALLBACK_URL, referrer_suppression
     else:
-        publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id) if publisher_id else None
+        publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id, redis=redis) if publisher_id else None
         if publisher_prelander:
             last_base = publisher_prelander
         else:
@@ -550,8 +634,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
             weighted_pick = await select_active_prelander(
                 db, [d.get("domain") for d in pool_docs]
             )
-            last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None)
-    intermediate_base = chain_inter or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id)
+            last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None, redis=redis)
+    intermediate_base = chain_inter or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id, redis=redis)
     # Guard every resolved base: bare hostnames must never reach the /d URL
     # builders (they would produce a RELATIVE destination → visitor 404s on
     # https://publisher.com/<hostname>/d/{slug}).

@@ -184,13 +184,24 @@ async def _resolve_bypass_destination(
     """
     if offer_id:
         try:
-            offer = await db.offers.find_one({"_id": ObjectId(offer_id)})
-            if offer and offer.get("direct_redirect_mode"):
-                return (
-                    offer.get("offer_url")
-                    or offer.get("default_offer_url")
-                    or offer.get("url")
-                )
+            from app.cache.kv_cache import cached_json
+            from app.config import settings as _s
+
+            async def _offer_bypass():
+                offer = await db.offers.find_one({"_id": ObjectId(offer_id)})
+                if offer and offer.get("direct_redirect_mode"):
+                    return (
+                        offer.get("offer_url")
+                        or offer.get("default_offer_url")
+                        or offer.get("url")
+                    )
+                return ""
+
+            target = await cached_json(
+                get_redis_safe(), f"kv:slbypass:{offer_id}", _s.KV_TTL_BYPASS, _offer_bypass,
+            )
+            if target:
+                return target
         except Exception:
             pass
 
@@ -307,21 +318,28 @@ async def _host_in_chain_sequence(db, host: str) -> bool:
     """
     from app.services.domain_service import normalize_domain
     from app.models.redirect_chain import chain_inter_domain
+    from app.cache.kv_cache import cached_json
+    from app.config import settings
 
     host = normalize_domain(host)
     if not host:
         return False
 
-    chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
-    for chain in chains:
-        sequence: list = []
-        inter = chain_inter_domain(chain)
-        if inter:
-            sequence.append(inter)
-        sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
-        if host in [normalize_domain(d) for d in sequence if d]:
-            return True
-    return False
+    async def _scan():
+        chains = await db.redirect_chains.find({"status": "active"}).to_list(length=200)
+        for chain in chains:
+            sequence: list = []
+            inter = chain_inter_domain(chain)
+            if inter:
+                sequence.append(inter)
+            sequence.extend([d for d in (chain.get("extra_domains") or []) if d])
+            if host in [normalize_domain(d) for d in sequence if d]:
+                return True
+        return False
+
+    return bool(await cached_json(
+        get_redis_safe(), f"kv:chainseq:{host}", settings.KV_TTL_CHAIN, _scan,
+    ))
 
 
 async def _resolve_next_hop(

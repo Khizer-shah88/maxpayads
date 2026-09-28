@@ -4,6 +4,7 @@ import logging
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.cache.redis_client import get_redis
 from app.database import get_database
 from app.services.domain_access_service import allow_path
 
@@ -23,7 +24,8 @@ class DomainAccessMiddleware:
         try:
             # A cached result for /click must never authorize /admin or poison
             # the host after a denied path. Check the complete policy each time.
-            role = await allow_path(get_database(), request.headers.get('host', ''), path)
+            role = await allow_path(get_database(), request.headers.get('host', ''), path,
+                                    redis=get_redis())
         except Exception:
             logging.exception('Domain access lookup failed')
             response = Response(status_code=503, headers={'Cache-Control': 'no-store'})

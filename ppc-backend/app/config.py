@@ -110,6 +110,23 @@ class Settings(BaseSettings):
     # Turn off to keep click documents minimal on very high volume.
     REDIRECT_TRACE_ENABLED: bool = True
 
+    # Hot-path Redis cache (app/cache/kv_cache.py). Caches the otherwise
+    # repeated per-click lookups (smartlink structures, publisher/website ids,
+    # domain roles, campaign resolution, offer targeting result) for a few
+    # seconds. Disable only while debugging routing rules.
+    CLICK_HOT_CACHE: bool = True
+    KV_TTL_STRUCTURES: int = Field(default=60, ge=1)
+    KV_TTL_PUBSITE: int = Field(default=120, ge=1)
+    KV_TTL_DOMAIN_ROLE: int = Field(default=30, ge=1)
+    KV_TTL_CAMPAIGN: int = Field(default=60, ge=1)
+    KV_TTL_DESTINATION: int = Field(default=60, ge=1)
+    KV_TTL_BYPASS: int = Field(default=30, ge=1)
+    KV_TTL_FALLBACK: int = Field(default=120, ge=1)
+    KV_TTL_CHAIN: int = Field(default=60, ge=1)
+    KV_TTL_LANDING: int = Field(default=60, ge=1)
+    KV_TTL_DOMAIN_URL: int = Field(default=60, ge=1)
+    KV_TTL_STATS_HOST: int = Field(default=60, ge=1)
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]

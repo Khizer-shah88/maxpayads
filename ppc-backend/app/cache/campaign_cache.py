@@ -31,6 +31,12 @@ async def set_cached_campaigns(redis, campaigns: List[dict]):
 
 async def invalidate_campaign_cache(redis):
     try:
-        await redis.delete(f"{CAMPAIGN_CACHE_PREFIX}{CACHE_KEY}")
+        # CAMPAIGNS_SNAPSHOT_KEY is the lean (id, weight) snapshot the click
+        # hot path uses for weighted selection — drop it alongside the full
+        # document cache so admin campaign changes apply immediately.
+        await redis.delete(
+            f"{CAMPAIGN_CACHE_PREFIX}{CACHE_KEY}",
+            "kv:campsnap",
+        )
     except Exception as e:
         logger.warning(f"Campaign cache invalidation error: {e}")

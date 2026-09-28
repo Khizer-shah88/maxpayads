@@ -21,6 +21,8 @@ import time
 from typing import Optional
 import logging
 
+from app.cache.kv_cache import cached_json
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -120,6 +122,35 @@ async def resolve_publisher_id(db, identifier: str) -> Optional[str]:
         return str(publisher["_id"])
     
     return None
+
+
+async def resolve_publisher_id_cached(db, redis, identifier: str) -> Optional[str]:
+    """Cache resolve_publisher_id for the /click hot path (KV_TTL_PUBSITE).
+
+    Publisher ids are stable; negative results (bad links) are cached too so a
+    repeated bad link cannot stampede the database. Pass redis=None to skip
+    caching (tests, one-off resolution).
+    """
+    from app.config import settings
+
+    async def _load():
+        return await resolve_publisher_id(db, identifier)
+
+    return await cached_json(
+        redis, f"kv:pub:{identifier}", settings.KV_TTL_PUBSITE, _load,
+    )
+
+
+async def resolve_website_id_cached(db, redis, identifier: str) -> Optional[str]:
+    """Cache resolve_website_id for the /click hot path (KV_TTL_PUBSITE)."""
+    from app.config import settings
+
+    async def _load():
+        return await resolve_website_id(db, identifier)
+
+    return await cached_json(
+        redis, f"kv:site:{identifier}", settings.KV_TTL_PUBSITE, _load,
+    )
 
 
 async def resolve_website_id(db, identifier: str) -> Optional[str]:

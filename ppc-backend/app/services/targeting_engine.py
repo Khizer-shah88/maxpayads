@@ -484,7 +484,7 @@ class TargetingEngine:
         )
 
 
-async def resolve_campaign_for_click(click_data: dict, db) -> Optional[str]:
+async def resolve_campaign_for_click(click_data: dict, db, redis=None) -> Optional[str]:
     """
     Resolve the appropriate campaign for a click.
     Checks (Domain Glossary "Campaign value" resolution order):
@@ -496,8 +496,18 @@ async def resolve_campaign_for_click(click_data: dict, db) -> Optional[str]:
     5. Weighted random from active global-capable campaigns
        (never serves an OS-specific campaign to the wrong OS)
 
+    Steps 1-4 and the weighted-pick snapshot are cached briefly in Redis
+    (KV_TTL_CAMPAIGN) — this used to run 3-6 Mongo queries including a full
+    campaign collection load on EVERY click. Admin campaign edits surface
+    within the TTL; campaign mutations also drop the snapshot key
+    (campaign_cache.invalidate_campaign_cache). Pass redis=None (tests) to
+    always hit the database.
+
     Returns: campaign_id (str) or None
     """
+    from app.cache.kv_cache import cached_json, CAMPAIGNS_SNAPSHOT_KEY
+    from app.config import settings
+
     website_id = click_data.get("website_id")
     os_name = click_data.get("os")
     country_code = click_data.get("country_code")
@@ -505,92 +515,98 @@ async def resolve_campaign_for_click(click_data: dict, db) -> Optional[str]:
 
     # 1. Website-assigned campaign
     if website_id:
-        website = await db.websites.find_one({"_id": website_id})
-        if not website:
-            try:
-                from bson import ObjectId
-                website = await db.websites.find_one({"_id": ObjectId(website_id)})
-            except Exception:
-                pass
-
-        if website and website.get("assigned_campaign_id"):
+        async def _assigned():
+            website = await db.websites.find_one({"_id": _campaign_oid(website_id)})
+            if not website:
+                return None
+            if not website.get("assigned_campaign_id"):
+                return ""
             campaign = await db.campaigns.find_one({
-                "_id": website["assigned_campaign_id"],
+                "_id": _campaign_oid(website["assigned_campaign_id"]),
                 "status": "active",
             })
-            if not campaign:
-                try:
-                    from bson import ObjectId
-                    campaign = await db.campaigns.find_one({
-                        "_id": ObjectId(website["assigned_campaign_id"]),
-                        "status": "active",
-                    })
-                except Exception:
-                    pass
-            if campaign:
-                return str(campaign["_id"])
+            return str(campaign["_id"]) if campaign else ""
+
+        assigned = await cached_json(
+            redis, f"kv:webcamp:{website_id}", settings.KV_TTL_CAMPAIGN, _assigned,
+        )
+        # "" = known no-assignment; None = not cached / unknown → keep going.
+        if assigned:
+            return assigned
 
     mapped_os = normalize_os(os_name) if os_name else None
 
-    # 2. Specific OS + Country — campaign for this OS with a geo rule for
-    # the visitor's country.
-    if mapped_os and country_code:
-        cc = country_code.upper()
-        geo_rule = await db.geo_rules.find_one(
-            {"country_code": cc, "status": {"$ne": "deleted"}},
-            sort=[("priority", -1)],
-        )
-        if geo_rule and geo_rule.get("campaign_id"):
+    # 2-4. Geo+OS → OS-specific → global, in one cached composite lookup.
+    cc = country_code.upper() if country_code else ""
+
+    async def _resolve_static():
+        if mapped_os and cc:
+            geo_rule = await db.geo_rules.find_one(
+                {"country_code": cc, "status": {"$ne": "deleted"}},
+                sort=[("priority", -1)],
+            )
+            if geo_rule and geo_rule.get("campaign_id"):
+                campaign = await db.campaigns.find_one({
+                    "_id": _campaign_oid(geo_rule["campaign_id"]),
+                    "device_os": mapped_os,
+                    "status": "active",
+                })
+                if campaign:
+                    return str(campaign["_id"])
+        if mapped_os:
             campaign = await db.campaigns.find_one({
-                "_id": _campaign_oid(geo_rule["campaign_id"]),
                 "device_os": mapped_os,
                 "status": "active",
             })
-            if not campaign:
-                try:
-                    from bson import ObjectId
-                    campaign = await db.campaigns.find_one({
-                        "_id": ObjectId(geo_rule["campaign_id"]),
-                        "device_os": mapped_os,
-                        "status": "active",
-                    })
-                except Exception:
-                    pass
             if campaign:
                 return str(campaign["_id"])
-
-    # 3. OS-specific campaign
-    if mapped_os:
         campaign = await db.campaigns.find_one({
-            "device_os": mapped_os,
+            "device_os": "global",
             "status": "active",
         })
         if campaign:
             return str(campaign["_id"])
+        return ""
 
-    # 4. Global campaign
-    campaign = await db.campaigns.find_one({
-        "device_os": "global",
-        "status": "active",
-    })
-    if campaign:
-        return str(campaign["_id"])
+    campaign_id = await cached_json(
+        redis, f"kv:campres:{cc}:{mapped_os or '-'}", settings.KV_TTL_CAMPAIGN, _resolve_static,
+    )
+    if campaign_id:
+        return campaign_id
 
     # 5. Weighted random selection — restricted to global-capable campaigns so an
     # OS-specific campaign is never served to the wrong OS.
-    campaigns = await db.campaigns.find({
-        "status": "active",
-        "$or": [
-            {"device_os": "global"},
-            {"device_os": None},
-            {"device_os": {"$exists": False}},
-        ],
-    }).to_list(length=None)
-    if campaigns:
-        from app.services.campaign_service import select_weighted_campaign
-        campaign = select_weighted_campaign(campaigns)
-        if campaign:
-            return str(campaign.get("_id", campaign.get("id", "")))
+    # Lean snapshot (id + rotation_weight only), cached under the shared key
+    # that campaign mutations invalidate.
+    async def _load_snapshot():
+        campaigns = await db.campaigns.find(
+            {
+                "status": "active",
+                "$or": [
+                    {"device_os": "global"},
+                    {"device_os": None},
+                    {"device_os": {"$exists": False}},
+                ],
+            },
+            {"rotation_weight": 1},
+        ).to_list(length=None)
+        return [[str(c["_id"]), int(c.get("rotation_weight", 100) or 0)] for c in campaigns]
+
+    snapshot = await cached_json(
+        redis, CAMPAIGNS_SNAPSHOT_KEY, settings.KV_TTL_CAMPAIGN, _load_snapshot,
+    ) or []
+    if snapshot:
+        total = sum(w for _, w in snapshot)
+        if total > 0:
+            import random as _random
+            rand = _random.uniform(0, total)
+            cumulative = 0
+            for cid, w in snapshot:
+                cumulative += w
+                if rand <= cumulative:
+                    return cid
+            return snapshot[-1][0]
+        return snapshot[0][0]
 
     return None
 

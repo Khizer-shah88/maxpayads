@@ -9,12 +9,15 @@ from typing import Optional, Tuple, Dict
 from fastapi import Request
 import logging
 
+from app.cache.kv_cache import cached_json, STRUCTURES_KEY
+
 logger = logging.getLogger(__name__)
 
 
 async def parse_smartlink_from_request(
     request: Request,
-    db
+    db,
+    redis=None,
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Parse a smartlink request and extract publisher_id, website_id (if any),
@@ -23,6 +26,7 @@ async def parse_smartlink_from_request(
     Args:
         request: FastAPI request object
         db: Database connection
+        redis: Optional Redis connection — enables the brief hot-path cache
     
     Returns:
         (publisher_param_value, website_param_value, structure_name)
@@ -35,15 +39,20 @@ async def parse_smartlink_from_request(
     """
     query_params = dict(request.query_params)
     
-    # Fetch all active structures, sorted by default first
-    structures = []
-    try:
+    # Fetch all active structures, sorted by default first.
+    # Cached briefly — this used to be one Mongo query on every single click.
+    # Admin structure edits surface within the TTL.
+    async def _load_structures():
         cursor = db.smartlink_structures.find(
             {"status": "active"}
         ).sort([("is_default", -1), ("created_at", 1)])
-        structures = await cursor.to_list(length=100)
+        return await cursor.to_list(length=100)
+
+    try:
+        structures = await cached_json(redis, STRUCTURES_KEY, 60, _load_structures) or []
     except Exception as e:
-        logger.warning(f"Failed to load smartlink structures: {e}")
+        logger.warning(f\"Failed to load smartlink structures: {e}\")
+        structures = []
     
     # Try to match against registered structures
     for struct in structures:

@@ -243,13 +243,23 @@ async def check_duplicate_click(
     fingerprint_data = f"{ip_address}:{publisher_id}:{campaign_id or 'none'}"
     fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()
     
-    # Check for recent click with same fingerprint
+    # Check for recent click with same fingerprint.
+    # The redirect pipeline writes clicks with `timestamp` (not `created_at`);
+    # match either field so legacy documents and new inserts both count, and
+    # hit the (fingerprint, timestamp) compound index — a mismatched field here
+    # used to full-scan the clicks collection on EVERY request.
     since = datetime.utcnow() - timedelta(minutes=window_minutes)
     
-    existing = await db.clicks.find_one({
-        "fingerprint": fingerprint,
-        "created_at": {"$gte": since},
-    })
+    existing = await db.clicks.find_one(
+        {
+            "fingerprint": fingerprint,
+            "$or": [
+                {"timestamp": {"$gte": since}},
+                {"created_at": {"$gte": since}},
+            ],
+        },
+        {"_id": 1},
+    )
     
     if existing:
         return True, str(existing.get("_id"))

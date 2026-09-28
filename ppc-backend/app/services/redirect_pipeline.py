@@ -224,7 +224,12 @@ class RedirectResolutionContext:
 # Stages
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def stage_identify_publisher(ctx: RedirectResolutionContext, db) -> bool:
+def _redis_or_none(redis):
+    """Return a usable redis handle or None — caching helpers accept None."""
+    return redis
+
+
+async def stage_identify_publisher(ctx: RedirectResolutionContext, db, redis=None) -> bool:
     """
     Smartlink params → permanent Publisher ID (+ Website when a site param is present).
 
@@ -239,10 +244,10 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db) -> bool:
     Returns False only when the publisher cannot be identified at all — there is
     nothing to attribute the click to, and the visitor gets the fallback.
     """
-    from app.utils.public_id_utils import resolve_publisher_id, resolve_website_id
+    from app.utils.public_id_utils import resolve_publisher_id_cached, resolve_website_id_cached
 
     try:
-        ctx.publisher_id = await resolve_publisher_id(db, (ctx.raw_pub or "").strip())
+        ctx.publisher_id = await resolve_publisher_id_cached(db, _redis_or_none(ctx), (ctx.raw_pub or "").strip())
     except Exception as e:
         # A transient DB error must degrade to the fallback redirect, never a 500.
         logger.error(f"Publisher lookup failed: {e}")
@@ -270,7 +275,7 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db) -> bool:
             return True
 
         site = ctx.raw_site.strip().rstrip("/")
-        ctx.website_id = await resolve_website_id(db, site)
+        ctx.website_id = await resolve_website_id_cached(db, _redis_or_none(ctx), site)
         if not ctx.website_id:
             # Unknown site is not fatal — the click still belongs to the publisher.
             logger.warning(f"Website not found: {site}, continuing without website binding")
@@ -662,13 +667,13 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
         ctx.destination_url = FALLBACK_URL
     else:
         entry_host = normalize_domain(dest)
-        role = await domain_role(db, entry_host)
+        role = await domain_role(db, entry_host, redis=redis)
         if role == "inter":
             hosts = [entry_host]
             if chain and not ctx.skip_prelander:
                 hosts.extend(normalize_domain(h) for h in (chain.get("extra_domains") or []))
             if len(set(hosts)) != len(hosts) or any([
-                await domain_role(db, h) != "inter" for h in hosts
+                await domain_role(db, h, redis=redis) != "inter" for h in hosts
             ]):
                 ctx.destination_url = FALLBACK_URL
             else:
@@ -691,7 +696,7 @@ async def resolve_redirect(ctx: RedirectResolutionContext, db, redis) -> Redirec
     The caller turns `ctx.destination_url` and `ctx.referrer_suppression` into a
     response. There is no path out of here without a destination.
     """
-    if not await stage_identify_publisher(ctx, db):
+    if not await stage_identify_publisher(ctx, db, redis):
         ctx.destination_url = FALLBACK_URL
         await _finalize(ctx, db, "fallback_unknown_publisher")
         return ctx
