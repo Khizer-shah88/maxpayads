@@ -226,7 +226,16 @@ class RedirectResolutionContext:
 
 def _redis_or_none(redis):
     """Return a usable redis handle or None — caching helpers accept None."""
-    return redis
+    # Only objects that actually behave like a redis client are passed
+    # through. Anything else (historically the pipeline CONTEXT was passed
+    # here) must degrade to None so `cached_json` runs the loader directly
+    # instead of calling `.get(...)` on an object without it (AttributeError
+    # → 500 on the /click hot path).
+    if redis is None:
+        return None
+    if hasattr(redis, "get") and hasattr(redis, "setex"):
+        return redis
+    return None
 
 
 async def stage_identify_publisher(ctx: RedirectResolutionContext, db, redis=None) -> bool:
@@ -246,8 +255,16 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db, redis=Non
     """
     from app.utils.public_id_utils import resolve_publisher_id_cached, resolve_website_id_cached
 
+    # The redis handle for the hot-path caches. A historical call passed the
+    # pipeline CONTEXT here instead of the redis client; the context object
+    # reached `cached_json`, whose `redis.get(...)` call then raised
+    # AttributeError — the /click hot path 500'd (and the visitor saw a raw
+    # JSON error) instead of falling back to a plain database lookup.
+    # `_redis_or_none` guards the type; pass the stage's actual redis handle.
+    cache_redis = _redis_or_none(redis)
+
     try:
-        ctx.publisher_id = await resolve_publisher_id_cached(db, _redis_or_none(ctx), (ctx.raw_pub or "").strip())
+        ctx.publisher_id = await resolve_publisher_id_cached(db, cache_redis, (ctx.raw_pub or "").strip())
     except Exception as e:
         # A transient DB error must degrade to the fallback redirect, never a 500.
         logger.error(f"Publisher lookup failed: {e}")
@@ -275,7 +292,7 @@ async def stage_identify_publisher(ctx: RedirectResolutionContext, db, redis=Non
             return True
 
         site = ctx.raw_site.strip().rstrip("/")
-        ctx.website_id = await resolve_website_id_cached(db, _redis_or_none(ctx), site)
+        ctx.website_id = await resolve_website_id_cached(db, _redis_or_none(cache_redis), site)
         if not ctx.website_id:
             # Unknown site is not fatal — the click still belongs to the publisher.
             logger.warning(f"Website not found: {site}, continuing without website binding")
@@ -375,7 +392,10 @@ async def stage_screen_traffic(ctx: RedirectResolutionContext, db, redis) -> Non
         if count > MAX_CLICKS_PER_IP_PER_MINUTE:
             return _verdict(True, False, "rate_limit_exceeded", 0.90, fds.TRAFFIC_INVALID, "blocked")
     except Exception as e:
-        logger.warning(f"Redis rate limit check failed: {e}")
+        # Fail-OPEN by design (Redis down / redis=None in tests): screening
+        # must never block a legitimate visitor because a counter store is
+        # unavailable. classify_traffic below re-runs what it can without it.
+        logger.warning(f"Redis rate limit check failed (fail-open): {e}")
 
     # Duplicate IP + website — soft flag, still routed.
     # Per-day validation: same IP today is valid if it came yesterday
@@ -388,7 +408,8 @@ async def stage_screen_traffic(ctx: RedirectResolutionContext, db, redis) -> Non
             return _verdict(False, True, "duplicate_ip", 0.85, fds.TRAFFIC_DUPLICATE, "flagged")
         await redis.setex(dup_key, DUPLICATE_CLICK_WINDOW_SECONDS, "1")
     except Exception as e:
-        logger.warning(f"Redis duplicate check failed: {e}")
+        # Fail-open duplicate check — see rate-limit note above.
+        logger.warning(f"Redis duplicate check failed (fail-open): {e}")
 
     # Comprehensive fraud detection.
     try:

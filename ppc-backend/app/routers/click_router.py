@@ -95,10 +95,21 @@ async def track_click(
     for the standard pub/site-only link format.
     """
     # ── Dynamic structure parsing ─────────────────────────────────────────
-    # Parse the request using registered smartlink structures
+    # Parse the request using registered smartlink structures. Guarded: a
+    # DB outage during structure loading degrades to the LEGACY pub/site
+    # params (parse_smartlink_from_request already falls back internally);
+    # an unexpected crash here must still serve the invalid-link screen, not
+    # a raw 500.
     from app.services.smartlink_parser import parse_smartlink_from_request
-    
-    pub_value, site_value, structure_name = await parse_smartlink_from_request(request, db, redis)
+
+    try:
+        pub_value, site_value, structure_name = await parse_smartlink_from_request(request, db, redis)
+    except Exception:
+        logger.exception("[/click] Smartlink structure parsing crashed — trying legacy params")
+        params = dict(request.query_params)
+        pub_value = params.get("pub") or params.get("tag")
+        site_value = params.get("site") or params.get("sid")
+        structure_name = "Legacy (recovery)"
     
     if not pub_value:
         logger.warning(
@@ -139,6 +150,7 @@ async def track_click(
         from app.services.redirect_pipeline import FALLBACK_URL as _pipeline_fallback
         from fastapi.responses import RedirectResponse
         response = RedirectResponse(url=_pipeline_fallback, status_code=302)
+        ctx = None  # no valid context exists on this path
 
     # Authorization cookie — a signed reference to this click's prelander
     # session (created by stage_authorize_prelander during resolve_redirect).
@@ -152,7 +164,8 @@ async def track_click(
         from app.services import prelander_auth_service as pas
         from app.utils.ip_utils import get_client_ip
 
-        if ctx.prelander_auth_token:
+        # ctx may be None when the pipeline itself failed — nothing to sign.
+        if ctx is not None and getattr(ctx, "prelander_auth_token", None):
             ip = get_client_ip(ctx.headers, ctx.ip or "0.0.0.0")
             reference = pas.session_reference(ctx.prelander_auth_token, ip, ctx.user_agent or "")
             if reference:

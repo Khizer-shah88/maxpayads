@@ -493,52 +493,68 @@ async def get_domain_type(
     """
     from app.services.domain_service import normalize_domain
 
-    h = normalize_domain(host)
-    if h != normalize_domain(request.headers.get("host", "")) or not slug:
-        return await _denied_response(request)
-    if not await get_authorized_session(request, slug, db):
-        return await _denied_response(request)
-    if not h:
-        return {"domain_type": "unknown", "prelander_domain": None, "last_domain": None, "bypass_redirect_url": None}
+    # Hardened: ANY unexpected failure (DB down mid-resolution, corrupt chain
+    # document, malformed slug edge) must answer the browser with a safe JSON
+    # shape rather than a 500 — the /d page treats every non-200 as "stay and
+    # resolve here", so an unhandled error otherwise strands the visitor on a
+    # blank page mid-chain.
+    try:
+        h = normalize_domain(host)
+        if h != normalize_domain(request.headers.get("host", "")) or not slug:
+            return await _denied_response(request)
+        if not await get_authorized_session(request, slug, db):
+            return await _denied_response(request)
+        if not h:
+            return {"domain_type": "unknown", "prelander_domain": None, "last_domain": None, "bypass_redirect_url": None}
 
-    doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
-    domain_type = normalize_domain_type(doc.get("domain_type"), default="unknown") if doc else "unknown"
+        doc = await db.redirection_domains.find_one({"domain": h, "status": "active"})
+        domain_type = normalize_domain_type(doc.get("domain_type"), default="unknown") if doc else "unknown"
 
-    # Is this host positioned INSIDE a chain sequence (Inter or an extra hop)?
-    # A mid-chain host keeps hopping even when it is also registered as a
-    # Prelander domain — the admin's configured sequence wins over the type.
-    in_chain_sequence = await _host_in_chain_sequence(db, h)
+        # Is this host positioned INSIDE a chain sequence (Inter or an extra hop)?
+        # A mid-chain host keeps hopping even when it is also registered as a
+        # Prelander domain — the admin's configured sequence wins over the type.
+        in_chain_sequence = await _host_in_chain_sequence(db, h)
 
-    # ── Bypass detection (spec: Inter dwells 0.75s, then Campaign URL) ────────
-    # Applies to every host that is not the FINAL prelander: Inter, extra
-    # chain hops, and prelander-typed domains positioned mid-chain.
-    bypass_redirect_url = None
-    if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and slug:
-        decoded = _decode_slug(slug)
-        if decoded:
-            target = await _resolve_bypass_destination(
-                db, decoded.get("campaign_id"), decoded.get("offer_id")
-            )
-            if target:
-                from app.services.traffic_router import _clean_campaign_url
-                bypass_redirect_url = _clean_campaign_url(target)
+        # ── Bypass detection (spec: Inter dwells 0.75s, then Campaign URL) ────
+        # Applies to every host that is not the FINAL prelander: Inter, extra
+        # chain hops, and prelander-typed domains positioned mid-chain.
+        bypass_redirect_url = None
+        if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and slug:
+            decoded = _decode_slug(slug)
+            if decoded:
+                target = await _resolve_bypass_destination(
+                    db, decoded.get("campaign_id"), decoded.get("offer_id")
+                )
+                if target:
+                    from app.services.traffic_router import _clean_campaign_url
+                    bypass_redirect_url = _clean_campaign_url(target)
 
-    # ── Next hop (chain-aware) ───────────────────────────────────────────────
-    # Passes the request + slug so an authorized visitor reuses the
-    # SESSION-recorded prelander host (deterministic) instead of re-rolling
-    # the weighted pool (the intermittent about:blank cause).
-    prelander_domain = None
-    if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and not bypass_redirect_url:
-        next_hop = await _resolve_next_hop(db, h, request=request, slug=slug)
-        if next_hop and normalize_domain(next_hop) != h:
-            prelander_domain = next_hop.rstrip("/")
+        # ── Next hop (chain-aware) ───────────────────────────────────────────
+        # Passes the request + slug so an authorized visitor reuses the
+        # SESSION-recorded prelander host (deterministic) instead of re-rolling
+        # the weighted pool (the intermittent about:blank cause).
+        prelander_domain = None
+        if (domain_type != DOMAIN_TYPE_PRELANDER or in_chain_sequence) and not bypass_redirect_url:
+            next_hop = await _resolve_next_hop(db, h, request=request, slug=slug)
+            if next_hop and normalize_domain(next_hop) != h:
+                prelander_domain = next_hop.rstrip("/")
 
-    return {
-        "domain_type": domain_type,
-        "prelander_domain": prelander_domain,
-        "last_domain": prelander_domain,
-        "bypass_redirect_url": bypass_redirect_url,
-    }
+        return {
+            "domain_type": domain_type,
+            "prelander_domain": prelander_domain,
+            "last_domain": prelander_domain,
+            "bypass_redirect_url": bypass_redirect_url,
+        }
+    except Exception:
+        # Never a 500 on the /d hot path: the page can still resolve content
+        # locally (it treats this like "no next hop").
+        logger.exception("[PRELANDER] /domain-type resolution failed — returning safe shape")
+        return {
+            "domain_type": "unknown",
+            "prelander_domain": None,
+            "last_domain": None,
+            "bypass_redirect_url": None,
+        }
 
 
 @router.get("/resolve/{slug}")
@@ -551,6 +567,23 @@ async def resolve_slug(slug: str, request: Request, db=Depends(get_db)):
 
     When the requesting host is a Prelander domain or any other host:
       → Returns prelander data JSON (offer_url, password, os, etc.)
+
+    Guarded wrapper: the /d page fetches this on every mid-chain load, so an
+    unexpected failure (DB outage mid-resolution, corrupt data) must answer
+    with the denied fallback instead of a raw 500 — otherwise the visitor is
+    left on a blank page with no recovery hop. All inner returns keep the
+    original logic; the wrapper only catches what they did not.
+    """
+    try:
+        return await _resolve_slug_impl(slug, request, db)
+    except Exception:
+        logger.exception("[PRELANDER] /resolve failed — serving denied fallback")
+        return await _denied_response(request)
+
+
+async def _resolve_slug_impl(slug: str, request: Request, db):
+    """
+    Original resolve_slug logic — see the guarded public endpoint above.
     """
 
     # NOTE: there is deliberately no server-side view-source check here.
@@ -807,15 +840,21 @@ async def session_check(request: Request, db=Depends(get_db)):
     """Validate the expiring server-side session before the frontend serves content."""
     from app.services import prelander_auth_service as pas
 
-    redis = get_redis_safe()
-    if redis is None:
-        return pas.build_session_unavailable_response(503, as_json=True)
+    # Guarded: the frontend middleware gates the prelander root on this call —
+    # a 500 here becomes a blank page; an error state (403/503) is handled.
+    try:
+        redis = get_redis_safe()
+        if redis is None:
+            return pas.build_session_unavailable_response(503, as_json=True)
 
-    session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
-    from app.services.domain_service import normalize_domain
-    if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
-        return pas.build_session_unavailable_response(as_json=True)
-    return {"authorized": True}
+        session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
+        from app.services.domain_service import normalize_domain
+        if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
+            return pas.build_session_unavailable_response(as_json=True)
+        return {"authorized": True}
+    except Exception:
+        logger.exception("[PRELANDER] /session-check failed — denying")
+        return pas.build_session_unavailable_response(503, as_json=True)
 
 
 @router.get("/claim")
@@ -843,36 +882,42 @@ async def claim_arrival(request: Request):
     if _is_direct_navigation(request):
         return _paste_redirect()
 
-    redis = get_redis_safe()
-    if redis is None:
-        return JSONResponse(status_code=503, content={"ok": False})
-
-    sid = request.cookies.get(pas.PL_SESSION_COOKIE)
-    if not sid:
-        return JSONResponse(status_code=403, content={"ok": False})
-
-    # Session must still be a valid, unexpired browsing session.
-    session = await pas.validate_prelander_session(sid, redis)
-    if session is None:
-        return JSONResponse(status_code=403, content={"ok": False})
-
-    # getdel = atomic read + delete → only the FIRST caller wins.
+    # Guarded: the claim runs before any prelander UI renders — an unexpected
+    # store failure must answer JSON (the page navigates away) not a 500.
     try:
-        claimed = await redis.getdel(_ARRIVAL_KEY.format(sid))
-    except Exception as e:
-        logger.error("[PRELANDER] Arrival claim failed (denying): %s", e)
+        redis = get_redis_safe()
+        if redis is None:
+            return JSONResponse(status_code=503, content={"ok": False})
+
+        sid = request.cookies.get(pas.PL_SESSION_COOKIE)
+        if not sid:
+            return JSONResponse(status_code=403, content={"ok": False})
+
+        # Session must still be a valid, unexpired browsing session.
+        session = await pas.validate_prelander_session(sid, redis)
+        if session is None:
+            return JSONResponse(status_code=403, content={"ok": False})
+
+        # getdel = atomic read + delete → only the FIRST caller wins.
+        try:
+            claimed = await redis.getdel(_ARRIVAL_KEY.format(sid))
+        except Exception as e:
+            logger.error("[PRELANDER] Arrival claim failed (denying): %s", e)
+            return JSONResponse(status_code=503, content={"ok": False})
+
+        if not claimed:
+            logger.info("[SECURITY] Arrival claim rejected (new-tab paste / reused) ip=%s",
+                        request.client.host if request.client else "?")
+            return JSONResponse(
+                status_code=403,
+                content={"ok": False, "reason": "arrival_unavailable"},
+                headers={"Cache-Control": "no-store, private"},
+            )
+
+        return {"ok": True}
+    except Exception:
+        logger.exception("[PRELANDER] /claim failed — denying")
         return JSONResponse(status_code=503, content={"ok": False})
-
-    if not claimed:
-        logger.info("[SECURITY] Arrival claim rejected (new-tab paste / reused) ip=%s",
-                    request.client.host if request.client else "?")
-        return JSONResponse(
-            status_code=403,
-            content={"ok": False, "reason": "arrival_unavailable"},
-            headers={"Cache-Control": "no-store, private"},
-        )
-
-    return {"ok": True}
 
 
 @router.get("/data")
@@ -894,7 +939,12 @@ async def get_prelander_data_legacy(
         return _paste_redirect()
     if not await _request_is_authorized(request, "", db):
         return await _denied_response(request)
-    return await _get_prelander_data(request, os, db)
+    # Guarded for the same reason as /resolve: a data failure must deny, not 500.
+    try:
+        return await _get_prelander_data(request, os, db)
+    except Exception:
+        logger.exception("[PRELANDER] /data failed — serving denied fallback")
+        return await _denied_response(request)
 
 
 @router.get("/preview")
@@ -911,12 +961,20 @@ async def preview_prelander(
 
     Usage: Visit any prelander domain at /api/prelander/preview?os=windows
     """
-    return await _get_prelander_data(
-        request,
-        os,
-        db,
-        skip_auth=True
-    )
+    # Guarded: an admin previewing a broken template gets an error JSON, not a 500.
+    try:
+        return await _get_prelander_data(
+            request,
+            os,
+            db,
+            skip_auth=True
+        )
+    except Exception:
+        logger.exception("[PRELANDER] /preview failed")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "Preview failed"},
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -948,50 +1006,56 @@ async def mint_handoff_token(
     from app.services import prelander_auth_service as pas
     from app.services.domain_service import normalize_domain
 
-    session = await get_authorized_session(request, slug, db)
-    if not session or session is True:
+    # Guarded: a mid-chain DB/Redis hiccup must deny (recoverable hop) rather
+    # than 500 (stranded visitor on the Inter page).
+    try:
+        session = await get_authorized_session(request, slug, db)
+        if not session or session is True:
+            return await _denied_response(request)
+
+        redis = get_redis_safe()
+        if redis is None:
+            return await _denied_response(request)
+
+        # STEP 15 — per-IP limiter on the token-minting surface.
+        from app.utils.ip_utils import get_client_ip
+        ip = get_client_ip(dict(request.headers), request.client.host if request.client else "0.0.0.0")
+        if not await pas.check_auth_rate_limit(ip, redis):
+            return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+
+        # STEP 14 — open-redirect protection: the handoff target is resolved
+        # SERVER-SIDE from the click-time session (the host route_click selected).
+        # ?target_host=attacker.com can never mint a usable handoff — a mismatch
+        # with the recorded host denies. resolve_handoff_target returns None (deny)
+        # when the browser asks for anything the click was not routed to.
+        host = pas.resolve_handoff_target(session, normalize_domain(target_host or ""))
+        if host is None:
+            # The browser asked for a host the click was NOT routed to — usually a
+            # STALE weighted pick from an old /domain-type response (the pool
+            # re-roll raced the session recording). Never mint for the wrong
+            # domain — instead REDIRECT the visitor to the session-recorded host
+            # (the one the click was actually authorized for), carrying the same
+            # slug. The Inter page follows it and mints there. This turns a
+            # pool-pick mismatch from a dead-end into a self-healing hop, without
+            # ever minting for an unauthorized destination.
+            recorded = normalize_domain(getattr(session, "prelander_host", "") or "")
+            if recorded and slug:
+                hop_to = f"https://{recorded}/d/{slug}"
+                logger.info(
+                    "[PRELANDER] Handoff target mismatch (asked=%s) → redirecting to the session-recorded host %s",
+                    normalize_domain(target_host or ""), recorded,
+                )
+                return RedirectResponse(url=hop_to, status_code=302, headers={"Referrer-Policy": "no-referrer"})
+            return await _denied_response(request)
+
+        handoff = await pas.mint_handoff(session, redis, target_host=host)
+        if not handoff:
+            return await _denied_response(request)
+
+        return {"success": True, "handoff": handoff}
+    except Exception:
+        logger.exception("[PRELANDER] /handoff failed — serving denied fallback")
         return await _denied_response(request)
-
-    redis = get_redis_safe()
-    if redis is None:
-        return await _denied_response(request)
-
-    # STEP 15 — per-IP limiter on the token-minting surface.
-    from app.utils.ip_utils import get_client_ip
-    ip = get_client_ip(dict(request.headers), request.client.host if request.client else "0.0.0.0")
-    if not await pas.check_auth_rate_limit(ip, redis):
-        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
-
-    # STEP 14 — open-redirect protection: the handoff target is resolved
-    # SERVER-SIDE from the click-time session (the host route_click selected).
-    # ?target_host=attacker.com can never mint a usable handoff — a mismatch
-    # with the recorded host denies. resolve_handoff_target returns None (deny)
-    # when the browser asks for anything the click was not routed to.
-    host = pas.resolve_handoff_target(session, normalize_domain(target_host or ""))
-    if host is None:
-        # The browser asked for a host the click was NOT routed to — usually a
-        # STALE weighted pick from an old /domain-type response (the pool
-        # re-roll raced the session recording). Never mint for the wrong
-        # domain — instead REDIRECT the visitor to the session-recorded host
-        # (the one the click was actually authorized for), carrying the same
-        # slug. The Inter page follows it and mints there. This turns a
-        # pool-pick mismatch from a dead-end into a self-healing hop, without
-        # ever minting for an unauthorized destination.
-        recorded = normalize_domain(getattr(session, "prelander_host", "") or "")
-        if recorded and slug:
-            hop_to = f"https://{recorded}/d/{slug}"
-            logger.info(
-                "[PRELANDER] Handoff target mismatch (asked=%s) → redirecting to the session-recorded host %s",
-                normalize_domain(target_host or ""), recorded,
-            )
-            return RedirectResponse(url=hop_to, status_code=302, headers={"Referrer-Policy": "no-referrer"})
-        return await _denied_response(request)
-
-    handoff = await pas.mint_handoff(session, redis, target_host=host)
-    if not handoff:
-        return await _denied_response(request)
-
-    return {"success": True, "handoff": handoff}
 
 
 # NOTE: a second dead `@router.get("/claim")` (claim_tab_access) also lived here
@@ -1025,56 +1089,62 @@ async def prelander_bootstrap(
     from app.services.domain_service import normalize_domain
     from fastapi.responses import RedirectResponse
 
-    redis = get_redis_safe()
-    if redis is None:
+    # Guarded: the exchange is the visitor's one entry into the prelander —
+    # an unexpected store failure must deny (recoverable) rather than 500.
+    try:
+        redis = get_redis_safe()
+        if redis is None:
+            return await _denied_response(request)
+
+        headers = dict(request.headers)
+        from app.utils.ip_utils import get_client_ip
+        ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+        user_agent = headers.get("user-agent", "")
+        request_host = normalize_domain(headers.get("host", ""))
+
+        # STEP 15 — per-IP limiter on the token-exchange surface (brute-force
+        # guard; the 256-bit token is the real defense, this is defense in depth).
+        if not await pas.check_auth_rate_limit(ip, redis):
+            return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+
+        session = await pas.consume_handoff(
+            handoff_token, redis,
+            requesting_host=request_host,
+            ip=ip, user_agent=user_agent,
+        )
+        if session is None:
+            logger.info("[PRELANDER-AUTH] Handoff exchange rejected (token consumed or invalid)")
+            # For _auth endpoint, always return proper 403 response, never redirect
+            return await _denied_response(request)
+
+        # Establish the prelander-domain browsing session (STEP 7 part B).
+        pl_session_id = await pas.establish_prelander_session(session, redis)
+        if not pl_session_id:
+            return await _denied_response(request)
+
+        # The redirect flow is complete: the tab that follows this 302 to "/" may
+        # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
+        # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
+        await _mark_arrival(redis, pl_session_id)
+
+        # CLEAN FINAL URL (spec): the visible prelander URL must be
+        # https://prelander-domain.com/ — no slug, no ids, no routing info, at
+        # every stage including this redirect. The slug param is legacy and
+        # IGNORED: the session's slug binding already pins the route server-side,
+        # so the clean root is the destination whether or not a slug was passed.
+        dest = "/"
+        response = RedirectResponse(url=dest, status_code=302)
+        response.set_cookie(
+            key=pas.PL_SESSION_COOKIE,
+            value=pl_session_id,
+            max_age=max(session.expires_at - int(time.time()), 0),
+            **pas.cookie_flags(),
+        )
+        logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
+        return response
+    except Exception:
+        logger.exception("[PRELANDER] /_auth exchange failed — serving denied fallback")
         return await _denied_response(request)
-
-    headers = dict(request.headers)
-    from app.utils.ip_utils import get_client_ip
-    ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
-    user_agent = headers.get("user-agent", "")
-    request_host = normalize_domain(headers.get("host", ""))
-
-    # STEP 15 — per-IP limiter on the token-exchange surface (brute-force
-    # guard; the 256-bit token is the real defense, this is defense in depth).
-    if not await pas.check_auth_rate_limit(ip, redis):
-        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
-
-    session = await pas.consume_handoff(
-        handoff_token, redis,
-        requesting_host=request_host,
-        ip=ip, user_agent=user_agent,
-    )
-    if session is None:
-        logger.info("[PRELANDER-AUTH] Handoff exchange rejected (token consumed or invalid)")
-        # For _auth endpoint, always return proper 403 response, never redirect
-        return await _denied_response(request)
-
-    # Establish the prelander-domain browsing session (STEP 7 part B).
-    pl_session_id = await pas.establish_prelander_session(session, redis)
-    if not pl_session_id:
-        return await _denied_response(request)
-
-    # The redirect flow is complete: the tab that follows this 302 to "/" may
-    # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
-    # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
-    await _mark_arrival(redis, pl_session_id)
-
-    # CLEAN FINAL URL (spec): the visible prelander URL must be
-    # https://prelander-domain.com/ — no slug, no ids, no routing info, at
-    # every stage including this redirect. The slug param is legacy and
-    # IGNORED: the session's slug binding already pins the route server-side,
-    # so the clean root is the destination whether or not a slug was passed.
-    dest = "/"
-    response = RedirectResponse(url=dest, status_code=302)
-    response.set_cookie(
-        key=pas.PL_SESSION_COOKIE,
-        value=pl_session_id,
-        max_age=max(session.expires_at - int(time.time()), 0),
-        **pas.cookie_flags(),
-    )
-    logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
-    return response
 
 
 async def _get_prelander_data(

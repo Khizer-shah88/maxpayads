@@ -93,7 +93,15 @@ BOT_UA_KEYWORDS = [
 ]
 
 # Rate limits
-MAX_CLICKS_PER_IP_PER_MINUTE: int = 10
+# NOTE on MAX_CLICKS_PER_IP_PER_MINUTE: carrier CGNAT places thousands of
+# REAL visitors behind a single shared IP (common in the mobile-heavy
+# geos this network serves). A hard BLOCK at 10/min meant an entire carrier
+# IP was locked out after the first 10 clicks from any of its users — every
+# later visitor was dumped on the fallback URL, which publishers report as
+# the site "crashing". 60/min still stops click-bombing outright, while the
+# per-IP+website per-day duplicate check (a soft FLAG that keeps routing the
+# visitor) remains the precise duplicate detector.
+MAX_CLICKS_PER_IP_PER_MINUTE: int = 60
 MAX_REQUESTS_PER_IP_PER_MINUTE: int = 200
 DUPLICATE_CLICK_WINDOW_SECONDS: int = 86400  # 24 hours
 

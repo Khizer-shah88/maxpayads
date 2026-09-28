@@ -91,23 +91,42 @@ async def resolve_publisher_id(db, identifier: str) -> Optional[str]:
     - MongoDB ObjectId string
     - Public ID (8-character hash without prefix)
     - Legacy Public ID (PUB_XXXXXXXX) for backward compatibility
-    
+
     Returns internal _id string or None if not found.
+
+    CRITICAL: issued Smartlinks carry the PUB_ PREFIX (admin UI, seeds, the
+    documented `?pub=PUB_ID` format — e.g. `PUB_8d2n5Uwt`), while the stored
+    public_id is the bare 8-character random part (PUB_PREFIX is ""). A
+    link with the prefix therefore does NOT match the stored value directly:
+    the resolver MUST try the prefixed value AND the prefix-stripped value,
+    otherwise every prefixed Smartlink resolves to None → the click is
+    attributed to no publisher and the visitor is dumped on the fallback
+    URL — the anchor-link "crash".
     """
     from bson import ObjectId
-    
-    # Try public_id lookup first (new format - no prefix)
-    if len(identifier) == 8 and identifier.isalnum():
-        publisher = await db.publishers.find_one({"public_id": identifier})
-        if publisher:
-            return str(publisher["_id"])
-    
-    # Backward compatibility: Try legacy PUB_ format
+
+    if not identifier:
+        return None
+
+    # All spellings this identifier can appear as, in lookup order. The
+    # prefix-stripped variant comes from links issued as "PUB_xxxxxxxx".
+    candidates = [identifier]
+    if identifier.startswith("PUB_"):
+        candidates.append(identifier[len("PUB_"):])
+
+    # Try public_id lookup first (new format - no prefix, and legacy prefixed)
+    for public_id in candidates:
+        if len(public_id) == 8 and public_id.isalnum():
+            publisher = await db.publishers.find_one({"public_id": public_id})
+            if publisher:
+                return str(publisher["_id"])
+
+    # Backward compatibility: Try legacy PUB_ format as stored
     if identifier.startswith("PUB_"):
         publisher = await db.publishers.find_one({"public_id": identifier})
         if publisher:
             return str(publisher["_id"])
-    
+
     # Fallback: Try as MongoDB ObjectId (backward compatibility)
     try:
         publisher = await db.publishers.find_one({"_id": ObjectId(identifier)})
@@ -115,12 +134,12 @@ async def resolve_publisher_id(db, identifier: str) -> Optional[str]:
             return str(publisher["_id"])
     except Exception:
         pass
-    
+
     # Last resort: Try as string _id (some legacy records may use string IDs)
     publisher = await db.publishers.find_one({"_id": identifier})
     if publisher:
         return str(publisher["_id"])
-    
+
     return None
 
 

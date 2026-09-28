@@ -28,17 +28,24 @@ export default function PrelanderSlugPage() {
   const [returning, setReturning] = useState(false)
   const startedHop = useRef('')
 
+  const startedFlow = useRef(false)
   useEffect(() => {
-    (async () => {
+    // Run the resolution flow EXACTLY ONCE per mount. A previous version had
+    // `denied` in the dependency array, which re-ran the whole effect after a
+    // denial — re-fetching /domain-type and the hop endpoints for a visitor
+    // who had already been navigated away (request loops under load).
+    if (startedFlow.current) return
+    startedFlow.current = true
+    void (async () => {
       // Avoid repeating a request after the server has denied this load.
       if (denied) {
         return;
       }
 
-      if (!slug) { 
+      if (!slug) {
         setDenied(true)
         setLoading(false)
-        return 
+        return
       }
 
       const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
@@ -196,7 +203,7 @@ export default function PrelanderSlugPage() {
         setLoading(false)
       }
     })();
-  }, [slug, denied])
+  }, [slug])
 
   useEffect(() => {
     document.title = transitioning ? 'Redirecting…' : 'Download Ready'
@@ -240,9 +247,16 @@ function FullHtmlPrelander({ html }: { html: string }) {
   useEffect(() => {
     // Replace the whole document so <!DOCTYPE html>, <head> styles and the
     // template's scripts behave exactly as the admin authored them.
-    document.open()
-    document.write(html)
-    document.close()
+    // Guarded: if document.open/write throws (rare parser/aborted-pipeline
+    // cases), the visitor still has a rendered page instead of a destroyed
+    // blank document — the historical "site crash" symptom.
+    try {
+      document.open()
+      document.write(html)
+      document.close()
+    } catch (error) {
+      console.error('[PRELANDER] Full HTML render failed:', error)
+    }
   }, [html])
   return null
 }

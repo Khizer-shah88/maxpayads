@@ -31,9 +31,15 @@ async def cached_json(redis, key: str, ttl: int, loader):
       not stampede the database.
     - Any Redis error falls through to the loader — caching never breaks or
       slows a request beyond one failed GET.
+    - A handle without get/setex (None, or an object that is not a redis
+      client) also falls through — the hot path must degrade to the DB
+      lookup, never raise AttributeError into a 500.
     - Callers namespace their own keys; shared keys live above.
     """
     if redis is None or not settings.CLICK_HOT_CACHE:
+        return await loader()
+    if not (hasattr(redis, "get") and hasattr(redis, "setex")):
+        # Defensive: not a usable redis client — run the loader directly.
         return await loader()
     try:
         raw = await redis.get(key)
