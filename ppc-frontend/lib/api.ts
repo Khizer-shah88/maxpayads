@@ -23,7 +23,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
+    // Login failures belong to the form; reloading it hides the error and
+    // discards the email the user just entered.
+    if (error.response?.status === 401 && error.config?.url !== '/auth/login' && typeof window !== 'undefined') {
       const isAdminRoute =
         typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
       if (isAdminRoute) {

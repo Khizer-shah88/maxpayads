@@ -6,7 +6,7 @@
  *     only visitors who arrive from an allowed referrer (or already hold a valid
  *     session cookie) can see it.  Everyone else is redirected to the configured
  *     fallback URL.
- *  2. Admin route protection          — requires admin_token + admin_user cookies.
+ *  2. Admin route protection          — validates admin_token with the API.
  *  3. Publisher route protection      — requires publisher_token + publisher_user
  *     cookies; enforces account status.
  *
@@ -283,21 +283,58 @@ export async function middleware(request: NextRequest) {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // 2.  EXISTING AUTH MIDDLEWARE (unchanged behaviour)
+  // 2.  PORTAL AUTHENTICATION
   // ════════════════════════════════════════════════════════════════════════════
 
-  const PUBLIC_PATHS = ['/', '/admin/auth', '/publisher/auth', '/publisher/pending'];
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    const isLogin = ['/admin/auth', '/admin/login', '/admin/a7b9c2d4e8f1g3h5'].includes(pathname);
+    const adminToken = request.cookies.get('admin_token')?.value;
+    let authenticated = false;
+
+    // Cookie metadata is only for display. Use the backend's current user
+    // and role for both login-page redirects and protected-page access.
+    if (adminToken) {
+      try {
+        const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+        const session = await fetch(`${backendUrl}/auth/me`, {
+          headers: {
+            host: request.headers.get('host') || host,
+            authorization: `Bearer ${adminToken}`,
+          },
+          cache: 'no-store',
+          redirect: 'manual',
+        });
+        if (session.ok) {
+          const data = await session.json();
+          authenticated = data.user?.role === 'admin';
+        } else if (session.status !== 401 && session.status !== 403) {
+          throw new Error('Session service unavailable');
+        }
+      } catch {
+        // Preserve the session during outages instead of turning a temporary
+        // backend failure into a logout or a redirect loop.
+        return new NextResponse('Unable to verify your session. Please reload to try again.', {
+          status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '5' },
+        });
+      }
+    }
+
+    const response = authenticated
+      ? (isLogin ? NextResponse.redirect(new URL('/admin/dashboard', request.url)) : NextResponse.next())
+      : (isLogin ? NextResponse.next() : NextResponse.redirect(new URL('/admin/auth', request.url)));
+    if (!authenticated) {
+      for (const name of ['admin_token', 'admin_refresh_token', 'admin_user']) {
+        response.cookies.delete(name);
+      }
+    }
+    response.headers.set('Cache-Control', 'no-store, private');
+    return response.headers.has('location') ? response : addSecurityHeaders(response, pathname);
+  }
+
+  const PUBLIC_PATHS = ['/', '/publisher/auth', '/publisher/pending'];
 
   // Allow public pages without any further checks
   if (PUBLIC_PATHS.includes(pathname)) {
-    // Already-logged-in admin hitting /admin/auth → dashboard
-    if (pathname === '/admin/auth') {
-      const adminToken = request.cookies.get('admin_token')?.value;
-      const adminUserCookie = request.cookies.get('admin_user')?.value;
-      if (adminToken && adminUserCookie) {
-        return NextResponse.redirect(new URL('/admin/dashboard', request.url));
-      }
-    }
     // Already-logged-in publisher hitting /publisher/auth → appropriate page
     if (pathname === '/publisher/auth') {
       const publisherToken = request.cookies.get('publisher_token')?.value;
@@ -330,27 +367,6 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/publisher/auth', request.url));
       }
     }
-    return addSecurityHeaders(NextResponse.next(), pathname);
-  }
-
-  // ── Protect /admin/* routes ────────────────────────────────────────────────
-  if (pathname.startsWith('/admin')) {
-    const adminToken = request.cookies.get('admin_token')?.value;
-    const adminUserCookie = request.cookies.get('admin_user')?.value;
-
-    if (!adminToken || !adminUserCookie) {
-      return NextResponse.redirect(new URL('/admin/auth', request.url));
-    }
-
-    try {
-      const adminUser = JSON.parse(adminUserCookie);
-      if (adminUser?.role !== 'admin') {
-        return NextResponse.redirect(new URL('/admin/auth', request.url));
-      }
-    } catch {
-      return NextResponse.redirect(new URL('/admin/auth', request.url));
-    }
-
     return addSecurityHeaders(NextResponse.next(), pathname);
   }
 
