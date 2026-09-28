@@ -14,7 +14,7 @@ from app.services.smartlink_parser import generate_smartlink_with_structure
 from app.utils import public_id_utils
 
 
-PUB = "PUB_TEST1234"
+PUB = "TEST1234"
 SITE = "SITE_TEST1234"
 
 
