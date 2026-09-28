@@ -107,8 +107,9 @@ class Settings(BaseSettings):
     SMARTLINK_HASH_REQUIRED: bool = False
     # Redirect pipeline tracing — store each click's stage-by-stage resolution
     # trace on the click document so a redirect can be explained after the fact.
-    # Turn off to keep click documents minimal on very high volume.
-    REDIRECT_TRACE_ENABLED: bool = True
+    # Disabled by default in production to keep click documents small and avoid
+    # the extra MongoDB update on every click. Enable for debugging only.
+    REDIRECT_TRACE_ENABLED: bool = False
 
     # Hot-path Redis cache (app/cache/kv_cache.py). Caches the otherwise
     # repeated per-click lookups (smartlink structures, publisher/website ids,

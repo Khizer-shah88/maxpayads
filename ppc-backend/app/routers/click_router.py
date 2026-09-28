@@ -113,9 +113,8 @@ async def track_click(
     
     if not pub_value:
         logger.warning(
-            "[/click] No valid smartlink parameters found ip=%s params=%s",
+            "[/click] No valid smartlink parameters ip=%s",
             request.client.host if request.client else "unknown",
-            dict(request.query_params),
         )
         return _invalid_link_response()
     

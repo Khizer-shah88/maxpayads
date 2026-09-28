@@ -69,9 +69,11 @@ async def parse_smartlink_from_request(
             if include_site and site_param and site_param in query_params:
                 site_value = query_params[site_param]
             
-            logger.info(
-                f"[Smartlink Parser] Matched structure '{struct.get('name', 'Unknown')}' "
-                f"({pub_param}={pub_value}, {site_param}={site_value or 'N/A'})"
+            # Use debug level — info is flushed to disk on every /click request
+            logger.debug(
+                "[Smartlink Parser] Matched structure '%s' (%s=%s, %s=%s)",
+                struct.get("name", "Unknown"), pub_param, pub_value,
+                site_param, site_value or "N/A",
             )
             
             return pub_value, site_value, struct.get("name", "Unknown")
@@ -82,8 +84,9 @@ async def parse_smartlink_from_request(
     legacy_site = query_params.get("site")
     
     if legacy_pub:
-        logger.info(
-            f"[Smartlink Parser] Using legacy fallback (pub={legacy_pub}, site={legacy_site or 'N/A'})"
+        logger.debug(
+            "[Smartlink Parser] Using legacy fallback (pub=%s, site=%s)",
+            legacy_pub, legacy_site or "N/A",
         )
         return legacy_pub, legacy_site, "Legacy (hardcoded)"
     

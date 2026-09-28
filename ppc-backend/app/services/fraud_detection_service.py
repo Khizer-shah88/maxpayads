@@ -346,75 +346,46 @@ async def classify_traffic(
 ) -> Dict[str, Any]:
     """
     Comprehensive traffic classification.
-    
-    Returns dict with:
-    - classification: valid|duplicate|bot|suspicious|invalid
-    - fraud_score: 0-100
-    - reasons: list of reasons for classification
-    - signals: dict of detected signals
-    - should_reject: boolean recommendation
+
+    Kept lean for the /click hot path — only checks that need to run
+    synchronously are here. IP abuse rate-limits and duplicate DB lookups are
+    intentionally skipped: they were causing 2-3 extra Redis/DB round-trips on
+    every single click, which saturated the connection pools and caused crashes.
+    The stage_screen_traffic pipeline stage already handles rate-limiting and
+    per-publisher duplicate detection via Redis before this runs.
     """
     score = FraudScore()
-    
-    # Extract request data
-    ip_address = request_data.get("ip_address", "")
-    user_agent = request_data.get("user_agent", "")
-    headers = request_data.get("headers", {})
-    publisher_id = request_data.get("publisher_id", "")
-    campaign_id = request_data.get("campaign_id")
-    referer = request_data.get("referer", "")
-    
-    # 1. Check for duplicate click (weight: 20)
-    is_duplicate, original_click_id = await check_duplicate_click(
-        db, ip_address, publisher_id, campaign_id
-    )
-    
-    if is_duplicate:
-        score.add_signal("duplicate", 20, f"Duplicate of click {original_click_id}")
-    
-    # 2. User agent analysis (weight: 15)
+
+    ip_address   = request_data.get("ip_address", "")
+    user_agent   = request_data.get("user_agent", "")
+    headers      = request_data.get("headers", {})
+
+    # 1. User agent analysis (weight: 15)
     is_bot_ua, bot_reason = detect_bot_user_agent(user_agent)
     if is_bot_ua:
-        # Known crawlers get lower weight (they're legitimate)
         if any(crawler in user_agent.lower() for crawler in KNOWN_CRAWLERS):
             score.add_signal("known_crawler", 10, bot_reason)
         else:
             score.add_signal("bot_ua", 15, bot_reason)
-    
-    # 3. User agent structure analysis (weight: 10)
+
+    # 2. User agent structure analysis (weight: 10)
     is_suspicious_ua, ua_reason = analyze_user_agent_structure(user_agent)
     if is_suspicious_ua:
         score.add_signal("suspicious_ua", 10, ua_reason)
-    
-    # 4. Headless/automation signals (weight: 25)
+
+    # 3. Headless/automation signals (weight: 25)
     has_headless, headless_signals = detect_headless_signals(headers, user_agent)
     if has_headless:
         score.add_signal("headless", 25, f"Headless signals: {', '.join(headless_signals)}")
-    
-    # 5. IP abuse detection (weight: 30)
-    is_ip_abuse, ip_reasons = await check_ip_abuse(db, redis, ip_address)
-    if is_ip_abuse:
-        score.add_signal("ip_abuse", 30, f"IP abuse: {'; '.join(ip_reasons)}")
-    
-    # 6. Missing referer — NOT scored. This platform's own redirect chain
-    # sends Referrer-Policy: no-referrer on every hop BY DESIGN, so the
-    # overwhelming majority of legitimate clicks arrive with no Referer.
-    # Scoring it (weight 5) on top of any other minor signal tipped real
-    # visitors into the "duplicate"/"suspicious" buckets, marking their
-    # clicks invalid across every publisher they visited.
-    _ = referer  # kept for signature compatibility / future signal use
 
-    # 7. Empty user agent (weight: 15)
+    # 4. Empty user agent (weight: 15)
     if not user_agent:
         score.add_signal("no_ua", 15, "Empty user agent")
-    
+
     result = score.to_dict()
-    
-    # Add recommendation
     classification = result["classification"]
     result["should_reject"] = classification in [TRAFFIC_INVALID, TRAFFIC_BOT]
-    result["should_flag"] = classification in [TRAFFIC_SUSPICIOUS, TRAFFIC_DUPLICATE]
-    
+    result["should_flag"]   = classification in [TRAFFIC_SUSPICIOUS, TRAFFIC_DUPLICATE]
     return result
 
 
@@ -426,33 +397,26 @@ async def log_security_event(
     metadata: Optional[Dict[str, Any]] = None,
 ):
     """
-    Log security event for audit trail.
-    
-    Severity: info, warning, error, critical
+    Log security event for audit trail — fire-and-forget, never blocks the
+    /click response. Errors are swallowed so a logging failure cannot slow
+    or crash the hot path.
     """
-    event = {
-        "event_type": event_type,
-        "severity": severity,
-        "description": description,
-        "metadata": metadata or {},
-        "created_at": datetime.utcnow(),
-    }
-    
-    try:
-        await db.security_audit_log.insert_one(event)
-        
-        # Also log to application logger
-        log_level = {
-            "info": logging.INFO,
-            "warning": logging.WARNING,
-            "error": logging.ERROR,
-            "critical": logging.CRITICAL,
-        }.get(severity, logging.INFO)
-        
-        logger.log(log_level, f"Security event: {event_type} - {description}")
-        
-    except Exception as e:
-        logger.error(f"Failed to log security event: {e}")
+    import asyncio
+
+    async def _write():
+        try:
+            await db.security_audit_log.insert_one({
+                "event_type": event_type,
+                "severity": severity,
+                "description": description,
+                "metadata": metadata or {},
+                "created_at": datetime.utcnow(),
+            })
+        except Exception:
+            pass  # audit log failure must never surface to the visitor
+
+    # Schedule the write as a background task — do not await it.
+    asyncio.ensure_future(_write())
 
 
 def validate_redirect_url(url: str, allowed_domains: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:

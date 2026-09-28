@@ -13,17 +13,23 @@ def _init_db_handles():
     global client, db
 
     if client is None or db is None:
+        # Production floors: 16 workers × ~20 concurrent coroutines each.
+        # Settings values are per-process; override config defaults upward.
+        pool_size = max(settings.MONGO_MAX_POOL_SIZE, 300)
+        min_pool  = max(settings.MONGO_MIN_POOL_SIZE, 20)
+        wait_ms   = max(settings.MONGO_WAIT_QUEUE_TIMEOUT_MS, 10000)
         client = AsyncIOMotorClient(
             settings.MONGODB_URL,
-            maxPoolSize=settings.MONGO_MAX_POOL_SIZE,
-            minPoolSize=settings.MONGO_MIN_POOL_SIZE,
-            maxIdleTimeMS=120000,    # 2 min idle before closing
-            waitQueueTimeoutMS=settings.MONGO_WAIT_QUEUE_TIMEOUT_MS,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            socketTimeoutMS=15000,
+            maxPoolSize=pool_size,
+            minPoolSize=min_pool,
+            maxIdleTimeMS=120000,
+            waitQueueTimeoutMS=wait_ms,
+            serverSelectionTimeoutMS=15000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=45000,
             retryWrites=True,
             heartbeatFrequencyMS=20000,
+            compressors=["zlib"],
         )
         db = client[settings.DB_NAME]
 
@@ -80,6 +86,9 @@ async def create_indexes():
     await db.clicks.create_index([("ip_address", ASCENDING), ("timestamp", DESCENDING)])
     await db.clicks.create_index([("country_code", ASCENDING), ("timestamp", DESCENDING)])
     await db.clicks.create_index([("os", ASCENDING), ("timestamp", DESCENDING)])
+    # Fingerprint index — used by fraud_detection_service.check_duplicate_click
+    # Without this, every click causes a full collection scan on the clicks table.
+    await db.clicks.create_index([("fingerprint", ASCENDING), ("timestamp", DESCENDING)])
     # Duplicate-click check (fraud_detection_service.check_duplicate_click):
     # without this compound index every /click full-scanned the collection.
     await db.clicks.create_index([("fingerprint", ASCENDING), ("timestamp", DESCENDING)])
