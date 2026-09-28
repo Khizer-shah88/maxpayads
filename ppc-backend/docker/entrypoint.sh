@@ -73,7 +73,9 @@ echo "--- Starting FastAPI ---"
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
-    --workers 16 \
+    --workers "${WEB_CONCURRENCY:-6}" \
+    --proxy-headers \
+    --forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}" \
     --log-level warning \
     --no-access-log \
     --backlog 4096 \

@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 from fastapi import status
+from starlette.datastructures import MutableHeaders
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,77 @@ _STATIC_PREFIXES = ("/_next/static/", "/uploads/")
 # Auth paths for audit logging
 _AUTH_PATH_PART = "/auth/"
 _ADMIN_PATH_PART = "/admin/"
+
+
+class SecurityMiddleware:
+    """The production security policy in one streaming ASGI layer.
+
+    Keep the older individual classes below for integrations/tests. Production
+    no longer creates five BaseHTTPMiddleware task groups for every request.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        request = Request(scope)
+        path = scope['path']
+        request_id = str(uuid.uuid4())
+        request.state.request_id = request_id
+        is_https = scope.get('scheme') == 'https'
+
+        async def secure_send(message):
+            if message['type'] == 'http.response.start':
+                # Work on raw headers so duplicate Set-Cookie values survive.
+                hardened = []
+                for name, value in message.get('headers', []):
+                    if name.lower() == b'set-cookie':
+                        lower = value.lower()
+                        if b'httponly' not in lower and not value.startswith(b'mpa_tab_ok='):
+                            value += b'; HttpOnly'
+                        if b'samesite=' not in lower:
+                            value += b'; SameSite=Lax'
+                        if is_https and b'; secure' not in lower:
+                            value += b'; Secure'
+                    hardened.append((name, value))
+                message['headers'] = hardened
+                headers = MutableHeaders(scope=message)
+                for name, value in _STATIC_HEADERS.items():
+                    headers[name] = value
+                if is_https:
+                    headers['Strict-Transport-Security'] = _HSTS
+                headers['X-Request-ID'] = request_id
+                if _AUTH_PATH_PART in path and message['status'] in (401, 403):
+                    logger.warning('Failed auth: %s %s status=%d', scope['method'], path, message['status'])
+                elif _ADMIN_PATH_PART in path and scope['method'] in ('POST', 'PUT', 'PATCH', 'DELETE'):
+                    logger.info('Admin op: %s %s status=%d', scope['method'], path, message['status'])
+            await send(message)
+
+        response = None
+        if not path.startswith(_STATIC_PREFIXES):
+            if _PATH_TRAVERSAL.search(path) or _SQL_PATTERN.search(request.url.query):
+                response = JSONResponse({'detail': 'Invalid request'}, status_code=400)
+            content_length = request.headers.get('content-length')
+            if content_length:
+                try:
+                    length = int(content_length)
+                    if length < 0:
+                        raise ValueError()
+                    if length > 10 * 1024 * 1024:
+                        response = JSONResponse({'detail': 'Request too large'}, status_code=413)
+                except ValueError:
+                    response = JSONResponse({'detail': 'Invalid content length'}, status_code=400)
+        session_id = request.cookies.get('session_id')
+        if path not in _SKIP_PATHS and session_id and (len(session_id) < 32 or not session_id.isalnum()):
+            response = JSONResponse({'detail': 'Invalid session'}, status_code=401)
+            response.delete_cookie('session_id')
+        api_key = request.headers.get('x-api-key')
+        if api_key and len(api_key) < 32:
+            response = JSONResponse({'detail': 'Invalid API key'}, status_code=401)
+        if response is not None:
+            return await response(scope, receive, secure_send)
+        await self.app(scope, receive, secure_send)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

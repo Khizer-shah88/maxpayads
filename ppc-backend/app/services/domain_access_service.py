@@ -1,5 +1,6 @@
 """One hostname, one role. Shared by the API and the Next.js entry gate."""
 import re
+from functools import lru_cache
 
 from app.config import settings
 from app.core.glossary import normalize_domain_type
@@ -7,7 +8,12 @@ from app.services.domain_service import normalize_domain
 
 
 def portal_hosts():
-    return {normalize_domain(h) for h in settings.PORTAL_HOSTNAMES.split(',') if h.strip()}
+    return _portal_hosts(settings.PORTAL_HOSTNAMES)
+
+
+@lru_cache(maxsize=8)
+def _portal_hosts(value):
+    return frozenset(normalize_domain(h) for h in value.split(',') if h.strip())
 
 
 def stored_host_spellings(host):

@@ -6,6 +6,7 @@ from app.core.exceptions import ConflictError, UnauthorizedError
 from app.dependencies import get_db, get_redis_client, get_current_user
 from bson import ObjectId
 from datetime import datetime
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -50,7 +51,7 @@ async def login(data: LoginRequest, db=Depends(get_db)):
     if not publisher:
         raise UnauthorizedError("Invalid email or password")
 
-    if not verify_password(data.password, publisher.get("password_hash", "")):
+    if not await run_in_threadpool(verify_password, data.password, publisher.get("password_hash", "")):
         raise UnauthorizedError("Invalid email or password")
 
     token_data = {"sub": publisher["id"], "role": publisher.get("role", "publisher")}

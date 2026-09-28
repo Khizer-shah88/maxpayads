@@ -1,11 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Max Pay Ads — Production Docker Compose
-# Target: 9 slices ≈ 9 vCPU / 18GB RAM — tuned for 4000-5000+ req/s
+# Starting budget for 9 vCPU / 18GB RAM. Capacity must be load-tested.
 # ─────────────────────────────────────────────────────────────────────────────
+
+x-runtime: &runtime
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   # ── MongoDB ──────────────────────────────────────────────────────────────────
   mongodb:
+    <<: *runtime
     image: mongo:7.0
     container_name: ppc_mongodb
     volumes:
@@ -13,7 +25,7 @@ services:
       - mongodb_backup:/backup
     command: >
       mongod
-      --wiredTigerCacheSizeGB 5
+      --wiredTigerCacheSizeGB 3
       --maxConns 1000
       --quiet
       --setParameter diagnosticDataCollectionEnabled=false
@@ -28,12 +40,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 7G
+          memory: 5G
         reservations:
           memory: 3G
 
   # ── Redis ─────────────────────────────────────────────────────────────────────
   redis:
+    <<: *runtime
     image: redis:7.2-alpine
     container_name: ppc_redis
     volumes:
@@ -41,7 +54,7 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --maxmemory 1500mb
+      --maxmemory 512mb
       --maxmemory-policy allkeys-lru
       --save 300 1000
       --tcp-backlog 65535
@@ -62,12 +75,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1.8G
+          memory: 1G
         reservations:
           memory: 512M
 
   # ── RabbitMQ ──────────────────────────────────────────────────────────────────
   rabbitmq:
+    <<: *runtime
     image: rabbitmq:3.13-alpine
     container_name: ppc_rabbitmq
     volumes:
@@ -75,6 +89,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit vm_memory_high_watermark 0.5"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 30s
@@ -87,12 +102,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 512M
         reservations:
           memory: 256M
 
   # ── FastAPI backend ───────────────────────────────────────────────────────────
   fastapi:
+    <<: *runtime
     build:
       context: ./ppc-backend
       dockerfile: docker/Dockerfile
@@ -106,6 +122,18 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       PYTHONPATH: /app
       SKIP_INIT: "true"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-6}
+      MONGO_MAX_POOL_SIZE: ${MONGO_MAX_POOL_SIZE:-40}
+      MONGO_MIN_POOL_SIZE: ${MONGO_MIN_POOL_SIZE:-2}
+      API_MAX_INFLIGHT: ${API_MAX_INFLIGHT:-256}
+      REDIS_MAX_CONNECTIONS: ${REDIS_MAX_CONNECTIONS:-64}
+      # Only internal Docker peers can supply nginx's normalized visitor IP.
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1/32}
+      # The API has no published port; only nginx/Next.js reach it on this network.
+      FORWARDED_ALLOW_IPS: "*"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
       PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
       # Python performance
       PYTHONUNBUFFERED: "1"
@@ -114,8 +142,6 @@ services:
       mongodb:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
     volumes:
       - ./ppc-backend/app/ml/models:/app/app/ml/models
@@ -127,19 +153,20 @@ services:
     deploy:
       resources:
         limits:
-          memory: 5G
+          memory: 3G
         reservations:
           memory: 2G
 
   # ── Celery worker ─────────────────────────────────────────────────────────────
   celery_worker:
+    <<: *runtime
     build:
       context: ./ppc-backend
       dockerfile: docker/Dockerfile
     container_name: ppc_celery
     command: ["celery", "-A", "app.tasks.celery_app", "worker",
-              "--loglevel=warning", "--concurrency=8",
-              "--max-tasks-per-child=2000", "--prefetch-multiplier=4"]
+              "--loglevel=warning", "--concurrency=4",
+              "--max-tasks-per-child=2000", "--prefetch-multiplier=1"]
     env_file:
       - ./ppc-backend/.env
     environment:
@@ -148,6 +175,9 @@ services:
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       PYTHONPATH: /app
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -164,12 +194,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 1536M
         reservations:
           memory: 1G
 
   # ── Celery beat ───────────────────────────────────────────────────────────────
   celery_beat:
+    <<: *runtime
     build:
       context: ./ppc-backend
       dockerfile: docker/Dockerfile
@@ -199,6 +230,7 @@ services:
 
   # ── Next.js frontend ──────────────────────────────────────────────────────────
   nextjs:
+    <<: *runtime
     build:
       context: ./ppc-frontend
       dockerfile: Dockerfile
@@ -207,6 +239,8 @@ services:
     container_name: ppc_nextjs
     environment:
       NODE_ENV: production
+      NEXT_WORKERS: ${NEXT_WORKERS:-2}
+      NODE_OPTIONS: --max-old-space-size=640
       NEXT_BACKEND_URL: http://fastapi:8000
       PORTAL_HOSTNAMES: ${PORTAL_HOSTNAMES:-maxpayads.com,www.maxpayads.com,vertexmonetize.com,www.vertexmonetize.com}
       ALLOWED_ENTRY_DOMAINS: ${ALLOWED_ENTRY_DOMAINS:-}
@@ -223,12 +257,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1.5G
+          memory: 2G
         reservations:
           memory: 512M
 
   # ── Nginx ─────────────────────────────────────────────────────────────────────
   nginx:
+    <<: *runtime
     image: nginx:alpine
     container_name: ppc_nginx
     ports:

@@ -1,0 +1,24 @@
+{
+  "measured_at": "2026-09-28T08:30:09.023Z",
+  "target": "http://127.0.0.1:3100/admin/auth",
+  "concurrency": 250,
+  "requested": 10000,
+  "completed": 10000,
+  "seconds": 19.973,
+  "requests_per_second": 500.7,
+  "p50_ms": 468.09,
+  "p95_ms": 585.59,
+  "p99_ms": 1661.32,
+  "statuses": {
+    "200": 10000
+  },
+  "errors": {},
+  "failures": 0,
+  "error_rate": 0,
+  "stopped_early": false,
+  "passed": true,
+  "limits": {
+    "max_error_rate": 0.01,
+    "max_p95_ms": 2000
+  }
+}

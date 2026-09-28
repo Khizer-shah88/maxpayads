@@ -1,0 +1,55 @@
+name: Capacity regressions
+
+on:
+  push:
+    branches: [main]
+    paths: ['ppc-backend/**', 'ppc-frontend/cluster.cjs', 'docker-compose.prod.yml', 'nginx.prod.conf', 'deployment/load-test.cjs', '.github/workflows/capacity-check.yml']
+  pull_request:
+    paths: ['ppc-backend/**', 'ppc-frontend/cluster.cjs', 'docker-compose.prod.yml', 'nginx.prod.conf', 'deployment/load-test.cjs', '.github/workflows/capacity-check.yml']
+
+jobs:
+  config-and-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ppc-backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: pip install -r ppc-backend/requirements.txt
+      - name: Routing, overload, and security regressions
+        working-directory: ppc-backend
+        env:
+          DEBUG: 'false'
+        run: pytest -q tests/test_production_capacity.py tests/test_domain_access.py tests/test_middleware_cookie_regression.py tests/test_redirect_pipeline.py tests/test_prelander_auth.py tests/test_one_use_redirect_hops.py
+      - name: Validate production compose and nginx configuration
+        run: |
+          touch ppc-backend/.env
+          docker compose -f docker-compose.prod.yml config --quiet
+          mkdir -p /tmp/capacity-certs
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' -keyout /tmp/capacity-certs/origin.key -out /tmp/capacity-certs/origin.crt
+          docker run --rm --add-host fastapi:127.0.0.1 --add-host nextjs:127.0.0.1 \
+            -v "$PWD/nginx.prod.conf:/etc/nginx/nginx.conf:ro" \
+            -v /tmp/capacity-certs/origin.crt:/etc/ssl/certs/origin.crt:ro \
+            -v /tmp/capacity-certs/origin.key:/etc/ssl/private/origin.key:ro nginx:alpine nginx -t
+      - name: Repeat network probe load regression (local fixture, not production capacity)
+        run: |
+          cd ppc-backend
+          DEBUG=false python -m uvicorn tests.capacity_fixture:app --host 127.0.0.1 --port 8000 --no-access-log > /tmp/capacity-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then break; fi
+            sleep 1
+          done
+          node ../deployment/load-test.cjs --url 'http://127.0.0.1:8000/domain-access?path=/admin/auth' --requests 10000 --concurrency 250 --max-p95-ms 2000 --output ../capacity-probes.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capacity-probes
+          path: capacity-probes.json

@@ -13,6 +13,7 @@ from app.services.cpc_engine import get_global_cpc_settings, set_country_cpc, de
 from app.dependencies import get_db, get_current_admin
 from app.core.exceptions import NotFoundError, UnauthorizedError
 from app.core.security import verify_password, hash_password
+from starlette.concurrency import run_in_threadpool
 from app.utils.date_utils import timestamp_range_query
 from bson import ObjectId
 import csv
@@ -924,10 +925,10 @@ async def change_password(
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not verify_password(current_password, full_user.get("password_hash", "")):
+    if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    new_hash = hash_password(new_password)
+    new_hash = await run_in_threadpool(hash_password, new_password)
     await db.publishers.update_one(
         {"_id": full_user["_id"]},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}},

@@ -522,7 +522,10 @@ async def stage_resolve_cpc(ctx: RedirectResolutionContext, db) -> None:
             k: v.isoformat() if hasattr(v, "isoformat") else v
             for k, v in ctx.click_document.items()
         }
-        process_click.delay(ctx.click_id, payload)
+        # Kombu publishing uses blocking sockets, including reconnect attempts.
+        # A slow broker must not freeze every request on this worker's loop.
+        from starlette.concurrency import run_in_threadpool
+        await run_in_threadpool(process_click.delay, ctx.click_id, payload)
         ctx.record(STAGE_CPC, "deferred_to_task", click_id=ctx.click_id)
     except Exception as e:
         logger.warning(f"Failed to queue click task: {e}")

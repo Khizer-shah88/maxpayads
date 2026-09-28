@@ -15,17 +15,15 @@ def _init_db_handles():
     if client is None or db is None:
         client = AsyncIOMotorClient(
             settings.MONGODB_URL,
-            maxPoolSize=300,         # 16 workers × ~18 concurrent = headroom
-            minPoolSize=20,          # Keep warm connections ready
+            maxPoolSize=settings.MONGO_MAX_POOL_SIZE,
+            minPoolSize=settings.MONGO_MIN_POOL_SIZE,
             maxIdleTimeMS=120000,    # 2 min idle before closing
-            waitQueueTimeoutMS=10000,
-            serverSelectionTimeoutMS=15000,
-            connectTimeoutMS=10000,
-            socketTimeoutMS=45000,
+            waitQueueTimeoutMS=settings.MONGO_WAIT_QUEUE_TIMEOUT_MS,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=15000,
             retryWrites=True,
             heartbeatFrequencyMS=20000,
-            # Use compression to reduce bandwidth
-            compressors=["zlib"],
         )
         db = client[settings.DB_NAME]
 
@@ -124,6 +122,8 @@ async def create_indexes():
     await db.direct_links.create_index("publisher_id")
     await db.direct_links.create_index("campaign_id")
     await db.direct_links.create_index("status")
+    await db.direct_links.create_index("stats_share_id", sparse=True)
+    await db.direct_links.create_index("stats_domain", sparse=True)
     await db.direct_links.create_index([("created_at", DESCENDING)])
 
     # Direct link events (conversions)

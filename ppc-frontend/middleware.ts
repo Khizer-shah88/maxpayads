@@ -88,19 +88,33 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = requestHostname(request);
 
-  // The API owns domain roles. DNS pointing here does not grant access.
+  // Both containers receive the same explicit PORTAL_HOSTNAMES setting.
+  // Portal host assignments are configuration, not mutable database roles.
+  // Ordinary portal pages/assets can avoid a network probe on every request;
+  // traffic/stats URLs still use the complete API policy even on a portal host.
+  const configuredPortals = (process.env.PORTAL_HOSTNAMES || '').split(',').map(value => value.trim().toLowerCase());
+  const configuredPortalPage = configuredPortals.includes(host) && (
+    pathname === '/' || pathname === '/admin' || pathname.startsWith('/admin/') ||
+    pathname === '/publisher' || pathname.startsWith('/publisher/') || pathname.startsWith('/_next/')
+  );
+
+  // The API owns dynamic domain roles. DNS pointing here does not grant access.
   let role: string;
-  try {
-    const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
-    const check = await fetch(`${backendUrl}/domain-access?path=${encodeURIComponent(pathname)}`, {
-      headers: { host: request.headers.get('host') || host },
-      cache: 'no-store',
-      redirect: 'manual',
-    });
-    if (!check.ok) return new NextResponse(null, { status: check.status >= 500 ? 503 : 404 });
-    role = (await check.json()).role;
-  } catch {
-    return new NextResponse(null, { status: 503 });
+  if (configuredPortalPage) {
+    role = 'portal';
+  } else {
+    try {
+      const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+      const check = await fetch(`${backendUrl}/domain-access?path=${encodeURIComponent(pathname)}`, {
+        headers: { host: request.headers.get('host') || host },
+        cache: 'no-store',
+        redirect: 'manual',
+      });
+      if (!check.ok) return new NextResponse(null, { status: check.status >= 500 ? 503 : 404 });
+      role = (await check.json()).role;
+    } catch {
+      return new NextResponse(null, { status: 503 });
+    }
   }
   if (pathname.startsWith('/d/') && request.headers.get('sec-fetch-site') === 'none') {
     return prelanderFallbackResponse();
@@ -139,6 +153,7 @@ export async function middleware(request: NextRequest) {
           // Pass the visitor's identity headers so the exchange's browser
           // binding (fingerprint check inside consume_handoff) validates.
           cookie: request.headers.get('cookie') || '',
+          'x-real-ip': request.headers.get('x-real-ip') || '',
           'user-agent': request.headers.get('user-agent') || '',
           'x-forwarded-for': request.headers.get('x-forwarded-for') || '',
           // The exchange validates the requesting host (handoff target
@@ -186,7 +201,7 @@ export async function middleware(request: NextRequest) {
         const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
         const cookieHeader = request.headers.get('cookie') || '';
         const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
-          headers: { cookie: cookieHeader, host: request.headers.get('host') || host },
+          headers: { cookie: cookieHeader, host: request.headers.get('host') || host, 'x-real-ip': request.headers.get('x-real-ip') || '' },
           redirect: 'manual',
           cache: 'no-store',
         });
@@ -300,6 +315,7 @@ export async function middleware(request: NextRequest) {
           headers: {
             host: request.headers.get('host') || host,
             authorization: `Bearer ${adminToken}`,
+            'x-real-ip': request.headers.get('x-real-ip') || '',
           },
           cache: 'no-store',
           redirect: 'manual',

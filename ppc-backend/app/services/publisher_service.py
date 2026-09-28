@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from bson import ObjectId
 from app.core.security import hash_password
+from starlette.concurrency import run_in_threadpool
 import logging
 import secrets
 import hashlib
@@ -56,7 +57,7 @@ async def create_publisher(data: dict, db, admin_id: Optional[str] = None) -> st
     if not data.get("password"):
         data["password"] = _generate_auto_password()
 
-    data["password_hash"] = hash_password(data.pop("password"))
+    data["password_hash"] = await run_in_threadpool(hash_password, data.pop("password"))
     data["role"] = "publisher"
     # Admin-created publishers are active immediately; self-registered are pending.
     data["status"] = data.get("status", "active" if admin_id else "pending")
@@ -113,7 +114,7 @@ async def create_manual_publisher(data: dict, db, admin_id: Optional[str] = None
     # Placeholder identity — manual publishers never log in, so the values are
     # random and inert; uniqueness keeps auth lookups from ever colliding.
     slug = secrets.token_hex(6)
-    password_hash = hash_password(secrets.token_urlsafe(24))
+    password_hash = await run_in_threadpool(hash_password, secrets.token_urlsafe(24))
 
     doc = {
         "name": name,

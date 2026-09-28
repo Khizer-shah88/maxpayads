@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from typing import List
 
 
@@ -19,9 +19,18 @@ class Settings(BaseSettings):
     # MongoDB
     MONGODB_URL: str = "mongodb://localhost:27017"
     DB_NAME: str = "ppc_network"
+    # Pools are PER PROCESS, including each Uvicorn worker.
+    MONGO_MAX_POOL_SIZE: int = Field(default=40, ge=1)
+    MONGO_MIN_POOL_SIZE: int = Field(default=2, ge=0)
+    MONGO_WAIT_QUEUE_TIMEOUT_MS: int = Field(default=2000, ge=1)
+    API_MAX_INFLIGHT: int = Field(default=256, ge=1)
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    REDIS_MAX_CONNECTIONS: int = Field(default=64, ge=1)
+    REQUESTS_PER_IP_PER_MINUTE: int = Field(default=200, ge=1)
+    # Only these immediate peers may supply the nginx-normalized X-Real-IP.
+    TRUSTED_PROXY_CIDRS: str = "127.0.0.1/32,::1/128"
 
     # Celery
     CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"

@@ -100,7 +100,8 @@ async def ml_fraud_check(click_data: dict) -> float:
         from app.ml.feature_extractor import extract_features
         features = extract_features(click_data)
         if fraud_model.model is not None:
-            return fraud_model.predict(features)
+            from starlette.concurrency import run_in_threadpool
+            return await run_in_threadpool(fraud_model.predict, features)
     except Exception as e:
         logger.warning(f"ML fraud check failed: {e}")
     return 0.0

@@ -21,13 +21,14 @@ function load(file, imports = {}, globals = {}) {
   return exports;
 }
 
-async function visit(pathname, { cookie = '', role = 'admin', status = 200, domainStatus = 200, unavailable = false } = {}) {
+async function visit(pathname, { cookie = '', role = 'admin', status = 200, domainStatus = 200, unavailable = false, portals = '' } = {}) {
   const calls = [];
   const { middleware } = load('middleware.ts', {
     'next/server': next,
     '@/lib/prelander-session': {},
     '@/lib/entry-guard': {},
   }, {
+    process: { env: { ...process.env, PORTAL_HOSTNAMES: portals } },
     async fetch(url, options) {
       calls.push({ url, options });
       if (url.includes('/domain-access')) return new Response('{"role":"portal"}', { status: domainStatus });
@@ -113,6 +114,19 @@ test('admin login cannot bypass the hostname role gate', async () => {
   const { response, calls } = await visit('/admin/auth', { cookie: 'admin_token=valid', domainStatus: 403 });
   assert.equal(response.status, 404);
   assert.equal(calls.length, 1);
+});
+
+test('configured portal login avoids a backend probe but still validates admin sessions', async () => {
+  const anonymous = await visit('/admin/auth', { portals: 'portal.example' });
+  assert.equal(anonymous.response.status, 200);
+  assert.equal(anonymous.calls.length, 0);
+  const signedIn = await visit('/admin/dashboard', { portals: 'portal.example', cookie: 'admin_token=valid' });
+  assert.equal(signedIn.calls.length, 1);
+  assert.ok(signedIn.calls[0].url.endsWith('/auth/me'));
+  assert.equal(signedIn.response.status, 200);
+  const denied = await visit('/public-stats/secret', { portals: 'portal.example', domainStatus: 403 });
+  assert.equal(denied.response.status, 404);
+  assert.equal(denied.calls.length, 1);
 });
 
 test('bad login credentials stay on the form; protected API 401 still logs out', async () => {

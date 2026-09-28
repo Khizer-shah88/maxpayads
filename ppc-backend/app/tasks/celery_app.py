@@ -23,6 +23,11 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    broker_connection_timeout=3,
+    broker_pool_limit=8,
+    task_publish_retry_policy={
+        'max_retries': 2, 'interval_start': 0, 'interval_step': 0.2, 'interval_max': 0.5,
+    },
     beat_schedule={
         "daily-analytics": {
             "task": "app.tasks.analytics_tasks.compute_daily_analytics",
