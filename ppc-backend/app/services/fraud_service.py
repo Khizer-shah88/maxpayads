@@ -74,19 +74,25 @@ async def check_ip_rate_limit(ip: str, redis) -> bool:
 
 async def check_duplicate_click(ip: str, publisher_id: str, redis) -> bool:
     """
-    Check if same IP already clicked this publisher today (per calendar day).
-    Same IP coming tomorrow is valid again - this is per-day validation, not rolling window.
+    Check if same IP already clicked this publisher today (per calendar day, UTC).
+    Same IP coming tomorrow is valid again — key expires at UTC midnight, not rolling 24h.
     """
-    from datetime import datetime
-    # Use current date as part of key for per-day validation
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.strftime("%Y-%m-%d")
+    # Expire at end of current UTC day + 1h buffer so a late-night click
+    # never blocks the visitor all of the following day.
+    seconds_until_midnight = (
+        (24 - now_utc.hour) * 3600
+        - now_utc.minute * 60
+        - now_utc.second
+        + 3600
+    )
     key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ip}:{publisher_id}:{today}"
     try:
         exists = await redis.exists(key)
         if not exists:
-            # Set expiry to end of day + 1 hour buffer
-            # This ensures the key expires after the day ends
-            await redis.setex(key, DUPLICATE_CLICK_WINDOW_SECONDS, "1")
+            await redis.setex(key, seconds_until_midnight, "1")
         return bool(exists)
     except Exception as e:
         logger.warning(f"Redis duplicate check failed: {e}")

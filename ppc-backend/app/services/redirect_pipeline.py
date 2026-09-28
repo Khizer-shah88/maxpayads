@@ -397,22 +397,27 @@ async def stage_screen_traffic(ctx: RedirectResolutionContext, db, redis) -> Non
         # unavailable. classify_traffic below re-runs what it can without it.
         logger.warning(f"Redis rate limit check failed (fail-open): {e}")
 
-    # Duplicate IP — PER-PUBLISHER, soft flag, still routed.
-    # The same visitor on different publishers is a VALID click for each; only
-    # a repeat on the SAME publisher (calendar day) is the duplicate. The key
-    # used to be ip:website — manual publishers have no website (the suffix
-    # was empty), so every one of their visitors collided into one shared key
-    # and the visitor's SECOND publisher on the network got flagged as a
-    # duplicate of the first. Keying on the resolved publisher id is exactly
-    # the requested granularity.
+    # Duplicate IP — PER-PUBLISHER, per calendar day (UTC).
+    # Same IP on a NEW calendar day = valid again for every OS.
+    # Key format: prefix:ip:publisher:YYYY-MM-DD
+    # TTL = seconds until end of current UTC day + 1 hour buffer,
+    # so the key always expires after midnight regardless of when the click arrived.
     try:
-        from datetime import datetime
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.strftime("%Y-%m-%d")
+        # Seconds remaining until end of current UTC day + 1h buffer
+        seconds_until_midnight = (
+            (24 - now_utc.hour) * 3600
+            - now_utc.minute * 60
+            - now_utc.second
+            + 3600  # 1 hour buffer
+        )
         pub = ctx.publisher_id or "none"
         dup_key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ctx.ip}:{pub}:{today}"
         if await redis.exists(dup_key):
             return _verdict(False, True, "duplicate_ip", 0.85, fds.TRAFFIC_DUPLICATE, "flagged")
-        await redis.setex(dup_key, DUPLICATE_CLICK_WINDOW_SECONDS, "1")
+        await redis.setex(dup_key, seconds_until_midnight, "1")
     except Exception as e:
         # Fail-open duplicate check — see rate-limit note above.
         logger.warning(f"Redis duplicate check failed (fail-open): {e}")
