@@ -167,6 +167,40 @@ async def get_landing_page(
     return {"success": True, "landing_page": page}
 
 
+async def _sync_domain_template(db, domain: str | None, template_id: str | None) -> None:
+    """
+    Keep redirection_domains.template_id in sync with landing_pages assignments.
+
+    When a landing page assigns a template to a prelander domain, the
+    Prelander Templates page must reflect that change immediately (and vice
+    versa). This one-way write from Landing Pages → redirection_domains is
+    the missing link that made the two pages appear disconnected.
+
+    - If both domain and template_id are set: assign template to domain.
+    - If domain is set but template_id is None/empty: clear the assignment.
+    - If domain is not set: nothing to do.
+    """
+    if not domain:
+        return
+    from app.core.constants import DOMAIN_TYPE_PRELANDER
+    from app.core.glossary import domain_type_filter
+    host = _normalize_prelander_domain(domain)
+    try:
+        if template_id:
+            await db.redirection_domains.update_one(
+                {"domain": host, "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER)},
+                {"$set": {"template_id": template_id}},
+            )
+        else:
+            await db.redirection_domains.update_one(
+                {"domain": host, "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER)},
+                {"$unset": {"template_id": ""}},
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Domain-template sync failed: %s", e)
+
+
 async def _validate_prelander_bindings(db, data: dict, exclude_page_id=None) -> None:
     """
     Validate the prelander bindings:
@@ -221,8 +255,6 @@ async def create_landing_page(
     doc = data.model_dump()
     if doc.get("prelander_domain"):
         doc["prelander_domain"] = _normalize_prelander_domain(doc["prelander_domain"])
-        # The Prelander URL form field was removed — the URL is derived from
-        # the bound domain so legacy lander_url reads keep working.
         if not doc.get("lander_url"):
             doc["lander_url"] = f"https://{doc['prelander_domain']}"
     try:
@@ -232,6 +264,11 @@ async def create_landing_page(
     doc["created_at"] = datetime.utcnow()
     doc["updated_at"] = datetime.utcnow()
     result = await db.landing_pages.insert_one(doc)
+
+    # SYNC: if a prelander domain + template are both set, update the domain
+    # record so Prelander Templates page reflects the assignment immediately.
+    await _sync_domain_template(db, doc.get("prelander_domain"), doc.get("prelander_template_id"))
+
     return {"success": True, "landing_page_id": str(result.inserted_id), "message": "Landing page created"}
 
 
@@ -242,14 +279,9 @@ async def update_landing_page(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    # exclude_unset: only touch fields the client actually sent, but DO honor an
-    # explicit null (e.g. campaign_id: null to un-assign a campaign). The old
-    # "drop all None" filter made un-assigning impossible.
     update_data = data.model_dump(exclude_unset=True)
     if update_data.get("prelander_domain"):
         update_data["prelander_domain"] = _normalize_prelander_domain(update_data["prelander_domain"])
-        # Derive the URL from the bound domain when not explicitly supplied
-        # (mirrors create — the form no longer carries a Prelander URL field).
         if not update_data.get("lander_url"):
             update_data["lander_url"] = f"https://{update_data['prelander_domain']}"
     try:
@@ -263,6 +295,19 @@ async def update_landing_page(
     )
     if result.matched_count == 0:
         raise NotFoundError("Landing Page")
+
+    # SYNC: propagate template assignment to redirection_domains.
+    # If the client updated prelander_domain or prelander_template_id, derive
+    # the effective domain+template from the current stored page.
+    if "prelander_domain" in update_data or "prelander_template_id" in update_data:
+        page = await db.landing_pages.find_one({"_id": _lp_oid(page_id)})
+        if page:
+            await _sync_domain_template(
+                db,
+                page.get("prelander_domain"),
+                page.get("prelander_template_id"),
+            )
+
     return {"success": True, "message": "Landing page updated"}
 
 

@@ -480,34 +480,39 @@ async def stage_record_click(ctx: RedirectResolutionContext, db) -> bool:
 
 
 async def _log_screening_outcome(ctx: RedirectResolutionContext, db) -> None:
-    """Record a blocked or flagged click against the publisher and the fraud log."""
-    from app.services.fraud_service import log_fraud
-    from app.services.earnings_service import (
-        update_publisher_invalid_click,
-        update_website_stats,
-    )
-    from app.services import fraud_detection_service as fds
+    """Record a blocked or flagged click — fire-and-forget, never blocks the response."""
+    import asyncio
 
-    blocked = ctx.is_blocked
-    try:
-        await fds.log_security_event(
-            db,
-            event_type="fraud_detected" if blocked else "suspicious_traffic",
-            severity="warning" if blocked else "info",
-            description=f"{'Blocked' if blocked else 'Flagged'} traffic: {ctx.fraud_reason}",
-            metadata={
-                "click_id": ctx.click_id,
-                "ip": ctx.ip,
-                "classification": ctx.traffic_classification,
-                "fraud_score": ctx.fraud_score,
-            },
+    async def _write():
+        from app.services.fraud_service import log_fraud
+        from app.services.earnings_service import (
+            update_publisher_invalid_click,
+            update_website_stats,
         )
-        await log_fraud(ctx.click_id, ctx.click_document, ctx.fraud_reason, ctx.fraud_score, db)
-        await update_publisher_invalid_click(ctx.publisher_id, db)
-        if ctx.website_id:
-            await update_website_stats(ctx.website_id, 0.0, False, db)
-    except Exception as e:
-        logger.warning(f"Failed to log {'blocked' if blocked else 'flagged'} click: {e}")
+        from app.services import fraud_detection_service as fds
+        blocked = ctx.is_blocked
+        try:
+            await fds.log_security_event(
+                db,
+                event_type="fraud_detected" if blocked else "suspicious_traffic",
+                severity="warning" if blocked else "info",
+                description=f"{'Blocked' if blocked else 'Flagged'} traffic: {ctx.fraud_reason}",
+                metadata={
+                    "click_id": ctx.click_id,
+                    "ip": ctx.ip,
+                    "classification": ctx.traffic_classification,
+                    "fraud_score": ctx.fraud_score,
+                },
+            )
+            await log_fraud(ctx.click_id, ctx.click_document, ctx.fraud_reason, ctx.fraud_score, db)
+            await update_publisher_invalid_click(ctx.publisher_id, db)
+            if ctx.website_id:
+                await update_website_stats(ctx.website_id, 0.0, False, db)
+        except Exception as e:
+            logger.warning(f"Failed to log screening outcome: {e}")
+
+    # Non-blocking: visitor response is not held up by fraud logging.
+    asyncio.ensure_future(_write())
 
 
 async def stage_resolve_route(ctx: RedirectResolutionContext, db, redis) -> None:
@@ -566,36 +571,35 @@ async def stage_resolve_cpc(ctx: RedirectResolutionContext, db) -> None:
 
 async def _finalize(ctx: RedirectResolutionContext, db, outcome: str) -> None:
     """
-    Close the trace and persist what the click resolved to.
-
-    One update covers both the destination and the trace, so tracing costs no
-    extra round trip. Never fatal — a visitor is not held up by bookkeeping.
+    Close the trace and persist destination_url + trace (if enabled).
+    The DB update is fire-and-forget — the visitor response is not held up.
     """
+    import asyncio
     from app.config import settings
 
     ctx.record(STAGE_DELIVER, outcome, url=ctx.destination_url)
-    logger.info(ctx.summary())
+    logger.debug(ctx.summary())   # debug only — avoid file I/O on every click
 
     if not ctx.click_id:
         return
 
     update: Dict[str, Any] = {"destination_url": ctx.destination_url}
-    # Persist campaign/offer attribution alongside the destination. Without
-    # these, the async click task (click_tasks) can never find the matched
-    # offer, so offer-level CPC and campaign analytics silently break.
     if ctx.campaign_id:
         update["campaign_id"] = str(ctx.campaign_id)
     if ctx.offer_id:
         update["offer_id"] = str(ctx.offer_id)
-    if getattr(settings, "REDIRECT_TRACE_ENABLED", True):
+    if getattr(settings, "REDIRECT_TRACE_ENABLED", False):
         update["resolution_trace"] = ctx.trace_as_list()
 
-    try:
-        from bson import ObjectId
+    async def _write():
+        try:
+            from bson import ObjectId
+            await db.clicks.update_one({"_id": ObjectId(ctx.click_id)}, {"$set": update})
+        except Exception as e:
+            logger.debug(f"Failed to persist click update: {e}")
 
-        await db.clicks.update_one({"_id": ObjectId(ctx.click_id)}, {"$set": update})
-    except Exception as e:
-        logger.debug(f"Failed to persist resolution trace: {e}")
+    # Fire-and-forget: visitor gets their redirect immediately.
+    asyncio.ensure_future(_write())
 
 
 async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -> None:

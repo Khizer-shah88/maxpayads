@@ -310,6 +310,33 @@ async def assign_template_domains(
         {**domain_filter, "template_id": {"$in": [str(oid), oid]}, "_id": {"$nin": domain_ids}},
         {"$set": {"template_id": None, "updated_at": now}},
     )
+
+    # REVERSE SYNC: update landing_pages.prelander_template_id to reflect
+    # the assignment changes made here, so Landing Pages page stays in sync.
+    try:
+        # For each assigned domain, update the matching landing page
+        if domain_ids:
+            assigned_domains = [d async for d in db.redirection_domains.find(
+                {**domain_filter, "_id": {"$in": domain_ids}}, {"domain": 1}
+            )]
+            for d in assigned_domains:
+                await db.landing_pages.update_many(
+                    {"prelander_domain": d.get("domain")},
+                    {"$set": {"prelander_template_id": str(oid), "updated_at": now}},
+                )
+        # Clear template_id from landing pages whose domain was unassigned
+        cleared_domains = [d async for d in db.redirection_domains.find(
+            {**domain_filter, "template_id": None, "_id": {"$nin": domain_ids}}, {"domain": 1}
+        )]
+        for d in cleared_domains:
+            await db.landing_pages.update_many(
+                {"prelander_domain": d.get("domain"), "prelander_template_id": str(oid)},
+                {"$set": {"prelander_template_id": None, "updated_at": now}},
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Landing page template reverse-sync failed: %s", e)
+
     return {
         "success": True,
         "assigned_domains": (await _domain_assignments(db, [str(oid)]))[str(oid)],

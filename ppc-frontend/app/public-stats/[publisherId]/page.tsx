@@ -397,6 +397,19 @@ export default function PublisherStatsPage() {
           </div>
 
           <div className="flex items-center gap-2 justify-self-center sm:col-start-2 sm:row-start-1 sm:justify-self-end lg:col-start-3">
+            {/* Date range selector — controls the daily breakdown period */}
+            <select
+              value={dateRange}
+              onChange={e => setDateRange(Number(e.target.value))}
+              className="bg-[#111721] border border-[#1D2634] rounded-lg px-2.5 py-1.5 text-xs text-[#8695A8] hover:text-[#E8EEF6] hover:border-[#26313F] transition-colors cursor-pointer focus:outline-none"
+              aria-label="Select date range"
+            >
+              <option value={7}>Last 7 Days</option>
+              <option value={14}>Last 14 Days</option>
+              <option value={30}>Last 30 Days</option>
+              <option value={60}>Last 60 Days</option>
+              <option value={90}>Last 90 Days</option>
+            </select>
             <button
               onClick={() => loadStats()}
               disabled={refreshing}
@@ -727,17 +740,6 @@ export default function PublisherStatsPage() {
                 {filterActive ? 'Filtered by selected platforms' : 'Valid clicks per OS and conversions per day'}
               </p>
             </div>
-            <select 
-              value={dateRange} 
-              onChange={(e) => setDateRange(Number(e.target.value))}
-              className="px-3 py-1.5 rounded-lg bg-[#0D131C] border border-[#1D2634] text-[#E8EEF6] text-xs font-medium hover:bg-[#111721] transition-colors cursor-pointer"
-            >
-              <option value={7}>Last 7 Days</option>
-              <option value={14}>Last 14 Days</option>
-              <option value={30}>Last 30 Days</option>
-              <option value={60}>Last 60 Days</option>
-              <option value={90}>Last 90 Days</option>
-            </select>
           </div>
           <div className="overflow-x-auto -mx-px">
             <table className="w-full min-w-[640px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -803,8 +805,8 @@ export default function PublisherStatsPage() {
               </table>
             </div>
             <div className="px-4 py-2.5 text-xs text-[#5C6B7E] flex justify-between gap-2.5 flex-wrap border-t border-[#1D2634]">
-              <span>Showing {Math.min(10, filteredRows.length)} of {filteredRows.length} days</span>
-              <span>{stats.date_range}</span>
+              <span>Showing {filteredRows.length} of {filteredRows.length} days</span>
+              <span>Last {dateRange} Days</span>
             </div>
         </section>
       </main>
