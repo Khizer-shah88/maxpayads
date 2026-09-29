@@ -14,15 +14,15 @@ from app.services.smartlink_parser import generate_smartlink_with_structure
 from app.utils import public_id_utils
 
 
-PUB = "TEST1234"  # No prefix - this is what smartlinks should contain after stripping
+PUB = "PUB_TEST1234"  # Service functions use IDs as-is (admin router strips prefix)
 SITE = "SITE_TEST1234"
 
 
 @pytest.fixture
 def public_ids(monkeypatch):
-    # Mock returns value WITH PUB_ prefix (as stored in old database records)
-    # The code will strip it to produce clean smartlinks
-    monkeypatch.setattr(public_id_utils, "get_publisher_public_id", AsyncMock(return_value=f"PUB_{PUB}"))
+    # Mock returns value as stored in database (with PUB_ prefix)
+    # Service functions use it as-is; only admin router strips the prefix
+    monkeypatch.setattr(public_id_utils, "get_publisher_public_id", AsyncMock(return_value=PUB))
     monkeypatch.setattr(public_id_utils, "get_website_public_id", AsyncMock(return_value=SITE))
 
 
@@ -98,15 +98,17 @@ async def test_admin_links_follow_publisher_type(public_ids, monkeypatch, publis
     result = await admin_router.admin_get_publisher_smartlink(
         "publisher", structure_id=None, db=database, current_user={}
     )
+    # Admin router strips PUB_ prefix from smartlinks
+    PUB_STRIPPED = PUB[4:] if PUB.startswith("PUB_") else PUB
     if publisher_type == "manual":
-        assert result["smartlink"] == f"https://anchor.example/click?pub={PUB}"
+        assert result["smartlink"] == f"https://anchor.example/click?pub={PUB_STRIPPED}"
         assert result["website_smartlinks"] == []
         database.websites.find.assert_not_called()
     elif site_count:
         assert result["smartlink"] == result["website_smartlinks"][0]["smartlink"]
         assert len(result["website_smartlinks"]) == site_count
         for index, entry in enumerate(result["website_smartlinks"]):
-            assert parse_qs(urlsplit(entry["smartlink"]).query) == {"pub": [PUB], "site": [f"{SITE}_{index}"]}
+            assert parse_qs(urlsplit(entry["smartlink"]).query) == {"pub": [PUB_STRIPPED], "site": [f"{SITE}_{index}"]}
     else:
         assert result["smartlink"] is None
         assert result["website_smartlinks"] == []

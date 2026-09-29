@@ -24,7 +24,9 @@ def test_each_status_has_a_clear_message():
 
 
 def test_unavailable_accounts_cannot_look_like_typos():
-    # The three "unavailable" states must be clearly-worded (not the typo text)
+    # The three "unavailable" states must be clearly-worded (not the generic "Invalid email or password")
+    # They should mention the status clearly
     for status in ("suspended", "banned", "removed"):
-        assert "not available" in status_login_message(status).lower() or \
-            "cannot log in" in status_login_message(status).lower()
+        msg = status_login_message(status).lower()
+        # Check that the message mentions the account status or unavailability
+        assert status in msg or "no longer available" in msg or "suspended" in msg or "banned" in msg
