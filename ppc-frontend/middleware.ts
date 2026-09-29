@@ -218,9 +218,9 @@ export async function middleware(request: NextRequest) {
             return page;
           }
         }
-        return prelanderFallbackResponse(checkRes.status >= 500 ? 503 : 403);
+        return checkRes.status >= 500 ? sessionUnavailableResponse(503) : prelanderFallbackResponse();
       } catch (err) {
-        return prelanderFallbackResponse(503);
+        return sessionUnavailableResponse(503);
       }
   }
 
@@ -464,20 +464,12 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
 
   response.headers.set('Content-Security-Policy', cspHeader);
 
-  // Source-deterrent marker. The worker sweeps ONLY navigations whose response
-  // carries this header. That gate is the actual fix for the reload loop: the
-  // session-unavailable 403 page, 404s and every other uninstrumented document
-  // never get it, so the worker cannot see them, let alone navigate them.
-  //
-  // INVARIANT: set this only on documents that actually embed the heartbeat
-  // (lib/source-deterrent-script.ts). A marked page WITHOUT the script is a
-  // guaranteed reload loop. Prelander paths are marked because their layout
-  // and the clean shell both embed it.
-  // Every response that passes through here is an app-router document, and the
-  // root layout embeds the heartbeat in all of them. The script-less responses
-  // -- sessionUnavailableResponse(), the bare 404s, every redirect -- are
-  // returned directly and never reach this function, so they cannot be marked.
-  if (process.env.ENABLE_SOURCE_DETERRENT === 'true') {
+  // Only ordinary app documents with the root layout heartbeat are marked.
+  // Traffic pages consume single-use tickets/arrival claims. A slow or
+  // backgrounded browser must never have those navigations replayed by the
+  // source-view heuristic. This also protects clients running the old worker,
+  // which checks the response marker before scheduling a reload.
+  if (process.env.ENABLE_SOURCE_DETERRENT === 'true' && !isPrelander && pathname !== '/clean-shell') {
     response.headers.set('x-sd', '1');
   }
 

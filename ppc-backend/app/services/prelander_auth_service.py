@@ -320,6 +320,7 @@ class AuthorizationSession:
     website_id: str = ""               # site param attribution when present
     campaign_id: str = ""              # resolved campaign
     offer_id: str = ""                 # matched offer (offer rules)
+    offer_url: str = ""                # exact destination selected at click time
     prelander_id: str = ""             # selected prelander template
     prelander_host: str = ""           # selected prelander domain
     chain_id: str = ""                 # redirection chain when one matched
@@ -349,6 +350,7 @@ class AuthorizationSession:
             "site": self.website_id,
             "camp": self.campaign_id,
             "offer": self.offer_id,
+            "offer_url": self.offer_url,
             "pl_id": self.prelander_id,
             "ph": self.prelander_host,
             "chain": self.chain_id,
@@ -376,6 +378,7 @@ class AuthorizationSession:
                 website_id=d.get("site", ""),
                 campaign_id=d.get("camp", ""),
                 offer_id=d.get("offer", ""),
+                offer_url=d.get("offer_url", ""),
                 prelander_id=d.get("pl_id", ""),
                 prelander_host=d.get("ph", ""),
                 chain_id=d.get("chain", ""),
@@ -429,6 +432,7 @@ async def create_authorization(
     website_id: str = "",
     campaign_id: str = "",
     offer_id: str = "",
+    offer_url: str = "",
     prelander_id: str = "",
     chain_id: str = "",
     os: str = "",
@@ -477,6 +481,7 @@ async def create_authorization(
             website_id=str(website_id or ""),
             campaign_id=str(campaign_id or ""),
             offer_id=str(offer_id or ""),
+            offer_url=str(offer_url or ""),
             prelander_id=str(prelander_id or ""),
             prelander_host=(prelander_host or ""),
             chain_id=str(chain_id or ""),

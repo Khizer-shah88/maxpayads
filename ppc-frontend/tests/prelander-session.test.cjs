@@ -79,7 +79,7 @@ async function runShell(options) {
   const html = await response.text();
   assert.doesNotMatch(html, /pl-loader|pl-spin|Loading&hellip;|Redirecting&hellip;|Session expired/);
   assert.match(response.headers.get('cache-control'), /no-store/);
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
   await vm.runInNewContext(script, b.context);
   return b;
 }
@@ -169,12 +169,21 @@ for (const referrer of ['https://landing.example/old', 'javascript:alert(1)', 'i
 }
 
 for (const claim of [new Response('{}', { status: 503 }), new Error('offline')]) {
-  test(`claim failure denies access: ${claim.status || claim.message}`, async () => {
+  test(`claim outage stays on a recoverable page: ${claim.status || claim.message}`, async () => {
     const b = await runShell({ claim });
-    assert.equal(b.root.hidden, true);
-    assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', 'about:blank']]);
+    assert.equal(b.root.hidden, false);
+    assert.match(b.root.innerHTML, /Temporarily unavailable/);
+    assert.deepEqual(b.events, [['fetch', '/api/prelander/claim']]);
   });
 }
+
+test('temporary resolve failure keeps the claimed tab available for a reload', async () => {
+  const b = await runShell({ claim: new Response('{"ok":true}'),
+    resolve: new Response('{}', { status: 503 }), referrer: 'https://inter.example/' });
+  assert.match(b.root.innerHTML, /Try again/);
+  assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['fetch', '/api/prelander/resolve/session']]);
+  assert.equal(b.context.sessionStorage.getItem('pl_tab_ok'), '1');
+});
 
 test('concurrent React effects consume one arrival', async () => {
   const b = browser({ claim: new Response('{"ok":true}') });
@@ -201,7 +210,10 @@ async function runRoot({ cookie = '', check = new Response('{"authorized":true}'
   const response = await middleware(new next.NextRequest('https://landing.example/', {
     headers: cookie ? { cookie } : {},
   }));
-  if (response.status === 403 || response.status === 503) {
+  if (response.status === 503) {
+    assert.match(await response.text(), /Session expired or unavailable/);
+    assert.equal(response.headers.get('x-sd'), null);
+  } else if (response.status === 403) {
     const html = await response.text();
     assert.doesNotMatch(html, /Session expired|Loading|Redirecting|pl-loader/);
     assert.match(response.headers.get('content-security-policy'), /script-src 'unsafe-inline'/);
@@ -230,11 +242,38 @@ test('expired root cookie takes the same previous-page fallback', async () => {
   assert.deepEqual(b.events[1], ['back']);
 });
 
+test('session-check outage does not send visitors back into the redirect chain', async () => {
+  const b = await runRoot({ cookie: 'mpa_pls=valid', check: new Response('{}', { status: 503 }),
+    referrer: 'https://inter.example/' });
+  assert.equal(b.response.status, 503);
+  assert.deepEqual(b.events.map(([event]) => event), ['server-fetch']);
+});
+
 test('authorized root still reaches the clean prelander shell', async () => {
   const b = await runRoot({ cookie: 'mpa_pls=valid' });
   assert.equal(b.response.headers.get('x-middleware-rewrite'), 'https://landing.example/clean-shell');
   assert.equal(b.events.length, 1);
   assert.equal(b.events[0][0], 'server-fetch');
+});
+
+test('production source deterrent cannot replay prelander arrivals or hop pages', async () => {
+  const next = require('next/server');
+  const { middleware } = loadModule('middleware.ts', {
+    'next/server': next, '@/lib/prelander-session': session,
+    '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
+  }, {
+    process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } },
+    async fetch(url) {
+      return new Response(url.includes('/domain-access') ? '{"role":"prelander"}' : '{"authorized":true}');
+    },
+  });
+  for (const path of ['/', '/d/h_ticket', '/d/session', '/clean-shell']) {
+    const response = await middleware(new next.NextRequest(`https://landing.example${path}`, {
+      headers: { cookie: 'mpa_pls=valid' },
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-sd'), null, path);
+  }
 });
 
 // Exercise the React page's state transitions without introducing a test-only
@@ -293,6 +332,15 @@ test('expired React prelander returns to the previous page only once', async () 
   await page.load();
   page.mountFallback(page.render().type);
   assert.deepEqual(page.events, [['fetch', '/api/prelander/resolve/session'], ['back']]);
+});
+
+test('React session outage shows recovery without returning to the Inter root', async () => {
+  const page = slugPage({ marker: '1', resolve: new Response('{}', { status: 503 }),
+    referrer: 'https://inter.example/' });
+  page.render();
+  await page.load();
+  assert.equal(page.render().props.role, 'alert');
+  assert.deepEqual(page.events, [['fetch', '/api/prelander/resolve/session']]);
 });
 
 for (const decision of [{ bypass_redirect_url: 'https://offer.example/' }, { prelander_domain: 'https://landing.example' }]) {

@@ -106,24 +106,17 @@ self.addEventListener("message", (e) => {
 });
 
 async function sweep(resultingClientId) {
+  // A marker authorizes inspection of this navigation only. If its client
+  // disappeared (or the browser omitted its ID), never sweep other tabs:
+  // they may be in the middle of consuming a one-use redirect ticket.
+  if (!resultingClientId) return;
   if ((await navCount()) >= MAX_NAVIGATIONS) return;
 
   await sleep(GRACE_MS);
 
-  let clients = [];
-  if (resultingClientId) {
-    const client = await self.clients.get(resultingClientId);
-    if (client) clients = [client];
-  }
-  if (!clients.length) {
-    // resultingClientId is not populated in every context. Falling back to a
-    // full sweep is safe ONLY because we are already behind the marker gate:
-    // an uninstrumented document never schedules a sweep in the first place.
-    clients = await self.clients.matchAll({
-      type: "window",
-      includeUncontrolled: true,
-    });
-  }
+  const target = await self.clients.get(resultingClientId);
+  if (!target) return;
+  const clients = [target];
 
   for (const client of clients) {
     if (alive.has(client.id) || nudged.has(client.id)) continue;

@@ -681,6 +681,7 @@ async def stage_authorize_prelander(ctx: RedirectResolutionContext, db, redis) -
         website_id=ctx.website_id or "",
         campaign_id=str(ctx.campaign_id or ""),
         offer_id=str(ctx.offer_id or ""),
+        offer_url=ctx.offer_url or "",
         chain_id=chain_id,
         os=ctx.os_name or "",
         device_type=ctx.device_type or "",

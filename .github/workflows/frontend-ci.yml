@@ -54,4 +54,5 @@ jobs:
       - name: Prelander rendering and session regression tests
         env:
           PRELANDER_TEST_BUILD: '1'
-        run: node --test tests/prelander-session.test.cjs
+          ENABLE_SOURCE_DETERRENT: 'true'
+        run: node --test tests/prelander-session.test.cjs tests/source-deterrent.test.cjs

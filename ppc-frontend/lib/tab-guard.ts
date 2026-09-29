@@ -22,7 +22,15 @@ export function createTabGuard(onBlocked: () => void) {
           try { sessionStorage.setItem('pl_tab_ok', '1'); } catch {}
           return 'allowed' as const;
         }
-      } catch {}
+        // A store/proxy outage is not an authorization denial. Navigating
+        // back here can reopen a consumed Inter ticket (or its bare 404 root).
+        if (response.status !== 401 && response.status !== 403) {
+          throw new Error('Prelander temporarily unavailable');
+        }
+      } catch (error) {
+        pending = null;
+        throw error;
+      }
 
       // Missing cookies (including incognito), expired sessions and reused
       // arrivals all navigate away without rendering any prelander UI.

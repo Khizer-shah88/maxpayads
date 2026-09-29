@@ -70,6 +70,12 @@ ${SOURCE_DETERRENT_SCRIPT}
   ;(async function () {
     var d = document
     var deny = (${returnToPreviousPage.toString()})
+    function unavailable () {
+      var root = d.getElementById('pl-root')
+      root.hidden = false
+      root.className = 'pl-wrap'
+      root.innerHTML = '<div class="pl-card"><div class="pl-head"><h1 class="pl-title">Temporarily unavailable</h1><p class="pl-sub">Please try loading this page again.</p><p class="pl-sub"><a href="/">Try again</a></p></div></div>'
+    }
     function esc (s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -109,7 +115,8 @@ ${SOURCE_DETERRENT_SCRIPT}
         headers: { 'X-Prelander-Host': location.hostname }
       })
       // Handle both current denials and legacy empty responses during rollout.
-      if (res.status === 204 || !res.ok) return deny()
+      if (res.status === 204 || res.status === 401 || res.status === 403) return deny()
+      if (!res.ok) return unavailable()
       var data = await res.json()
       if (!data || !data.success) return deny()
       // TEMPLATE FAVICON: the browser-tab icon follows the template.
@@ -185,7 +192,7 @@ ${SOURCE_DETERRENT_SCRIPT}
       }
       root.hidden = false
       wire(root)
-    } catch (e) { deny() }
+    } catch (e) { unavailable() }
   })()
   </script>
 </body>

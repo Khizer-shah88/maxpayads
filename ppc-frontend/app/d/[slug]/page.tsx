@@ -25,6 +25,7 @@ export default function PrelanderSlugPage() {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
+  const [unavailable, setUnavailable] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   const [returning, setReturning] = useState(false)
   const startedHop = useRef('')
@@ -84,6 +85,7 @@ export default function PrelanderSlugPage() {
             credentials: "include",
             headers: { 'X-Prelander-Host': hostname },
           });
+          if (res.status >= 500 || res.status === 429) throw new Error('Prelander temporarily unavailable')
           
           if (res.status === 204 || !res.ok) {
             setDenied(true)
@@ -107,7 +109,7 @@ export default function PrelanderSlugPage() {
           return
         } catch (error) {
           console.error('[PRELANDER] Session resolve error:', error)
-          setDenied(true)
+          setUnavailable(true)
           setLoading(false)
           return
         }
@@ -219,6 +221,15 @@ export default function PrelanderSlugPage() {
 
   if (returning) return null
   if (denied) return <PreviousPageFallback />
+  if (unavailable) return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5] p-6" role="alert">
+      <div className="rounded-2xl bg-white p-8 text-center">
+        <h1 className="text-xl font-semibold">Temporarily unavailable</h1>
+        <p className="mt-3 text-gray-600">Please try loading this page again.</p>
+        <button className="mt-4 underline" onClick={() => window.location.reload()}>Try again</button>
+      </div>
+    </div>
+  )
 
   // Only confirmed redirect-domain hops get a loader. Prelander validation
   // and pasted-URL fallback stay blank, including in private browsing.

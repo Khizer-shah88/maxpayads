@@ -206,12 +206,14 @@ async def test_arrival_claim_distinguishes_new_tab_from_expired_session(session_
     from app.routers import prelander_router as routes
 
     app, content = session_api
-    session = await pas.create_authorization("c1", SLUG, IP, UA, redis)
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis, prelander_host="test")
     sid = await pas.establish_prelander_session(session, redis)
     await redis.setex(routes._ARRIVAL_KEY.format(sid), 60, "1")
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", cookies={pas.PL_SESSION_COOKIE: sid},
     ) as client:
+        wrong_host = await client.get("/prelander/claim", headers={"host": "other.example"})
+        assert wrong_host.status_code == 403
         arrival = await client.get("/prelander/claim")
         assert arrival.status_code == 200
         assert arrival.json()["ok"] is True

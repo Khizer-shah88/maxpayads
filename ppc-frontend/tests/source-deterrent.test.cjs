@@ -51,11 +51,11 @@ function worker({ store = new Map(), cacheUnavailable = false } = {}) {
       handlers.message({ data: 'SOURCE_DETERRENT_PING', source: { id }, waitUntil(p) { task = p; } });
       await task;
     },
-    async navigate(id, marked = true) {
+    async navigate(id, marked = true, resultingClientId = id) {
       clients.set(id, { id, url: 'https://landing.example/', navigate(url) { navigations.push({ id, url, at: now }); } });
       let task;
       handlers.fetch({
-        request: { mode: 'navigate', marked }, resultingClientId: id,
+        request: { mode: 'navigate', marked }, resultingClientId,
         respondWith() {}, waitUntil(p) { task = p; },
       });
       await flush();
@@ -115,6 +115,18 @@ test('unmarked fallback document is never redirected', async () => {
   await navigation.task;
   assert.equal(w.navigations.length, 0);
 });
+
+for (const resultingClientId of ['', 'already-left']) {
+  test(`missing navigation client never reloads other tabs: ${resultingClientId}`, async () => {
+    const w = worker();
+    const unrelated = await w.navigate('one-use-hop', false);
+    await unrelated.task;
+    const navigation = await w.navigate('source', true, resultingClientId);
+    await w.advance(1000);
+    await navigation.task;
+    assert.equal(w.navigations.length, 0);
+  });
+}
 
 test('reload budget still stops after three navigations across worker restarts', async () => {
   const store = new Map();

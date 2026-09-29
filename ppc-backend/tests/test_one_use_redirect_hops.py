@@ -19,7 +19,7 @@ from test_prelander_auth import FakeRedis
 from test_publisher_stats_actions import Collection
 
 
-async def routed_click(monkeypatch, bypass=False):
+async def routed_click(monkeypatch, bypass=False, **context):
     monkeypatch.setattr(settings, 'PORTAL_HOSTNAMES', 'portal.example')
     db = SimpleNamespace(
         redirection_domains=Collection([
@@ -40,6 +40,8 @@ async def routed_click(monkeypatch, bypass=False):
     ctx.redirect_chain = {'_id': ObjectId(), 'extra_domains': ['extra.example'], 'cookie_lifetime': 30}
     ctx.skip_prelander = bypass
     ctx.bypass_url = 'https://campaign.example/download' if bypass else None
+    for name, value in context.items():
+        setattr(ctx, name, value)
     await stage_authorize_prelander(ctx, db, redis)
     return db, redis, ctx
 
@@ -110,3 +112,54 @@ async def test_bypass_still_uses_one_inter_ticket(monkeypatch):
     destination = await advance_hop(redis, db, token(ctx.destination_url), 'inter.example', '1.2.3.4', 'Browser')
     assert destination == 'https://campaign.example/download'
     assert await advance_hop(redis, db, token(ctx.destination_url), 'inter.example', '1.2.3.4', 'Browser') is None
+
+
+@pytest.mark.parametrize('os_name,expected_os', [('Mac OS X', 'mac'), ('Windows 10', 'windows'), ('iOS', 'mac')])
+async def test_delayed_arrival_renders_selected_destination_and_template(monkeypatch, os_name, expected_os):
+    """Exercise hops, cookie exchange, claim and real rendering with domain policy enabled."""
+    from app.routers import prelander_router as router
+    from app.middleware import domain_access_middleware as gate
+
+    campaign_id, template_id = ObjectId(), ObjectId()
+    selected_url = 'https://selected.example/device-specific'
+    db, redis, ctx = await routed_click(monkeypatch, os_name=os_name,
+        campaign_id=str(campaign_id), offer_url=selected_url)
+    db.redirection_domains.docs[-1]['template_id'] = str(template_id)
+    db.campaigns = Collection([{'_id': campaign_id, 'name': 'Selected campaign',
+        'default_offer_url': 'https://wrong.example/fallback', 'password': 'test-password'}])
+    db.prelander_templates = Collection([{'_id': template_id, 'status': 'active', 'name': 'Assigned',
+        'full_html_template': '<h1>Assigned template</h1><a href="{Campaign_URL}">Continue</a>'}])
+    db.landing_pages = Collection()
+    monkeypatch.setattr(router, 'get_redis_safe', lambda: redis)
+    monkeypatch.setattr(gate, 'get_database', lambda: db)
+    monkeypatch.setattr(gate, 'get_redis', lambda: redis)
+    app = FastAPI()
+    app.add_middleware(gate.DomainAccessMiddleware)
+    app.include_router(router.router)
+    app.dependency_overrides[get_db] = lambda: db
+    async with AsyncClient(transport=ASGITransport(app=app), headers={'user-agent': 'Browser'}) as client:
+        destination = ctx.destination_url
+        for host in ('inter.example', 'extra.example'):
+            hop = await client.post(f'https://{host}/prelander/hop/{token(destination)}')
+            assert hop.status_code == 200
+            destination = hop.json()['next_url']
+        arrival = await client.get('https://last.example/prelander' + urlparse(destination).path)
+        assert arrival.status_code == 302
+        assert arrival.headers['location'] == '/'
+        # Backgrounded tabs and slower networks can take over 20 seconds.
+        now = time.time()
+        monkeypatch.setattr(time, 'time', lambda: now + 30)
+        claim = await client.get('https://last.example/prelander/claim')
+        assert claim.status_code == 200
+        assert claim.headers['cache-control'] == 'no-store, private'
+        for _ in range(3):
+            response = await client.get('https://last.example/prelander/resolve/session')
+            assert response.status_code == 200
+            data = response.json()
+            assert data['offer_url'] == selected_url
+            assert data['os'] == expected_os
+            assert data['template']['id'] == str(template_id)
+            assert selected_url in data['rendered_html']
+            assert 'wrong.example' not in data['rendered_html']
+        # Refreshing uses the cookie; neither handoffs nor arrivals become reusable.
+        assert (await client.get('https://last.example/prelander/claim')).status_code == 403
