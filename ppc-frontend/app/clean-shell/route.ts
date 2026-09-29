@@ -17,7 +17,9 @@ const PRELANDER_CSP =
 // docker-compose flip of the flag takes effect.
 const SOURCE_DETERRENT_SCRIPT = sourceDeterrentScriptTag();
 
-const SHELL_HTML = `<!DOCTYPE html>
+// Preserve regex backslashes in the inline script. A cooked template literal
+// turns escaped slashes into // and breaks parsing before any content loads.
+const SHELL_HTML = String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">

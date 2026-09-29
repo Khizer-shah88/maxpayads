@@ -40,13 +40,15 @@ function browser({ referrer = '', historyLength = 1, marker = null, storageBlock
   claim = new Response(JSON.stringify({ ok: false, reason: 'arrival_unavailable' }), { status: 403 }),
   resolve = new Response(JSON.stringify({ success: true, rendered_html: '<h1>Authorized</h1>' })) } = {}) {
   const events = [];
-  const root = { hidden: true, style: {}, replaceChildren(...children) { this.children = children; } };
+  const root = { hidden: true, style: {}, addEventListener() {}, replaceChildren(...children) { this.children = children; } };
   const location = { hostname: 'landing.example', pathname: '/', search: '',
     replace(url) { events.push(['replace', url]); } };
   const history = { length: historyLength, back() { events.push(['back']); } };
   const document = {
     referrer, title: '', getElementById: () => root,
-    createElement: () => ({}),
+    querySelector: () => null,
+    createElement: () => ({ setAttribute() {} }),
+    head: { appendChild(link) { events.push(['favicon', link.href]); } },
     open() {}, write(html) { events.push(['render', html]); }, close() {},
   };
   const context = {
@@ -80,6 +82,37 @@ async function runShell(options) {
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   await vm.runInNewContext(script, b.context);
   return b;
+}
+
+test('clean shell emits valid JavaScript before any session request', async () => {
+  const html = await (await shell.GET()).text();
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.ok(scripts.length);
+  for (const [, script] of scripts) assert.doesNotThrow(() => new vm.Script(script));
+});
+
+for (const os of ['windows', 'mac']) {
+  test(`authorized ${os} arrival reveals the built-in prelander`, async () => {
+    const b = await runShell({ claim: new Response('{"ok":true}'),
+      resolve: new Response(JSON.stringify({ success: true, os,
+        offer_url: 'https://download.example/file', template: { title: 'Your download' } })) });
+    assert.equal(b.root.hidden, false);
+    assert.match(b.root.innerHTML, /Your download/);
+    assert.match(b.root.innerHTML, /https:\/\/download.example\/file/);
+    assert.equal(b.events.some(([event]) => event === 'replace' || event === 'back'), false);
+  });
+}
+
+for (const favicon of ['https://cdn.example/icon.png', 'cdn[.]example/icon.png',
+  '<link rel="icon" href="https://cdn.example/icon.png">']) {
+  test(`favicon parsing preserves prelander rendering: ${favicon}`, async () => {
+    const b = await runShell({ claim: new Response('{"ok":true}'),
+      resolve: new Response(JSON.stringify({ success: true, rendered_html: '<h1>Authorized</h1>',
+        template: { favicon_url: favicon } })) });
+    assert.deepEqual(b.events.slice(-2), [
+      ['favicon', 'https://cdn.example/icon.png'], ['render', '<h1>Authorized</h1>'],
+    ]);
+  });
 }
 
 test('pasted tab immediately returns to its external referrer without resolving content', async () => {
@@ -228,6 +261,7 @@ function slugPage({ slug = 'session', ...options } = {}) {
     'next/navigation': { useParams: () => ({ slug }) },
     'lucide-react': {},
     '@/lib/prelander-navigation': browserNavigation,
+    '@/lib/prelander-favicon': loadModule('lib/prelander-favicon.ts', {}, b.context),
     '@/lib/tab-guard': loadModule('lib/tab-guard.ts', { '@/lib/prelander-navigation': browserNavigation }, b.context),
   }, b.context).default;
   return {
