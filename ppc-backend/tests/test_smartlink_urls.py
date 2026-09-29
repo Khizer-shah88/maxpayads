@@ -14,13 +14,15 @@ from app.services.smartlink_parser import generate_smartlink_with_structure
 from app.utils import public_id_utils
 
 
-PUB = "TEST1234"
+PUB = "TEST1234"  # No prefix - this is what smartlinks should contain after stripping
 SITE = "SITE_TEST1234"
 
 
 @pytest.fixture
 def public_ids(monkeypatch):
-    monkeypatch.setattr(public_id_utils, "get_publisher_public_id", AsyncMock(return_value=PUB))
+    # Mock returns value WITH PUB_ prefix (as stored in old database records)
+    # The code will strip it to produce clean smartlinks
+    monkeypatch.setattr(public_id_utils, "get_publisher_public_id", AsyncMock(return_value=f"PUB_{PUB}"))
     monkeypatch.setattr(public_id_utils, "get_website_public_id", AsyncMock(return_value=SITE))
 
 
