@@ -29,6 +29,7 @@ interface PrlanderTemplate {
   show_password_field: boolean
   show_video: boolean
   video_url?: string | null
+  favicon_url?: string | null
   tags: string[]
   notes?: string | null
   // Full source code template
@@ -48,6 +49,7 @@ const EMPTY_FORM = {
   name: '',
   status: 'active' as 'active' | 'paused' | 'archived',
   notes: '',
+  favicon_url: '',
   full_html_template: '',
 }
 
@@ -105,6 +107,7 @@ export default function PrlanderTemplatesPage() {
       name: t.name,
       status: t.status,
       notes: t.notes || '',
+      favicon_url: t.favicon_url || '',
       full_html_template: t.full_html_template || '',
     })
     setModal('edit')
@@ -132,6 +135,9 @@ export default function PrlanderTemplatesPage() {
         name: form.name.trim(),
         status: form.status,
         notes: form.notes.trim() || null,
+        // The admin may paste the full <link rel=icon> snippet or a bare URL —
+        // the backend normalizes both (bracket-notation included).
+        favicon_url: form.favicon_url.trim() || null,
         full_html_template: form.full_html_template.trim() || null,
       }
       let res: any
@@ -462,6 +468,17 @@ export default function PrlanderTemplatesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Internal Notes</label>
                   <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
                     rows={2} placeholder="Optional admin notes" className={inp} />
+                </div>
+
+                {/* Favicon */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Favicon (browser-tab icon)</label>
+                  <input value={form.favicon_url} onChange={e => setForm(p => ({ ...p, favicon_url: e.target.value }))}
+                    placeholder="https://example.com/logo.png — or paste the whole <link rel=&quot;icon&quot; …> snippet"
+                    className={`${inp} font-mono`} />
+                  <span className="text-[11px] text-gray-400 mt-0.5 block">
+                    Paste just the URL or the full snippet — both work. Shown in the visitor&apos;s tab while the prelander loads.
+                  </span>
                 </div>
 
                 {/* Full Source Code Editor — create + edit */}

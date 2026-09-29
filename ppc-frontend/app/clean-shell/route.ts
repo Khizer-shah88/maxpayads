@@ -110,6 +110,27 @@ ${SOURCE_DETERRENT_SCRIPT}
       if (res.status === 204 || !res.ok) return deny()
       var data = await res.json()
       if (!data || !data.success) return deny()
+      // TEMPLATE FAVICON: the browser-tab icon follows the template.
+      // Bracket-notation URLs (example[.]) are cleaned so the fetch works;
+      // any previous injection is replaced (idempotent on reload).
+      var fvRaw = (data.template && data.template.favicon_url) || ''
+      if (fvRaw) {
+        var fv = String(fvRaw).match(/<link/i)
+          ? (String(fvRaw).match(/<link\b[^>]*>/i) || [''])[0].match(/href\s*=\s*["']([^"']+)["']/i) || [, '']
+          : [null, String(fvRaw)]
+        var fvHref = String(fv[1] || '').trim().replace(/\[\.\]/g, '.')
+        if (fvHref && !/^https?:\/\//i.test(fvHref)) fvHref = 'https://' + fvHref.replace(/^\/+/, '')
+        if (fvHref && /^https:\/\//i.test(fvHref)) {
+          var old = d.querySelector('link[data-pl-favicon]')
+          if (old) old.parentNode && old.parentNode.removeChild(old)
+          var lnk = d.createElement('link')
+          lnk.setAttribute('data-pl-favicon', '1')
+          lnk.rel = 'icon'
+          lnk.type = 'image/png'
+          lnk.href = fvHref
+          d.head.appendChild(lnk)
+        }
+      }
       // CLEAN FINAL URL: bare root, no slug, no ids, no params.
       if (location.pathname !== '/' || location.search) {
         try { history.replaceState({}, '', '/') } catch (e) {}

@@ -1394,6 +1394,10 @@ async def _get_prelander_data(
             "show_password_field": bool(template_doc.get("show_password_field", True)),
             "show_video": bool(template_doc.get("show_video", False)),
             "video_url": template_doc.get("video_url"),
+            # Browser-tab favicon. Simple-field templates rely on this field;
+            # full-HTML templates carry the admin's own <link rel=icon> which
+            # document.write renders verbatim (this field stays the fallback).
+            "favicon_url": template_doc.get("favicon_url"),
         }
 
         # Spec (Prelander Templates → HTML): when the admin pasted a complete

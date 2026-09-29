@@ -6,6 +6,7 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 
 import { guardTab } from '@/lib/tab-guard'
 import { returnToPreviousPage } from '@/lib/prelander-navigation'
+import { applyFavicon } from '@/lib/prelander-favicon'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
 function PreviousPageFallback() {
@@ -96,7 +97,11 @@ export default function PrelanderSlugPage() {
             setLoading(false)
             return
           }
-          
+
+          // The session path resolves AFTER the browser already replaced the
+          // URL — the template favicon (set once per template) still applies.
+          applyFavicon(data?.template?.favicon_url)
+
           setData(data)
           setLoading(false)
           return
@@ -112,7 +117,6 @@ export default function PrelanderSlugPage() {
         // Step 1: check if this hostname is the Prelander domain.
         const dtUrl = `/api/prelander/domain-type?host=${encodeURIComponent(hostname)}&slug=${encodeURIComponent(slug)}`
         const dtRes = await fetch(dtUrl)
-
         if (dtRes.ok) {
           const dt = await dtRes.json()
 
@@ -189,6 +193,10 @@ export default function PrelanderSlugPage() {
         const access = await guardTab()
         if (access === 'redirected') { setReturning(true); return }
 
+        // Apply the template favicon for built-in layouts, and as the fallback
+        // link when a full-HTML template did not bring its own <link rel=icon>.
+        applyFavicon(data?.template?.favicon_url)
+
         // Show the content
         setData(data)
         
@@ -236,28 +244,42 @@ export default function PrelanderSlugPage() {
   // Admin pasted a complete HTML template → the backend already rendered it
   // server-side ({Campaign_URL} / {Password} shortcodes substituted). Serve it
   // as a full-page document instead of the built-in layouts.
-  if (data.rendered_html) return <FullHtmlPrelander html={data.rendered_html} />
+  if (data.rendered_html) return <FullHtmlPrelander html={data.rendered_html} fallbackFavicon={data.template?.favicon_url} />
 
   if (data.os === 'mac') return <MacPrelander data={data} />
   return <WindowsPrelander data={data} />
 }
 
 /* ─── Full HTML: server-rendered custom template ─────────────────────────── */
-function FullHtmlPrelander({ html }: { html: string }) {
+function FullHtmlPrelander({ html, fallbackFavicon }: { html: string; fallbackFavicon?: string | null }) {
   useEffect(() => {
     // Replace the whole document so <!DOCTYPE html>, <head> styles and the
     // template's scripts behave exactly as the admin authored them.
     // Guarded: if document.open/write throws (rare parser/aborted-pipeline
     // cases), the visitor still has a rendered page instead of a destroyed
     // blank document — the historical "site crash" symptom.
+    // FAVICON: the template's own <link rel=icon> wins. When the admin set a
+    // template favicon but authored the HTML without a link tag, it is
+    // injected into <head> — document.write replaces the document, so the
+    // fallback must exist INSIDE the written markup.
+    let htmlWithFavicon = html
+    const templateFavicon = (fallbackFavicon || '').trim()
+    if (templateFavicon && !/<link\b[^>]*rel\s*=\s*["']?[a-z-]*icon/i.test(html)) {
+      const injected = `<link rel="icon" type="image/png" href="${templateFavicon}">`
+      if (/<head\b[^>]*>/i.test(html)) {
+        htmlWithFavicon = html.replace(/<head\b[^>]*>/i, (m: string) => `${m}\n  ${injected}`)
+      } else {
+        htmlWithFavicon = injected + html
+      }
+    }
     try {
       document.open()
-      document.write(html)
+      document.write(htmlWithFavicon)
       document.close()
     } catch (error) {
       console.error('[PRELANDER] Full HTML render failed:', error)
     }
-  }, [html])
+  }, [html, fallbackFavicon])
   return null
 }
 

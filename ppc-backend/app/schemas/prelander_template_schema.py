@@ -36,6 +36,10 @@ class PrlanderTemplateCreate(BaseModel):
     title: str = "Your file is ready to download"
     subtitle: str = "Your file is prepared. Copy the link to download."
     button_text: str = "Copy"
+    # Browser tab favicon (external PNG/ICO URL). Shown on every prelander
+    # surface the template drives: full-HTML templates render the admin's own
+    # <link rel=icon> verbatim; simple-field templates get this link injected.
+    favicon_url: Optional[str] = None
     # Content
     show_password_field: bool = True
     show_video: bool = False
@@ -46,6 +50,15 @@ class PrlanderTemplateCreate(BaseModel):
     notes: Optional[str] = None
     # Full source code template (optional)
     full_html_template: Optional[str] = None
+
+    @field_validator("favicon_url", mode="before")
+    @classmethod
+    def _favicon(cls, v: Any) -> Optional[str]:
+        # Accept bare hostnames and the anti-scam bracket spelling
+        # (https://example[.]com/...) — stored cleaned so the browser can
+        # actually fetch the file.
+        from app.services.prelander_service import normalize_favicon_url
+        return normalize_favicon_url(v) if v else None
 
     @field_validator("os_type", mode="before")
     @classmethod
@@ -75,6 +88,7 @@ class PrlanderTemplateUpdate(BaseModel):
     title: Optional[str] = None
     subtitle: Optional[str] = None
     button_text: Optional[str] = None
+    favicon_url: Optional[str] = None
     show_password_field: Optional[bool] = None
     show_video: Optional[bool] = None
     video_url: Optional[str] = None
@@ -87,6 +101,14 @@ class PrlanderTemplateUpdate(BaseModel):
     @classmethod
     def _os_type(cls, v: Any) -> Any:
         return _coerce_template_os(v) if v is not None else v
+
+    @field_validator("favicon_url", mode="before")
+    @classmethod
+    def _favicon(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        from app.services.prelander_service import normalize_favicon_url
+        return normalize_favicon_url(v)
 
     @field_validator("name")
     @classmethod

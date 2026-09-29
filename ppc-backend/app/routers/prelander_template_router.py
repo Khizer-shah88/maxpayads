@@ -99,6 +99,7 @@ def serialize_template(t: dict, usage_count: int = 0, used_by: Optional[list] = 
     out["show_password_field"] = bool(out.get("show_password_field", True))
     out["show_video"] = bool(out.get("show_video", False))
     out.setdefault("video_url", None)
+    out.setdefault("favicon_url", None)
     out["tags"] = list(out.get("tags") or [])
     out.setdefault("notes", None)
     out.setdefault("full_html_template", None)

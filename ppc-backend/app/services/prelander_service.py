@@ -14,7 +14,7 @@ import hmac
 import hashlib
 import time
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import logging
 
@@ -238,6 +238,79 @@ def _normalise_shortcodes(html: str) -> str:
     return re.sub(r'(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)\}(?!\})', _replace, html)
 
 
+# Matches <link rel="...icon..." href="..."> (attribute order/space tolerant).
+_FAVICON_LINK_RE = re.compile(
+    r'<link\b[^>]*?>(?<!>)',
+    re.IGNORECASE,
+)
+
+
+def find_favicon_urls(html: str) -> List[str]:
+    """
+    Every href of an icon <link> in an admin-authored template fragment.
+
+    rel=icon | rel="shortcut icon" | rel=apple-touch-icon all count — the
+    admin pastes full HTML templates and may use any of these spellings.
+    The rel check must tolerate MULTIPLE words ("shortcut icon"), hyphens
+    ("apple-touch-icon") and uppercase ("REL") — the earlier pattern only
+    matched a single leading word before "icon" and missed real templates.
+    """
+    hrefs: List[str] = []
+    for link in re.findall(r'<link\b[^>]*>', html or '', re.IGNORECASE):
+        if not re.search(
+            r'''rel\s*=\s*["']?[^"'>]*\bicon\b''',
+            link,
+            re.IGNORECASE,
+        ):
+            continue
+        href_match = re.search(r'''href\s*=\s*["']([^"']+)["']''', link, re.IGNORECASE)
+        if href_match and href_match.group(1).strip():
+            hrefs.append(href_match.group(1).strip())
+    return hrefs
+
+
+def normalize_favicon_url(value: Any) -> Optional[str]:
+    """
+    Reduce an admin-entered favicon value to a fetchable URL.
+
+    Accepted forms → returned form:
+      https://example.com/a.png          → unchanged
+      https://example[.]com/a.png        → https://example.com/a.png   (anti-scam
+                                            bracket notation the docs use)
+      example.com/a.png                  → https://example.com/a.png
+      <link rel="icon" href="…">         → the link's href (the admin pastes
+                                            the full snippet into one field)
+    Anything else → None (invalid input is dropped, never rendered).
+    """
+    if not value or not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if "<link" in raw.lower():
+        extracted = find_favicon_urls(raw)
+        raw = extracted[0] if extracted else ""
+    raw = raw.strip()
+    if not raw:
+        return None
+    # Anti-scam bracket spelling: example[.]com → example.com (any subdomain too)
+    raw = re.sub(r'\[\.\]', '.', raw)
+    if not raw.startswith(("http://", "https://")):
+        raw = "https://" + raw.lstrip("/")
+    if not raw.startswith("https://"):
+        return None  # favicons must be https on the public prelander domains
+    host_part = raw.split("/", 3)
+    if len(host_part) < 4 or not host_part[2]:
+        return None
+    return raw
+
+
+def favicon_link_html(favicon_url: Optional[str]) -> str:
+    """A canonical <link rel=icon> tag for a resolved favicon URL ('' when none)."""
+    return (
+        f'<link rel="icon" type="image/png" href="{favicon_url}">'
+        if favicon_url else ""
+    )
+
+
 class PrelanderTemplateEngine:
     """
     Secure template rendering engine with sandboxing.
@@ -276,6 +349,12 @@ class PrelanderTemplateEngine:
         try:
             # Translate {X} shortcodes → {{ INTERNAL }} Jinja2 vars
             normalised_html = _normalise_shortcodes(template_html)
+
+            # Anti-scam bracket hostname spelling: the admin copies favicon
+            # URLs (and other asset URLs) out of docs/chat where hosts are
+            # spelled example[.]com — left verbatim the browser can never
+            # fetch the file. Any URL context gets the real host.
+            normalised_html = normalised_html.replace("[.]", ".")
 
             # Validate that only allowed placeholders remain
             self._validate_template_placeholders(normalised_html)
