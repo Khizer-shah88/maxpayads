@@ -47,6 +47,49 @@ def _serialize_chain(chain: dict) -> dict:
     return out
 
 
+_TRANSIENT_MARKERS = (
+    "pool is full",           # Mongo MAX_POOL overflow — the "sometimes" save killer
+    "timed out",
+    "timeout",
+    "connection",
+    "not connected",
+    "serverselection",
+    "network",
+    "closed",
+)
+
+
+def is_transient_db_error(exc: Exception) -> bool:
+    """True for flaky store failures (pool wait timeouts, brief disconnects).
+
+    Under load the Mongo pool's waitQueueTimeoutMS exhausts and the save 500s —
+    the reported "Internal server error appears SOMEtimes but not always".
+    Saves retry these a few times before giving up.
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(m in text for m in _TRANSIENT_MARKERS)
+
+
+async def _with_retry(op, attempts: int = 3):
+    """Run one Mongo operation, retrying transient pool/timeout failures.
+
+    Small backoff (150ms → 450ms) keeps the admin's SAVE from stranding on a
+    busy pool while still failing fast on real validation errors.
+    """
+    import asyncio
+
+    last_exc: Exception = RuntimeError("no attempt")
+    for attempt in range(attempts):
+        try:
+            return await op()
+        except Exception as e:
+            last_exc = e
+            if not is_transient_db_error(e) or attempt == attempts - 1:
+                raise
+            await asyncio.sleep(0.15 * (attempt + 1))
+    raise last_exc
+
+
 async def _validate_extra_domains(db, domains: List[str]) -> None:
     """
     Validate the configurable-length hops (Anchor → Inter → C → D → … → N).
@@ -87,7 +130,7 @@ async def _validate_chain_layout(db, chain, exclude_id=None):
         if exclude_id:
             query['_id'] = {'$ne': exclude_id}
         try:
-            active_anchor = await db.redirect_chains.find_one(query)
+            active_anchor = await _with_retry(lambda: db.redirect_chains.find_one(query))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
         if active_anchor:
@@ -110,12 +153,12 @@ async def get_redirect_chains(
         query_filter["status"] = status.value
     
     # Get total count
-    total = await db.redirect_chains.count_documents(query_filter)
+    total = await _with_retry(lambda: db.redirect_chains.count_documents(query_filter))
     
     # Get paginated results
     skip = (page - 1) * limit
     cursor = db.redirect_chains.find(query_filter).skip(skip).limit(limit).sort("created_at", -1)
-    chains = await cursor.to_list(length=limit)
+    chains = await _with_retry(lambda: cursor.to_list(length=limit))
     
     return {
         "chains": [_serialize_chain(chain) for chain in chains],
@@ -148,8 +191,8 @@ async def create_redirect_chain(
     anchor_hostname = (request.anchor_domain or "").strip()
     inter_hostname = (request.inter_domain or "").strip()
 
-    # Check if chain name already exists
-    existing = await db.redirect_chains.find_one({"name": name})
+    # Check if chain name already exists (retry: a busy pool must not 500 the save)
+    existing = await _with_retry(lambda: db.redirect_chains.find_one({"name": name}))
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -157,22 +200,22 @@ async def create_redirect_chain(
         )
     
     # Validate that domains exist in redirection_domains collection
-    anchor_domain = await db.redirection_domains.find_one({
+    anchor_domain = await _with_retry(lambda: db.redirection_domains.find_one({
         "domain": anchor_hostname,
         "domain_type": domain_type_filter(DOMAIN_TYPE_ANCHOR),
         "status": "active"
-    })
+    }))
     if not anchor_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Anchor domain '{anchor_hostname}' not found or not active"
         )
     
-    inter_domain = await db.redirection_domains.find_one({
+    inter_domain = await _with_retry(lambda: db.redirection_domains.find_one({
         "domain": inter_hostname,
         "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
         "status": "active"
-    })
+    }))
     if not inter_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -181,11 +224,11 @@ async def create_redirect_chain(
     
     # Validate Prelander Pool domains
     for domain in request.prelander_pool:
-        prelander_domain = await db.redirection_domains.find_one({
-            "domain": domain,
+        prelander_domain = await _with_retry(lambda d=domain: db.redirection_domains.find_one({
+            "domain": d,
             "domain_type": domain_type_filter(DOMAIN_TYPE_PRELANDER),
             "status": "active"
-        })
+        }))
         if not prelander_domain:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -217,7 +260,9 @@ async def create_redirect_chain(
     
     await _validate_chain_layout(db, chain_data)
     try:
-        result = await db.redirect_chains.insert_one(chain_data)
+        result = await _with_retry(lambda: db.redirect_chains.insert_one(chain_data))
+    except HTTPException:
+        raise
     except Exception as e:
         # A duplicate-key race (two saves of the same chain name/anchor landing
         # together) or a transient store failure must come back as a clear,
@@ -255,7 +300,7 @@ async def get_redirect_chain(
     except:
         raise HTTPException(status_code=400, detail="Invalid chain ID format")
     
-    chain = await db.redirect_chains.find_one({"_id": object_id})
+    chain = await _with_retry(lambda: db.redirect_chains.find_one({"_id": object_id}))
     if not chain:
         raise HTTPException(status_code=404, detail="Redirect chain not found")
     
@@ -278,7 +323,7 @@ async def update_redirect_chain(
         raise HTTPException(status_code=400, detail="Invalid chain ID format")
     
     # Check if chain exists
-    existing_chain = await db.redirect_chains.find_one({"_id": object_id})
+    existing_chain = await _with_retry(lambda: db.redirect_chains.find_one({"_id": object_id}))
     if not existing_chain:
         raise HTTPException(status_code=404, detail="Redirect chain not found")
     
@@ -371,10 +416,20 @@ async def update_redirect_chain(
         update_ops["$unset"] = unset_legacy
 
     await _validate_chain_layout(db, {**existing_chain, **update_data}, object_id)
-    await db.redirect_chains.update_one({"_id": object_id}, update_ops)
+    # Retry the write itself — the update path shares the create path's flaky
+    # pool under load ("update sometimes 500s" reports).
+    try:
+        await _with_retry(lambda: db.redirect_chains.update_one({"_id": object_id}, update_ops))
+    except HTTPException:
+        raise
+    except Exception as e:
+        from pymongo.errors import DuplicateKeyError
+        if isinstance(e, DuplicateKeyError):
+            raise HTTPException(status_code=400, detail="A redirect chain with this name already exists")
+        raise HTTPException(status_code=500, detail=f"Failed to update the chain: {e}")
     
     # Return updated chain
-    updated_chain = await db.redirect_chains.find_one({"_id": object_id})
+    updated_chain = await _with_retry(lambda: db.redirect_chains.find_one({"_id": object_id}))
 
     return {
         "success": True,
