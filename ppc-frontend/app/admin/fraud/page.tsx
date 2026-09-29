@@ -153,9 +153,10 @@ export default function FraudPage() {
             {[
               { rule: 'Bot User Agent', desc: 'Detects known bots, crawlers, headless browsers' },
               { rule: 'Datacenter IPs', desc: 'Blocks AWS, GCP, Azure, DigitalOcean IPs' },
-              { rule: 'Rate Limiting', desc: 'Max 10 clicks/IP/minute' },
+              { rule: 'Rate Limiting', desc: 'Max 60 clicks/IP/minute' },
               { rule: 'ML Anomaly (Isolation Forest)', desc: 'Detects unusual click patterns' },
-              { rule: 'Duplicate Clicks', desc: 'Same IP+publisher within 10 minutes' },
+              { rule: 'Duplicate Clicks', desc: 'Same IP+publisher repeat within the UTC day' },
+              { rule: 'Per-Publisher Uniqueness', desc: 'Same IP from different publishers stays valid for each' },
             ].map(item => (
               <div key={item.rule} className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
                 <div className="flex items-center gap-2 mb-1">

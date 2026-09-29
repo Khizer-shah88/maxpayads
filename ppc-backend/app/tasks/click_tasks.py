@@ -70,8 +70,13 @@ async def _process_click_async(click_id: str, click_data: dict):
             logger.info(f"Click {click_id} already processed in DB, skipping")
             return
 
-        # Run full fraud detection (includes ML model)
-        is_fraud, reason, fraud_score = await check_fraud(click_data, db, redis_client)
+        # Run full fraud detection (includes ML model). exclude_click_id makes
+        # the duplicate check look for PRIOR clicks only — the inline stage
+        # already registered the per-day key for THIS click, and reading it
+        # here flagged every fresh click as duplicate_ip (all clicks invalid).
+        is_fraud, reason, fraud_score = await check_fraud(
+            click_data, db, redis_client, exclude_click_id=str(oid),
+        )
 
         if is_fraud:
             await db.clicks.update_one(

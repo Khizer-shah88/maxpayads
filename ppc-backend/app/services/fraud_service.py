@@ -19,10 +19,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def check_fraud(click_data: dict, db, redis) -> Tuple[bool, Optional[str], float]:
+async def check_fraud(click_data: dict, db, redis, *, exclude_click_id=None) -> Tuple[bool, Optional[str], float]:
     """
     Run all fraud checks on a click.
     Returns: (is_fraud: bool, reason: str | None, fraud_score: float)
+
+    exclude_click_id: id of the click being judged. The background click task
+    runs SECONDS after the inline screening registered the per-day duplicate
+    key for this very click — Rule 5 reading that same key flagged every
+    fresh click as "duplicate_ip" (the reported "all clicks showing as
+    invalid"). The key must only ever name a PRIOR click; the judged click
+    is excluded via the fingerprint DB check below (which matches prior
+    clicks' fingerprints, never its own row).
     """
     ip = click_data.get("ip_address", "")
     publisher_id = click_data.get("publisher_id", "")
@@ -46,8 +54,19 @@ async def check_fraud(click_data: dict, db, redis) -> Tuple[bool, Optional[str],
     if is_rate_limited:
         return True, FRAUD_RATE_LIMIT, 0.90
 
-    # Rule 5: Duplicate click - same IP + publisher within window
-    is_duplicate = await check_duplicate_click(ip, publisher_id, redis)
+    # Rule 5: Duplicate click - same IP + publisher (per calendar day, UTC).
+    # Decided ONLY by prior clicks: the Redis key registered for THIS very
+    # click must not defeat it. Look up prior clicks THROUGH THE FINGERPRINT
+    # DB CHECK, excluding this click's own document. A key read here would be
+    # self-referential because the inline stage already set it for this click.
+    if exclude_click_id is not None:
+        from app.services import fraud_detection_service as _fds
+
+        is_duplicate, _original = await _fds.check_duplicate_click(
+            db, ip, publisher_id, click_data.get("campaign_id"),
+        )
+    else:
+        is_duplicate = await check_duplicate_click(ip, publisher_id, redis)
     if is_duplicate:
         return True, FRAUD_DUPLICATE_IP, 0.85
 

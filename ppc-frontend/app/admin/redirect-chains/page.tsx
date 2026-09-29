@@ -282,7 +282,18 @@ export default function RedirectChainsPage() {
       setModal(null)
       loadData()
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to save redirect chain')
+      // The API handlers return the reason under `error` (AppException) or
+      // `detail` (HTTPException/422) — read BOTH, or the real reason (e.g.
+      // "This Anchor already has an active chain") hides behind the generic
+      // failure toast and the admin cannot tell what to fix.
+      const d = err?.response?.data
+      const message =
+        (typeof d?.detail === 'string' && d.detail) ||
+        (Array.isArray(d?.detail) && d.detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')) ||
+        d?.error ||
+        err?.message ||
+        'Failed to save redirect chain'
+      toast.error(message)
     } finally {
       setSaving(false)
     }

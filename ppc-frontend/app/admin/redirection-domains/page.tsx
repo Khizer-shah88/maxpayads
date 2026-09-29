@@ -3,16 +3,17 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Edit, Trash2, Globe2, Link2, Layers, FileText, RefreshCw,
-  CheckCircle2, XCircle, Clock, Star, Info, ArrowRight,
+  CheckCircle2, XCircle, Clock, Star, Users, Info, ArrowRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import DataTable from '@/components/tables/DataTable'
 import { StatusBadge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/loading'
-import { adminApi } from '@/lib/api'
+import { adminApi, prlanderTemplateApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
-import type { RedirectionDomain, RedirectionDomainType } from '@/types'
+import type { RedirectionDomain, RedirectionDomainType, Publisher } from '@/types'
+import { publisherOption } from '@/lib/publisher-id'
 
 const DOMAIN_TYPES: {
   key: RedirectionDomainType
@@ -51,6 +52,11 @@ const DOMAIN_TYPES: {
 const EMPTY_FORM = {
   domain: '',
   domain_type: 'anchor' as RedirectionDomainType,
+  // Publishers this domain serves. Empty = every publisher (shared pool).
+  // The routing resolves publisher-assigned domains FIRST, so this binding is
+  // what makes a domain "the domain of" an existing publisher — removing it
+  // (a previous refactor did) silently broke old publishers' flows.
+  publisher_ids: [] as string[],
   is_default: false,
   status: 'active' as 'active' | 'paused',
   notes: '',
@@ -81,6 +87,7 @@ function DnsBadge({ status }: { status: string }) {
 export default function RedirectionDomainsPage() {
   const { initialize } = useAuth()
   const [domains, setDomains] = useState<RedirectionDomain[]>([])
+  const [publishers, setPublishers] = useState<Publisher[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<RedirectionDomainType>('anchor')
   const [modal, setModal] = useState<'create' | 'edit' | null>(null)
@@ -99,9 +106,13 @@ export default function RedirectionDomainsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const domRes = await adminApi.getRedirectionDomains()
+      const [domRes, pubRes] = await Promise.all([
+        adminApi.getRedirectionDomains(),
+        adminApi.getPublishers({ limit: 200 }),
+      ])
       setDomains(domRes.data?.domains ?? [])
       setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')
+      setPublishers(((pubRes.data?.publishers) ?? []).filter((p: Publisher) => p.role !== 'admin'))
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to load redirection domains')
     } finally {
@@ -128,11 +139,21 @@ export default function RedirectionDomainsPage() {
     setForm({
       domain: d.domain,
       domain_type: d.domain_type,
+      publisher_ids: d.publisher_ids || [],
       is_default: d.is_default,
       status: d.status,
       notes: d.notes || '',
     })
     setModal('edit')
+  }
+
+  const togglePublisher = (pubId: string) => {
+    setForm(prev => ({
+      ...prev,
+      publisher_ids: prev.publisher_ids.includes(pubId)
+        ? prev.publisher_ids.filter(id => id !== pubId)
+        : [...prev.publisher_ids, pubId],
+    }))
   }
 
   const handleSave = async () => {
@@ -235,6 +256,27 @@ export default function RedirectionDomainsPage() {
             <typeInfo.icon size={12} />
             {typeInfo.short}
           </span>
+        )
+      },
+    },
+    {
+      key: 'publishers',
+      label: 'Assigned Users',
+      render: (d: RedirectionDomain) => {
+        if (!d.publisher_ids?.length) {
+          return <span className="text-xs text-gray-400">All publishers (pool)</span>
+        }
+        return (
+          <div className="flex flex-wrap gap-1 max-w-[220px]">
+            {(d.publisher_names?.length ? d.publisher_names : d.publisher_ids).slice(0, 3).map((name, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-100 text-[11px] text-gray-700 font-medium">
+                <Users size={10} /> {name}
+              </span>
+            ))}
+            {d.publisher_ids.length > 3 && (
+              <span className="text-[11px] text-gray-400">+{d.publisher_ids.length - 3} more</span>
+            )}
+          </div>
         )
       },
     },
@@ -420,6 +462,32 @@ export default function RedirectionDomainsPage() {
                     </select>
                   </div>
                 )}
+
+                {/* Assigned publishers — WHICH publisher's traffic this domain serves.
+                    Routing resolves publisher-assigned domains FIRST; leaving all
+                    unchecked makes it a shared pool domain. Existing publishers must
+                    be able to receive a domain WITHOUT being recreated. */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">
+                    Assigned Publishers
+                    <span className="text-gray-400 font-normal ml-1">— none checked = shared pool</span>
+                  </label>
+                  <div className="border border-gray-200 rounded-xl max-h-40 overflow-y-auto p-2 space-y-1">
+                    {publishers.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-1 py-1">No publishers yet</p>
+                    ) : publishers.map(p => (
+                      <label key={p.id} className="flex items-center gap-2 px-1 py-0.5 cursor-pointer hover:bg-gray-50 rounded">
+                        <input
+                          type="checkbox"
+                          checked={form.publisher_ids.includes(p.id)}
+                          onChange={() => togglePublisher(p.id)}
+                          className="rounded border-gray-300 text-primary focus:ring-primary/30"
+                        />
+                        <span className="text-sm text-gray-700 truncate">{publisherOption(p)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Global default toggle */}
                 <label className="flex items-center gap-2 cursor-pointer">

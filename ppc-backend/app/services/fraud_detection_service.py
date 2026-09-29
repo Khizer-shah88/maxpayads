@@ -25,6 +25,7 @@ import hashlib
 import time
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
+from bson import ObjectId
 from user_agents import parse as parse_user_agent
 import logging
 
@@ -233,10 +234,16 @@ async def check_duplicate_click(
     publisher_id: str,
     campaign_id: Optional[str],
     window_minutes: int = 60,
+    exclude_click_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Check if this is a duplicate click from same IP within time window.
     Returns (is_duplicate, click_id of original).
+
+    exclude_click_id: when the click being JUDGED is already written to the
+    clicks collection (the background task path), its own document must be
+    excluded — the fingerprint recipe includes the publisher, so the judged
+    click matches its own fingerprint and would flag itself.
     """
     # Generate fingerprint
     fingerprint_data = f"{ip_address}:{publisher_id}:{campaign_id or 'none'}"
@@ -248,17 +255,21 @@ async def check_duplicate_click(
     # hit the (fingerprint, timestamp) compound index — a mismatched field here
     # used to full-scan the clicks collection on EVERY request.
     since = datetime.utcnow() - timedelta(minutes=window_minutes)
-    
-    existing = await db.clicks.find_one(
-        {
-            "fingerprint": fingerprint,
-            "$or": [
-                {"timestamp": {"$gte": since}},
-                {"created_at": {"$gte": since}},
-            ],
-        },
-        {"_id": 1},
-    )
+
+    query: Dict[str, Any] = {
+        "fingerprint": fingerprint,
+        "$or": [
+            {"timestamp": {"$gte": since}},
+            {"created_at": {"$gte": since}},
+        ],
+    }
+    try:
+        if exclude_click_id:
+            query["_id"] = {"$ne": ObjectId(exclude_click_id)}
+    except Exception:
+        pass
+
+    existing = await db.clicks.find_one(query, {"_id": 1})
     
     if existing:
         return True, str(existing.get("_id"))
