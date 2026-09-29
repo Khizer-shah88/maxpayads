@@ -97,6 +97,11 @@ echo "Docker Compose configuration: OK"
 # ── Build and start containers ───────────────────────────────────────────────
 echo "Building Docker images..."
 
+# Clean up any stuck containers before starting
+echo "Cleaning up any stuck containers..."
+docker rm -f $(docker ps -a -q -f name=ppc_celery_beat) 2>/dev/null || true
+docker compose -f docker-compose.prod.yml down --remove-orphans 2>/dev/null || true
+
 docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
 
 # ── Force nginx restart with new configuration ─────────────────────────────────
