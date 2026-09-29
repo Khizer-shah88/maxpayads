@@ -456,9 +456,14 @@ async def stage_record_click(ctx: RedirectResolutionContext, db) -> bool:
     that happened, and must still appear in Statistics.
     """
     click_data = ctx.to_click_fields()
+    
+    # Determine if click is valid based on fraud detection results
+    # Valid clicks: not blocked and not flagged
+    is_click_valid = not ctx.is_blocked and not ctx.is_flagged and ctx.click_status != "invalid"
+    
     click_data.update({
         "status": ctx.click_status,
-        "is_valid": False,
+        "is_valid": is_click_valid,
         "fraud_reason": ctx.fraud_reason,
         "fraud_score": ctx.fraud_score,
         "traffic_classification": ctx.traffic_classification,
