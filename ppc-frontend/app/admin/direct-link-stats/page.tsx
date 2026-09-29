@@ -40,6 +40,7 @@ interface Publisher {
   id: string
   name: string
   email: string
+  publisher_type?: string
   role: string
   status: string
 }
@@ -704,7 +705,15 @@ export default function DirectLinkStatsPage() {
                           </div>
                           <div className="min-w-0">
                             <p className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">{pub.name}</p>
-                            <p className="text-xs text-gray-400 truncate max-w-[200px]">{pub.email}</p>
+                            <p className="text-xs text-gray-400 truncate max-w-[200px]">
+                              {/* Manual publishers carry no real email — their
+                                  placeholder identity (manual+…@manual.invalid)
+                                  must never surface; show (-) like the
+                                  Publishers page email column does. */}
+                              {pub.publisher_type === 'manual' || pub.email?.includes('@manual.invalid')
+                                ? '(-)'
+                                : (pub.email || '')}
+                            </p>
                             <PublisherId publicId={pub.public_id} publisherId={pub.id} />
                           </div>
                         </div>

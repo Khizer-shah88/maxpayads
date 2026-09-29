@@ -27,8 +27,14 @@ class DomainAccessMiddleware:
             role = await allow_path(get_database(), request.headers.get('host', ''), path,
                                     redis=get_redis())
         except Exception:
+            # Deny on a store hiccup (Redis/Mongo blip) with a REAL 403:
+            # nginx's auth_request translates any non-2xx/401/403 subrequest
+            # status into a bare 500 — behind Cloudflare that surfaces as the
+            # flaky "Error 520 — web server is returning an unknown error"
+            # the admin saw on intermediate domains. A 403 rides the existing
+            # error_page (@domain_denied → 404) and stays deny-safe.
             logging.exception('Domain access lookup failed')
-            response = Response(status_code=503, headers={'Cache-Control': 'no-store'})
+            response = Response(status_code=403, headers={'Cache-Control': 'no-store'})
             return await response(scope, receive, send)
         if not role or probe:
             response = (JSONResponse({'role': role}, headers={'Cache-Control': 'no-store'}) if role

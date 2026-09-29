@@ -269,6 +269,10 @@ export default function RedirectChainsPage() {
         name: form.name.trim(),
         anchor_domain: form.anchor_domain.trim(),
         inter_domain: form.inter_domain.trim(),
+        // The pool can accumulate whitespace-only entries from pasted values —
+        // trimmed, deduped, empties dropped so the backend sees clean hosts.
+        prelander_pool: Array.from(new Set(form.prelander_pool.map(d => d.trim()).filter(Boolean))),
+        extra_domains: Array.from(new Set(form.extra_domains.map(d => d.trim()).filter(Boolean))),
       }
 
       if (modal === 'edit' && editTarget) {
@@ -287,13 +291,21 @@ export default function RedirectChainsPage() {
       // "This Anchor already has an active chain") hides behind the generic
       // failure toast and the admin cannot tell what to fix.
       const d = err?.response?.data
-      const message =
+      const status = err?.response?.status
+      let message =
         (typeof d?.detail === 'string' && d.detail) ||
         (Array.isArray(d?.detail) && d.detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')) ||
         d?.error ||
-        err?.message ||
-        'Failed to save redirect chain'
-      toast.error(message)
+        ''
+      if (status === 500) {
+        // Keep the server's wording when it carries a real cause (the new
+        // "Failed to create the chain: …" shape), otherwise translate the
+        // bare generic text into something actionable.
+        if (!message || message.toLowerCase().includes('internal server error')) {
+          message = 'Server error while saving — please retry. If it persists, check the anchors/domains configuration.'
+        }
+      }
+      toast.error(message || 'Failed to save redirect chain')
     } finally {
       setSaving(false)
     }

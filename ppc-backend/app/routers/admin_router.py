@@ -443,18 +443,29 @@ async def delete_publisher_stats(
     db=Depends(get_db),
 ):
     """
-    Delete only statistics data for a publisher (clicks, withdrawals, fraud logs).
-    The publisher account remains active.
+    Delete ONLY statistics data for a publisher. The publisher account remains
+    active.
+
+    Sweeps every stats surface (clicks, withdrawals, fraud logs, direct links
+    and their counters/events, manual conversion entries, whitelabel stats
+    profiles) AND resets the embedded counters the publishers page shows —
+    deleting the stats must leave zero attributed numbers anywhere.
     """
     # Verify publisher exists
     publisher = await get_publisher_by_id(publisher_id, db)
     if not publisher:
         raise NotFoundError("Publisher")
-    
+
     result = await delete_publisher_stats_only(publisher_id, db)
+    removed = sum(v for v in result.values() if isinstance(v, int))
     return {
         "success": True,
-        "message": "Statistics deleted successfully. Publisher account remains active.",
+        "message": (
+            "Statistics deleted — all clicks, links data and counters removed. "
+            "Publisher account remains active."
+            if removed
+            else "Nothing to delete — this publisher has no recorded statistics."
+        ),
         "deleted": result,
     }
 

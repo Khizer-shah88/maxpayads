@@ -66,14 +66,31 @@ async def _validate_extra_domains(db, domains: List[str]) -> None:
 
 
 async def _validate_chain_layout(db, chain, exclude_id=None):
-    sequence = [chain['anchor_domain'], chain_inter_domain(chain), *(chain.get('extra_domains') or [])]
+    """
+    Duplicate-domain + one-active-chain-per-anchor checks.
+
+    KeyError-safe: an old chain document may be missing `anchor_domain` or
+    carry only the legacy `intermediate_domain` spelling. `chain['anchor_domain']`
+    on such a document raised a bare KeyError → the admin's SAVE answered 500
+    "Internal server error" instead of a real validation message. Missing keys
+    now read as empty values, the domain check ignores empties, and unexpected
+    shapes fail the request with a clear 400 instead of a 500.
+    """
+    anchor = chain.get('anchor_domain') or ''
+    inter = chain_inter_domain(chain) or ''
+    extras = [d for d in (chain.get('extra_domains') or []) if d]
+    sequence = [d for d in (anchor, inter, *extras) if d]
     if len(set(sequence)) != len(sequence):
         raise HTTPException(status_code=400, detail="A domain cannot appear twice in a chain")
-    if chain.get('status') == 'active':
-        query = {'anchor_domain': chain['anchor_domain'], 'status': 'active'}
+    if (chain.get('status') or 'active') == 'active' and anchor:
+        query = {'anchor_domain': anchor, 'status': 'active'}
         if exclude_id:
             query['_id'] = {'$ne': exclude_id}
-        if await db.redirect_chains.find_one(query):
+        try:
+            active_anchor = await db.redirect_chains.find_one(query)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
+        if active_anchor:
             raise HTTPException(status_code=400, detail="This Anchor already has an active chain")
 
 
@@ -118,9 +135,21 @@ async def create_redirect_chain(
     current_user = Depends(get_current_admin)
 ):
     """Create a new redirect chain"""
-    
+    name = (request.name or "").strip()
+    if not name:
+        # Blank/whitespace names bypassed min_length=1 via spaces → insert_ok but
+        # forever invisible in the list (blank rows). 400, not a stored blank chain.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chain name is required",
+        )
+    # Trim the domain inputs too — a trailing space/newline in any domain made
+    # every lookup miss the domain and answered a confusing 400.
+    anchor_hostname = (request.anchor_domain or "").strip()
+    inter_hostname = (request.inter_domain or "").strip()
+
     # Check if chain name already exists
-    existing = await db.redirect_chains.find_one({"name": request.name})
+    existing = await db.redirect_chains.find_one({"name": name})
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -129,25 +158,25 @@ async def create_redirect_chain(
     
     # Validate that domains exist in redirection_domains collection
     anchor_domain = await db.redirection_domains.find_one({
-        "domain": request.anchor_domain,
+        "domain": anchor_hostname,
         "domain_type": domain_type_filter(DOMAIN_TYPE_ANCHOR),
         "status": "active"
     })
     if not anchor_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Anchor domain '{request.anchor_domain}' not found or not active"
+            detail=f"Anchor domain '{anchor_hostname}' not found or not active"
         )
     
     inter_domain = await db.redirection_domains.find_one({
-        "domain": request.inter_domain,
+        "domain": inter_hostname,
         "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
         "status": "active"
     })
     if not inter_domain:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Inter domain '{request.inter_domain}' not found or not active"
+            detail=f"Inter domain '{inter_hostname}' not found or not active"
         )
     
     # Validate Prelander Pool domains
@@ -169,9 +198,9 @@ async def create_redirect_chain(
     # Create new chain
     now = datetime.utcnow()
     chain_data = {
-        "name": request.name,
-        "anchor_domain": request.anchor_domain,
-        "inter_domain": request.inter_domain,
+        "name": name,
+        "anchor_domain": anchor_hostname,
+        "inter_domain": inter_hostname,
         "prelander_pool": request.prelander_pool,
         "extra_domains": request.extra_domains,
         "session_validation": request.session_validation,
@@ -187,7 +216,22 @@ async def create_redirect_chain(
     }
     
     await _validate_chain_layout(db, chain_data)
-    result = await db.redirect_chains.insert_one(chain_data)
+    try:
+        result = await db.redirect_chains.insert_one(chain_data)
+    except Exception as e:
+        # A duplicate-key race (two saves of the same chain name/anchor landing
+        # together) or a transient store failure must come back as a clear,
+        # actionable message — a bare 500 told the admin nothing.
+        from pymongo.errors import DuplicateKeyError
+        if isinstance(e, DuplicateKeyError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A redirect chain with this name already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create the chain: {e}",
+        )
     chain_data["_id"] = result.inserted_id
 
     return {
@@ -242,9 +286,12 @@ async def update_redirect_chain(
     update_data = {"updated_at": datetime.utcnow()}
     
     if request.name is not None:
+        name = (request.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Chain name cannot be empty")
         # Check name uniqueness (excluding current chain)
         name_exists = await db.redirect_chains.find_one({
-            "name": request.name,
+            "name": name,
             "_id": {"$ne": object_id}
         })
         if name_exists:
@@ -252,33 +299,35 @@ async def update_redirect_chain(
                 status_code=400,
                 detail="A redirect chain with this name already exists"
             )
-        update_data["name"] = request.name
+        update_data["name"] = name
     
     if request.anchor_domain is not None:
+        anchor_hostname = (request.anchor_domain or "").strip()
         anchor_domain = await db.redirection_domains.find_one({
-            "domain": request.anchor_domain,
+            "domain": anchor_hostname,
             "domain_type": domain_type_filter(DOMAIN_TYPE_ANCHOR),
             "status": "active"
         })
         if not anchor_domain:
             raise HTTPException(
                 status_code=400,
-                detail=f"Anchor domain '{request.anchor_domain}' not found or not active"
+                detail=f"Anchor domain '{anchor_hostname}' not found or not active"
             )
-        update_data["anchor_domain"] = request.anchor_domain
+        update_data["anchor_domain"] = anchor_hostname
     
     if request.inter_domain is not None:
+        inter_hostname = (request.inter_domain or "").strip()
         inter_domain = await db.redirection_domains.find_one({
-            "domain": request.inter_domain,
+            "domain": inter_hostname,
             "domain_type": domain_type_filter(DOMAIN_TYPE_INTER),
             "status": "active"
         })
         if not inter_domain:
             raise HTTPException(
                 status_code=400,
-                detail=f"Inter domain '{request.inter_domain}' not found or not active"
+                detail=f"Inter domain '{inter_hostname}' not found or not active"
             )
-        update_data["inter_domain"] = request.inter_domain
+        update_data["inter_domain"] = inter_hostname
     
     if request.prelander_pool is not None:
         for domain in request.prelander_pool:
@@ -330,7 +379,7 @@ async def update_redirect_chain(
     return {
         "success": True,
         "message": "Redirect chain updated successfully",
-        "chain": _serialize_chain(updated_chain)
+        "chain": _serialize_chain(updated_chain or existing_chain)
     }
 
 
@@ -388,9 +437,10 @@ async def create_chain_session(
     # Generate session token
     session_token = secrets.token_urlsafe(32)
     
-    # Calculate expiration
+    # Calculate expiration (lifetime is minutes; old docs may miss it)
     now = datetime.utcnow()
-    expires_at = now + timedelta(minutes=chain["cookie_lifetime"])
+    lifetime = int(chain.get("cookie_lifetime", 60) or 60)
+    expires_at = now + timedelta(minutes=lifetime)
     
     # Select pre-lander domain — weighted among ACTIVE pool domains only.
     from app.services.domain_service import select_active_prelander
@@ -452,10 +502,13 @@ async def validate_chain_session(
     })
     
     if not session:
-        await db.redirect_chains.update_one(
-            {"_id": ObjectId(chain_id)},
-            {"$inc": {"blocked_sessions": 1}}
-        )
+        try:
+            await db.redirect_chains.update_one(
+                {"_id": ObjectId(chain_id)},
+                {"$inc": {"blocked_sessions": 1}}
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=403, detail="Invalid or expired session")
     
     # Check expiration
@@ -464,10 +517,13 @@ async def validate_chain_session(
             {"_id": session["_id"]},
             {"$set": {"is_valid": False, "blocked_reason": "expired"}}
         )
-        await db.redirect_chains.update_one(
-            {"_id": ObjectId(chain_id)},
-            {"$inc": {"blocked_sessions": 1}}
-        )
+        try:
+            await db.redirect_chains.update_one(
+                {"_id": ObjectId(chain_id)},
+                {"$inc": {"blocked_sessions": 1}}
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=403, detail="Session expired")
     
     # Validate IP and User-Agent (basic fingerprinting)
@@ -476,10 +532,13 @@ async def validate_chain_session(
             {"_id": session["_id"]},
             {"$set": {"is_valid": False, "blocked_reason": "fingerprint_mismatch"}}
         )
-        await db.redirect_chains.update_one(
-            {"_id": ObjectId(chain_id)},
-            {"$inc": {"blocked_sessions": 1}}
-        )
+        try:
+            await db.redirect_chains.update_one(
+                {"_id": ObjectId(chain_id)},
+                {"$inc": {"blocked_sessions": 1}}
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=403, detail="Session validation failed")
     
     # Update session step
@@ -495,21 +554,22 @@ async def validate_chain_session(
     elif step == "prelander" and not session.get("prelander_timestamp"):
         update_data["prelander_timestamp"] = now
         # Update valid sessions count
-        await db.redirect_chains.update_one(
-            {"_id": ObjectId(chain_id)},
-            {"$inc": {"valid_sessions": 1}}
-        )
-    
+        try:
+            await db.redirect_chains.update_one(
+                {"_id": ObjectId(chain_id)},
+                {"$inc": {"valid_sessions": 1}}
+            )
+        except Exception:
+            pass
     if update_data:
         await db.redirect_chain_sessions.update_one(
             {"_id": session["_id"]},
             {"$set": update_data}
         )
-    
     return {
         "success": True,
         "valid": True,
-        "selected_prelander": session["selected_prelander"],
+        "selected_prelander": session.get("selected_prelander"),
         "next_step": "prelander" if step == "inter" else "complete"
     }
 
@@ -579,14 +639,14 @@ async def get_chain_stats(
     return {
         "chain": {
             "id": str(chain["_id"]),
-            "name": chain["name"],
-            "status": chain["status"]
+            "name": chain.get("name", ""),
+            "status": chain.get("status", "active")
         },
         "summary": {
-            "total_sessions": chain["total_sessions"],
-            "valid_sessions": chain["valid_sessions"],
-            "blocked_sessions": chain["blocked_sessions"],
-            "conversion_rate": chain["conversion_rate"]
+            "total_sessions": chain.get("total_sessions", 0),
+            "valid_sessions": chain.get("valid_sessions", 0),
+            "blocked_sessions": chain.get("blocked_sessions", 0),
+            "conversion_rate": chain.get("conversion_rate", 0.0)
         },
         "daily_breakdown": daily_stats,
         "date_range": {

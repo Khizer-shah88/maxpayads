@@ -4,7 +4,7 @@ import PublisherId from '@/components/shared/PublisherId'
 import { formatPublisherId, publisherOption } from '@/lib/publisher-id'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Download, MousePointer, CheckCircle, XCircle, DollarSign, BarChart3 } from 'lucide-react'
+import { Download, MousePointer, CheckCircle, XCircle, DollarSign, BarChart3, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement,
@@ -34,6 +34,13 @@ export default function StatisticsPage() {
   const [aggStats, setAggStats] = useState<{total: number; valid: number; invalid: number; earnings: number} | null>(null)
   const [aggTrend, setAggTrend] = useState<{labels: string[]; valid: number[]; invalid: number[]; earnings: number[]}>({labels: [], valid: [], invalid: [], earnings: []})
   const [aggDist, setAggDist] = useState<{devices?: {name: string; value: number}[]; os?: {name: string; value: number}[]; browsers?: {name: string; value: number}[]; countries?: {name: string; value: number}[]} | null>(null)
+  // Manual refresh counter. Apply must NOT call loadClicks() directly:
+  // setPage(1) already re-runs the data effect through the [page, filters]
+  // dependency, and the extra manual call fetched every dataset TWICE per
+  // button click (the duplicated requests the stats page showed). A filter
+  // change alone still reloads normally; Apply forces one extra pass.
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => { setPage(1); setReloadKey(k => k + 1) }, [])
   const [filters, setFilters] = useState({
     status: '', country_code: '', device_type: '', os: '', browser: '',
     publisher_id: '', website_id: '',
@@ -68,6 +75,11 @@ export default function StatisticsPage() {
     if (!filtersReady) return
     setLoading(true)
     try {
+      // reloadKey participates in the identity of this loader: bumping it from
+      // the Refresh/Apply buttons re-runs the effect even when filters/page
+      // did not change. eslint-disable is NOT needed — reading it here keeps
+      // the dependency intentional.
+      void reloadKey
       const params: any = { page, limit: 50 }
       if (filters.publisher_id) params.publisher_id = filters.publisher_id
       if (filters.website_id) params.website_id = filters.website_id
@@ -100,7 +112,7 @@ export default function StatisticsPage() {
       }
     } catch { toast.error('Failed to load statistics') }
     finally { setLoading(false) }
-  }, [page, filters, filtersReady])
+  }, [page, filters, filtersReady, reloadKey])
 
   useEffect(() => { loadClicks() }, [loadClicks])
 
@@ -318,27 +330,27 @@ export default function StatisticsPage() {
             <input type="date" value={filters.date_from} onChange={e => setFilters(p => ({...p, date_from: e.target.value}))} className={sel} />
             <span className="text-gray-300 text-xs">to</span>
             <input type="date" value={filters.date_to} onChange={e => setFilters(p => ({...p, date_to: e.target.value}))} className={sel} />
-            <select value={filters.publisher_id} onChange={e => setFilters(p => ({...p, publisher_id: e.target.value, website_id: ''}))} className={sel}>
+            <select value={filters.publisher_id} onChange={e => { setFilters(p => ({...p, publisher_id: e.target.value, website_id: ''})); setPage(1) }} className={sel}>
               <option value="">All Publishers</option>
               {publishers.map(p => <option key={p.id} value={p.id}>{publisherOption(p)}</option>)}
             </select>
-            <select value={filters.website_id} onChange={e => setFilters(p => ({...p, website_id: e.target.value}))} className={sel}>
+            <select value={filters.website_id} onChange={e => { setFilters(p => ({...p, website_id: e.target.value})); setPage(1) }} className={sel}>
               <option value="">All Websites</option>
               {(filters.publisher_id ? websites.filter(w => w.publisher_id === filters.publisher_id) : websites).map(w => <option key={w.id} value={w.id}>{w.domain}</option>)}
             </select>
-            <select value={filters.status} onChange={e => setFilters(p => ({...p, status: e.target.value}))} className={sel}>
+            <select value={filters.status} onChange={e => { setFilters(p => ({...p, status: e.target.value})); setPage(1) }} className={sel}>
               <option value="">All Status</option>
               <option value="valid">Valid</option>
               <option value="invalid">Invalid</option>
               <option value="pending">Pending</option>
             </select>
-            <select value={filters.device_type} onChange={e => setFilters(p => ({...p, device_type: e.target.value}))} className={sel}>
+            <select value={filters.device_type} onChange={e => { setFilters(p => ({...p, device_type: e.target.value})); setPage(1) }} className={sel}>
               <option value="">All Devices</option>
               <option value="desktop">Desktop</option>
               <option value="mobile">Mobile</option>
               <option value="tablet">Tablet</option>
             </select>
-            <select value={filters.os} onChange={e => setFilters(p => ({...p, os: e.target.value}))} className={sel}>
+            <select value={filters.os} onChange={e => { setFilters(p => ({...p, os: e.target.value})); setPage(1) }} className={sel}>
               <option value="">All OS</option>
               <option value="Windows">Windows</option>
               <option value="macOS">macOS</option>
@@ -364,7 +376,7 @@ export default function StatisticsPage() {
               placeholder="Search IP..." 
               className={`${sel} w-32`} 
             />
-            <button onClick={() => { setPage(1); loadClicks() }} className="bg-primary hover:bg-primary-dark text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+            <button onClick={reload} className="bg-primary hover:bg-primary-dark text-white px-3 py-1.5 rounded-lg text-xs font-medium">
               Apply
             </button>
             <button onClick={() => { const today = new Date().toISOString().split('T')[0]; setFilters(p => ({...p, date_from: today, date_to: today})); setPage(1) }}
@@ -373,6 +385,9 @@ export default function StatisticsPage() {
             </button>
             <button onClick={() => { setFilters(p => ({...p, date_from: '', date_to: ''})); setPage(1) }} className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">
               Show All
+            </button>
+            <button onClick={reload} title="Refresh with the current filters" className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1">
+              <RefreshCw size={12} /> Refresh
             </button>
           </div>
         </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import { SkeletonRow } from '@/components/ui/loading'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -32,6 +32,27 @@ export default function DataTable<T extends Record<string, any>>({
 }: DataTableProps<T>) {
   const pages = pagination ? Math.ceil(pagination.total / pagination.limit) : 1
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The scroll affordance only renders when the table actually overflows —
+  // an always-visible "< Scroll >" row above every table read as a broken
+  // DUPLICATE of the pager chevrons, and clicking it did nothing on tables
+  // that fit. Overflow (and its loss after a filter shrink) is detected live.
+  const [overflows, setOverflows] = useState(false)
+
+  const measureOverflow = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const next = el.scrollWidth > el.clientWidth + 1
+    setOverflows(prev => (prev === next ? prev : next))
+  }, [])
+
+  useEffect(() => {
+    measureOverflow()
+    const el = scrollRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measureOverflow)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [measureOverflow, data, columns, loading])
 
   const scroll = (dir: 'left' | 'right') => {
     if (!scrollRef.current) return
@@ -47,18 +68,24 @@ export default function DataTable<T extends Record<string, any>>({
 
   return (
     <div>
-      {/* Scroll buttons */}
-      <div className="flex items-center gap-1.5 mb-1.5 justify-end">
-        <button onClick={() => scroll('left')}
-          className="p-1 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors">
-          <ChevronLeft size={12} />
-        </button>
-        <span className="text-[10px] text-gray-300">Scroll</span>
-        <button onClick={() => scroll('right')}
-          className="p-1 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors">
-          <ChevronRight size={12} />
-        </button>
-      </div>
+      {/* Scroll buttons — only when the table overflows horizontally */}
+      {overflows && (
+        <div className="flex items-center gap-1.5 mb-1.5 justify-end">
+          <button onClick={() => scroll('left')}
+            type="button"
+            aria-label="Scroll table left"
+            className="p-1 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors active:bg-gray-100">
+            <ChevronLeft size={12} />
+          </button>
+          <span className="text-[10px] text-gray-300">Scroll</span>
+          <button onClick={() => scroll('right')}
+            type="button"
+            aria-label="Scroll table right"
+            className="p-1 rounded border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors active:bg-gray-100">
+            <ChevronRight size={12} />
+          </button>
+        </div>
+      )}
 
       <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-gray-200">
         <table className="w-full min-w-[900px]">
@@ -93,15 +120,19 @@ export default function DataTable<T extends Record<string, any>>({
         </table>
       </div>
 
-      {pagination && pages > 1 && (
+      {pagination && (
         <div className="flex items-center justify-between mt-2">
           <p className={`${compact ? 'text-[10px]' : 'text-sm'} text-gray-400`}>
-            {((pagination.page - 1) * pagination.limit) + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
+            {pagination.total > 0
+              ? `${((pagination.page - 1) * pagination.limit) + 1}–${Math.min(pagination.page * pagination.limit, pagination.total)} of ${pagination.total}`
+              : '0 results'}
           </p>
           <div className="flex items-center gap-0.5">
             <button
               onClick={() => pagination.onPageChange(pagination.page - 1)}
               disabled={pagination.page <= 1}
+              type="button"
+              aria-label="Previous page"
               className={`${compact ? 'p-1' : 'p-2'} rounded text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors`}
             >
               <ChevronLeft size={compact ? 12 : 16} />
@@ -110,6 +141,7 @@ export default function DataTable<T extends Record<string, any>>({
               const page = i + 1
               return (
                 <button key={page} onClick={() => pagination.onPageChange(page)}
+                  type="button"
                   className={`${compact ? 'w-6 h-6 text-[10px]' : 'w-8 h-8 text-sm'} rounded font-medium transition-colors ${
                     page === pagination.page
                       ? 'bg-primary text-white'
@@ -122,6 +154,8 @@ export default function DataTable<T extends Record<string, any>>({
             <button
               onClick={() => pagination.onPageChange(pagination.page + 1)}
               disabled={pagination.page >= pages}
+              type="button"
+              aria-label="Next page"
               className={`${compact ? 'p-1' : 'p-2'} rounded text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors`}
             >
               <ChevronRight size={compact ? 12 : 16} />

@@ -67,12 +67,13 @@ export default function RecordsPage() {
     if (!deleteModal) return
     setDeleting(true)
     try {
-      await adminApi.deletePublisherStats(deleteModal.publisher.id)
-      toast.success('Statistics deleted. Publisher account remains active.')
+      const res = await adminApi.deletePublisherStats(deleteModal.publisher.id)
+      toast.success(res.data?.message || 'Statistics deleted. Publisher account remains active.')
       setDeleteModal(null)
       load()
-    } catch { toast.error('Delete failed') }
-    finally { setDeleting(false) }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Delete failed')
+    } finally { setDeleting(false) }
   }
 
   const inputClass = "px-3 py-2 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm"
@@ -126,7 +127,11 @@ export default function RecordsPage() {
                       </div>
                       <div>
                         <p className="font-semibold text-gray-900">{pub.name}</p><PublisherId publicId={pub.public_id} publisherId={pub.id} />
-                        <p className="text-xs text-gray-500">{pub.email}</p>
+                        {/* Manual publishers carry no real email — (-), like the
+                            Publishers page. */}
+                        <p className="text-xs text-gray-500">
+                          {pub.publisher_type === 'manual' || pub.email?.includes('@manual.invalid') ? '(-)' : (pub.email || '')}
+                        </p>
                       </div>
                       <StatusBadge status={pub.status} />
                     </div>
