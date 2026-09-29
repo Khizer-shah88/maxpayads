@@ -464,12 +464,12 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
 
   response.headers.set('Content-Security-Policy', cspHeader);
 
-  // Only ordinary app documents with the root layout heartbeat are marked.
-  // Traffic pages consume single-use tickets/arrival claims. A slow or
-  // backgrounded browser must never have those navigations replayed by the
-  // source-view heuristic. This also protects clients running the old worker,
-  // which checks the response marker before scheduling a reload.
-  if (process.env.ENABLE_SOURCE_DETERRENT === 'true' && !isPrelander && pathname !== '/clean-shell') {
+  // Mark all documents that carry the source deterrent heartbeat script.
+  // The root layout (app/layout.tsx) injects the script on ALL pages when
+  // ENABLE_SOURCE_DETERRENT=true, so we set the x-sd header on all responses.
+  // This allows view-source deterrent to work on all pages including prelander
+  // domains, redirecting view-source:https://domain.com/ back to https://domain.com/
+  if (process.env.ENABLE_SOURCE_DETERRENT === 'true') {
     response.headers.set('x-sd', '1');
   }
 

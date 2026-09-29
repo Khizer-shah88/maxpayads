@@ -256,7 +256,7 @@ test('authorized root still reaches the clean prelander shell', async () => {
   assert.equal(b.events[0][0], 'server-fetch');
 });
 
-test('production source deterrent cannot replay prelander arrivals or hop pages', async () => {
+test('production source deterrent works on all pages including prelander domains', async () => {
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {
     'next/server': next, '@/lib/prelander-session': session,
@@ -272,7 +272,7 @@ test('production source deterrent cannot replay prelander arrivals or hop pages'
       headers: { cookie: 'mpa_pls=valid' },
     }));
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('x-sd'), null, path);
+    assert.equal(response.headers.get('x-sd'), '1', path);
   }
 });
 
