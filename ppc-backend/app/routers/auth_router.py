@@ -14,6 +14,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", status_code=201)
 async def register(data: RegisterRequest, db=Depends(get_db)):
     """Register a new publisher account."""
+    # Emails are stored lowercase and looked up case-insensitively — casing
+    # mix at sign-up used to make the account unfindable at login.
+    data.email = str(data.email or "").strip().lower()
     existing = await get_publisher_by_email(data.email, db)
     if existing:
         raise ConflictError("Email already registered")
@@ -47,7 +50,8 @@ async def register(data: RegisterRequest, db=Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(data: LoginRequest, db=Depends(get_db)):
     """Login with email and password, receive JWT tokens."""
-    publisher = await get_publisher_by_email(data.email, db)
+    # Case-insensitive find: any casing the visitor types must reach the account
+    publisher = await get_publisher_by_email(str(data.email or "").strip().lower(), db)
     if not publisher:
         raise UnauthorizedError("Invalid email or password")
 

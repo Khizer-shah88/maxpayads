@@ -4,6 +4,7 @@ from bson import ObjectId
 from app.core.security import hash_password
 from starlette.concurrency import run_in_threadpool
 import logging
+import re
 import secrets
 import hashlib
 
@@ -141,7 +142,20 @@ async def create_manual_publisher(data: dict, db, admin_id: Optional[str] = None
 
 
 async def get_publisher_by_email(email: str, db) -> Optional[dict]:
-    publisher = await db.publishers.find_one({"email": email})
+    # Email casing must NEVER decide whether an account is findable: Mongo
+    # string equality is case-sensitive, so an account stored as
+    # "John@Gmail.Com" was unreachable when logging in as "john@gmail.com"
+    # (the reported "valid credentials show invalid"). The index stays used
+    # via a trailing-wildcard regex ($regex anchored ^ + $i) — still one
+    # index scan, not a regex over the collection.
+    wanted = (email or "").strip()
+    if not wanted:
+        return None
+    publisher = await db.publishers.find_one({"email": wanted})
+    if not publisher:
+        # Case-insensitive fallback: exact spelling miss, but same account.
+        escaped = "^" + re.escape(wanted) + "$"
+        publisher = await db.publishers.find_one({"email": {"$regex": escaped, "$options": "i"}})
     if publisher:
         publisher["id"] = str(publisher.pop("_id"))
     return publisher
