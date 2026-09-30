@@ -78,9 +78,9 @@ class FraudScore:
             return TRAFFIC_INVALID
         elif self.score >= 60:
             return TRAFFIC_BOT
-        elif self.score >= 40:
+        elif self.score >= 50:
             return TRAFFIC_SUSPICIOUS
-        elif self.score >= 20:
+        elif self.score >= 30:
             return TRAFFIC_DUPLICATE
         else:
             return TRAFFIC_VALID
@@ -162,34 +162,36 @@ def analyze_user_agent_structure(user_agent: str) -> Tuple[bool, Optional[str]]:
     """
     Analyze user agent structure for anomalies.
     Returns (is_suspicious, reason).
+    
+    NOTE: This function should be VERY conservative to avoid flagging legitimate users.
+    Only flag OBVIOUS bot/automation signals.
     """
     if not user_agent:
-        return True, "Empty user agent"
+        # Empty UA is handled separately, don't double-penalize
+        return False, None
     
-    # Check length
-    if len(user_agent) < 20:
+    # Check length - be more lenient
+    if len(user_agent) < 10:
         return True, "User agent too short"
     
-    if len(user_agent) > 500:
+    if len(user_agent) > 1000:
         return True, "User agent too long"
     
     # Parse user agent
     try:
         ua = parse_user_agent(user_agent)
         
-        # Check for completely unknown browser
-        if ua.browser.family == 'Other' and ua.os.family == 'Other':
-            return True, "Unknown browser and OS"
+        # Only flag if BOTH browser and OS are completely unknown
+        # Mobile apps and custom clients often have valid custom UAs
+        if ua.browser.family == 'Other' and ua.os.family == 'Other' and len(user_agent) < 30:
+            return True, "Suspicious minimal user agent"
         
-        # Check for very old browsers (potential spoofing)
-        if ua.browser.version and len(ua.browser.version) > 0:
-            major_version = ua.browser.version[0]
-            if major_version and int(major_version) < 50 and ua.browser.family in ['Chrome', 'Firefox']:
-                return True, f"Very old browser version: {ua.browser.family} {major_version}"
+        # Don't flag old browsers - users on old devices are legitimate
         
     except Exception as e:
         logger.debug(f"UA parsing error: {e}")
-        return True, "Failed to parse user agent"
+        # Don't flag on parsing errors - the UA might just be non-standard
+        return False, None
     
     return False, None
 
@@ -381,19 +383,19 @@ async def classify_traffic(
             # Automation tools, script clients, etc. — straight to suspicious
             score.add_signal("bot_ua", 40, bot_reason)
 
-    # 2. User agent structure analysis (weight: 10)
+    # 2. User agent structure analysis (weight: 5 - reduced to be less aggressive)
     is_suspicious_ua, ua_reason = analyze_user_agent_structure(user_agent)
     if is_suspicious_ua:
-        score.add_signal("suspicious_ua", 10, ua_reason)
+        score.add_signal("suspicious_ua", 5, ua_reason)
 
     # 3. Headless/automation signals (weight: 25)
     has_headless, headless_signals = detect_headless_signals(headers, user_agent)
     if has_headless:
         score.add_signal("headless", 25, f"Headless signals: {', '.join(headless_signals)}")
 
-    # 4. Empty user agent (weight: 15)
+    # 4. Empty user agent (weight: 10 - reduced to be less aggressive)
     if not user_agent:
-        score.add_signal("no_ua", 15, "Empty user agent")
+        score.add_signal("no_ua", 10, "Empty user agent")
 
     result = score.to_dict()
     classification = result["classification"]
