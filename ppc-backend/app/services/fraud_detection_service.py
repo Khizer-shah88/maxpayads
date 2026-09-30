@@ -260,16 +260,19 @@ async def check_duplicate_click(
 
     query: Dict[str, Any] = {
         "fingerprint": fingerprint,
+        "status": {"$ne": "invalid"},
         "$or": [
             {"timestamp": {"$gte": since}},
             {"created_at": {"$gte": since}},
         ],
     }
-    try:
-        if exclude_click_id:
-            query["_id"] = {"$ne": ObjectId(exclude_click_id)}
-    except Exception:
-        pass
+    if exclude_click_id:
+        try:
+            from bson import ObjectId
+            oid = ObjectId(exclude_click_id) if not isinstance(exclude_click_id, ObjectId) else exclude_click_id
+            query["_id"] = {"$nin": [oid, str(exclude_click_id)]}
+        except Exception:
+            query["_id"] = {"$ne": exclude_click_id}
 
     existing = await db.clicks.find_one(query, {"_id": 1})
     

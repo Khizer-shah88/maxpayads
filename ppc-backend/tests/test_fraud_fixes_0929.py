@@ -98,6 +98,7 @@ class ClickCol:
         created_at) >= since + optional _id exclusion."""
         fp = query.get('fingerprint')
         excl = (query.get('_id') or {}).get('$ne')
+        nin = (query.get('_id') or {}).get('$nin') or []
         since = None
         for clause in (query.get('$or') or []):
             for field in ('timestamp', 'created_at'):
@@ -107,6 +108,8 @@ class ClickCol:
             if fp is not None and doc.get('fingerprint') != fp:
                 continue
             if excl is not None and doc.get('_id') == excl:
+                continue
+            if doc.get('_id') in nin:
                 continue
             if since is not None:
                 doc_ts = doc.get('timestamp') or doc.get('created_at')
@@ -199,10 +202,12 @@ async def test_fresh_click_not_flagged_duplicate_by_own_key():
     assert not ctx.is_flagged  # inline verdict fresh = valid
 
     click_id = str(ObjectId())
+    import hashlib as _h
+    fingerprint = _h.sha256(f"{IP}:{PUB_A}:none".encode()).hexdigest()
     # The click is now in the DB (as record_click does):
     await db.clicks.insert_one({
         '_id': ObjectId(click_id), 'publisher_id': PUB_A,
-        'ip_address': IP, 'timestamp': datetime.utcnow(),
+        'ip_address': IP, 'fingerprint': fingerprint, 'timestamp': datetime.utcnow(),
     })
 
     # Background task: judge the same click — must NOT be a duplicate of itself.

@@ -153,6 +153,7 @@ async def _process_click_async(click_id: str, click_data: dict):
                 "$set": {
                     "status": "valid",
                     "is_valid": True,
+                    "fraud_reason": None,
                     "fraud_score": fraud_score,
                     "cpc": cpc,
                     "earnings": earnings,

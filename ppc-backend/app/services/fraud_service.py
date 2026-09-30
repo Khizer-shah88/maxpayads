@@ -59,11 +59,13 @@ async def check_fraud(click_data: dict, db, redis, *, exclude_click_id=None) -> 
     # click must not defeat it. Look up prior clicks THROUGH THE FINGERPRINT
     # DB CHECK, excluding this click's own document. A key read here would be
     # self-referential because the inline stage already set it for this click.
-    if exclude_click_id is not None:
+    target_exclude = exclude_click_id or click_data.get("_id") or click_data.get("click_id") or click_data.get("id")
+    if target_exclude is not None:
         from app.services import fraud_detection_service as _fds
 
         is_duplicate, _original = await _fds.check_duplicate_click(
             db, ip, publisher_id, click_data.get("campaign_id"),
+            exclude_click_id=str(target_exclude),
         )
     else:
         is_duplicate = await check_duplicate_click(ip, publisher_id, redis)
