@@ -45,6 +45,37 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"ML model load failed: {e}")
 
+    # Startup duplicate cleanup & recovery
+    try:
+        from app.database import get_db
+        from app.cache.redis_client import get_redis
+        db = get_db()
+        redis = get_redis()
+        if redis:
+            async for k in redis.scan_iter("dup_click:*"):
+                await redis.delete(k)
+        if db:
+            from datetime import datetime, timedelta
+            from app.tasks.click_tasks import process_click
+            from starlette.concurrency import run_in_threadpool
+            since = datetime.utcnow() - timedelta(hours=24)
+            bad_clicks = await db.clicks.find({
+                "fraud_reason": "duplicate_ip",
+                "status": "invalid",
+                "timestamp": {"$gte": since},
+            }).to_list(200)
+            for c in bad_clicks:
+                cid = str(c["_id"])
+                await db.clicks.update_one(
+                    {"_id": c["_id"]},
+                    {"$set": {"status": "pending", "is_valid": True, "fraud_reason": None, "processed": False}}
+                )
+                payload = {k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in c.items() if k != "_id"}
+                await run_in_threadpool(process_click.delay, cid, payload)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Startup duplicate recovery skipped: {e}")
+
     yield
 
     # Shutdown
