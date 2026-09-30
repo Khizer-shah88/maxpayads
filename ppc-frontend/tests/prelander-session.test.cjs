@@ -272,7 +272,7 @@ test('production source deterrent works on all pages including prelander domains
       headers: { cookie: 'mpa_pls=valid' },
     }));
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('x-sd'), '1', path);
+    assert.equal(response.headers.get('x-sd'), path.startsWith('/d/h_') ? null : '1', path);
   }
 });
 

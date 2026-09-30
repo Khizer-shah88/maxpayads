@@ -295,6 +295,8 @@ async def delete_publisher_and_records(publisher_id: str, db) -> bool:
         {"publisher_ids": {"$in": [publisher_id]}},
         {"$pull": {"publisher_ids": publisher_id}},
     )
+    from app.cache.kv_cache import invalidate_domain_routing
+    await invalidate_domain_routing()
 
     result = await db.publishers.delete_one({"_id": _oid(publisher_id)})
     if result.deleted_count == 0:

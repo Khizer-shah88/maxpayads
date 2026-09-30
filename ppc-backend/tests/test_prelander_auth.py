@@ -38,6 +38,11 @@ class FakeRedis:
         pre = pattern.rstrip("*")
         return [k for k in self.store if k.startswith(pre)]
 
+    async def scan_iter(self, match, count=128):
+        for key in list(self.store):
+            if key.startswith(match.rstrip('*')):
+                yield key
+
     async def delete(self, *keys):
         removed = 0
         for key in keys:

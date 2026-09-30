@@ -187,9 +187,11 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
                 # ObjectIds when one exists.
                 from bson import ObjectId as _OId
                 try:
-                    chain = await db.redirect_chains.find_one({"_id": _OId(chain["_id"])}) or chain
-                except Exception:
-                    pass
+                    chain = await db.redirect_chains.find_one({"_id": _OId(chain["_id"]), "status": "active"})
+                    if chain and normalize_domain(chain.get("anchor_domain")) != host:
+                        chain = None
+                except (ValueError, TypeError):
+                    chain = None
 
         if chain:
             logger.info(f"[CHAIN] Matched chain '{chain.get('name')}' for anchor domain: {host}")
@@ -200,7 +202,9 @@ async def resolve_active_chain(db, publisher_id: Optional[str], request_host: Op
         return None
     except Exception as e:
         logger.warning("[CHAIN] Resolution failed: %s", e)
-        return None
+        # A failed lookup is not proof that the anchor has no chain. Let the
+        # pipeline handle the error rather than routing through another pool.
+        raise
 
 
 def chain_extra_hops(chain: Optional[dict]) -> list:
@@ -501,6 +505,9 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     if ctx is not None:
         ctx.redirect_chain = chain
     chain_inter = _absolute_base(chain_inter_domain(chain)) if chain else None
+    if chain and not chain_inter:
+        _record(ctx, STAGE_CHAIN, "invalid_missing_inter")
+        return FALLBACK_URL, referrer_suppression
     chain_pool: list = []
     if chain:
         for d in chain_prelander_pool(chain):
@@ -602,9 +609,8 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
 
     landing_page = select_weighted_landing_page(landing_pages)
 
-    from app.core.glossary import domain_type_filter
     from app.services.domain_service import (
-        resolve_domain_url, domain_to_url, normalize_domain,
+        resolve_domain_url, normalize_domain,
         select_active_prelander,
     )
     # Prelander resolution — chain override first, default flow untouched:
@@ -613,28 +619,21 @@ async def route_click(click_data: dict, db, redis, ctx=None) -> Tuple[str, bool]
     #    extra hops follow the Inter.
     # 2. No chain: classic redirection-domain flow (publisher-assigned →
     #    global default → active pool by weight).
-    if chain_pool:
+    if chain:
         weighted_chain_pick = await select_active_prelander(
             db, [normalize_domain(b) for b in chain_pool]
         )
         last_base = _absolute_base(weighted_chain_pick) if weighted_chain_pick else None
         if not last_base:
-            from app.services.redirect_pipeline import FALLBACK_URL
+            _record(ctx, STAGE_CHAIN, "no_active_chain_prelander")
             return FALLBACK_URL, referrer_suppression
     else:
-        publisher_prelander = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id, redis=redis) if publisher_id else None
-        if publisher_prelander:
-            last_base = publisher_prelander
-        else:
-            prelander_filter = domain_type_filter(DOMAIN_TYPE_PRELANDER)
-            pool_docs = await db.redirection_domains.find({
-                "domain_type": prelander_filter,
-                "status": "active",
-            }).to_list(length=200)
-            weighted_pick = await select_active_prelander(
-                db, [d.get("domain") for d in pool_docs]
-            )
-            last_base = domain_to_url(weighted_pick) if weighted_pick else await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, None, redis=redis)
+        # The resolver enforces assignment/default/pool priority and weights.
+        # Falling back to every domain here leaked other publishers' pools.
+        last_base = await resolve_domain_url(db, DOMAIN_TYPE_PRELANDER, publisher_id, redis=redis)
+    if not last_base:
+        _record(ctx, STAGE_PRELANDER, "skipped_none_configured", url=resolved_offer_url)
+        return resolved_offer_url, referrer_suppression
     intermediate_base = chain_inter or await resolve_domain_url(db, DOMAIN_TYPE_INTER, publisher_id, redis=redis)
     # Guard every resolved base: bare hostnames must never reach the /d URL
     # builders (they would produce a RELATIVE destination → visitor 404s on

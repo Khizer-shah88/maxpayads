@@ -23,6 +23,31 @@ STATS_HOST_KEY = "kv:statshost"
 STRUCTURES_KEY = "kv:structs"
 
 
+async def invalidate_domain_routing():
+    """Drop routing snapshots after an admin edits a domain or chain.
+
+    Only configuration caches are touched; active click/session tickets stay
+    intact. SCAN keeps this admin operation from blocking the Redis server.
+    """
+    from app.cache.redis_client import get_redis
+
+    redis = get_redis()
+    if redis is None:
+        return
+    try:
+        for prefix in ('kv:durl:', 'kv:dpool:', 'kv:drole:', 'kv:chainscan:', 'kv:chainseq:'):
+            batch = []
+            async for key in redis.scan_iter(match=prefix + '*', count=128):
+                batch.append(key)
+                if len(batch) == 128:
+                    await redis.delete(*batch)
+                    batch.clear()
+            if batch:
+                await redis.delete(*batch)
+    except Exception as exc:
+        logger.warning('Routing cache invalidation failed; TTL remains in effect: %s', exc)
+
+
 async def cached_json(redis, key: str, ttl: int, loader):
     """
     Return `loader()` for `key`, memoized in Redis as JSON for `ttl` seconds.

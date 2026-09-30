@@ -10,6 +10,7 @@ from app.core.constants import (
     DOMAIN_TYPE_ANCHOR, DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER,
 )
 from app.core.glossary import domain_type_filter
+from app.cache.kv_cache import invalidate_domain_routing
 from app.models.redirect_chain import (
     RedirectChain, CreateRedirectChainRequest, UpdateRedirectChainRequest,
     RedirectChainSession, RedirectChainStatus,
@@ -278,6 +279,7 @@ async def create_redirect_chain(
             detail=f"Failed to create the chain: {e}",
         )
     chain_data["_id"] = result.inserted_id
+    await invalidate_domain_routing()
 
     return {
         "success": True,
@@ -429,6 +431,7 @@ async def update_redirect_chain(
         raise HTTPException(status_code=500, detail=f"Failed to update the chain: {e}")
     
     # Return updated chain
+    await invalidate_domain_routing()
     updated_chain = await _with_retry(lambda: db.redirect_chains.find_one({"_id": object_id}))
 
     return {
@@ -459,6 +462,7 @@ async def delete_redirect_chain(
     
     # Delete the chain
     await db.redirect_chains.delete_one({"_id": object_id})
+    await invalidate_domain_routing()
     
     # Clean up associated sessions
     await db.redirect_chain_sessions.delete_many({"chain_id": chain_id})

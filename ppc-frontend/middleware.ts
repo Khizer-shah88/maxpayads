@@ -466,10 +466,13 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
 
   // Mark all documents that carry the source deterrent heartbeat script.
   // The root layout (app/layout.tsx) injects the script on ALL pages when
-  // ENABLE_SOURCE_DETERRENT=true, so we set the x-sd header on all responses.
+  // ENABLE_SOURCE_DETERRENT=true, so we set x-sd on ordinary documents.
   // This allows view-source deterrent to work on all pages including prelander
   // domains, redirecting view-source:https://domain.com/ back to https://domain.com/
-  if (process.env.ENABLE_SOURCE_DETERRENT === 'true') {
+  // Hop tickets are consumed by POST and cannot be safely replayed by a
+  // worker reload. They contain no prelander content; keep the deterrent
+  // enabled for the final page and other ordinary documents.
+  if (process.env.ENABLE_SOURCE_DETERRENT === 'true' && !pathname?.startsWith('/d/h_')) {
     response.headers.set('x-sd', '1');
   }
 

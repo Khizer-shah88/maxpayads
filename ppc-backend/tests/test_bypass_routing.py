@@ -351,6 +351,9 @@ async def test_prelander_url_slug_encoding():
     
     db = MagicMock()
     redis = MagicMock()
+    db.redirection_domains.find.return_value.to_list = AsyncMock(return_value=[{
+        "domain": "prelander.example.com", "domain_type": "prelander", "status": "active",
+    }])
     
     campaign_id = str(ObjectId())
     campaign = {

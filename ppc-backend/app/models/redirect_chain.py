@@ -17,7 +17,7 @@ Field names follow the glossary: `anchor_domain`, `inter_domain`,
 `chain_inter_domain()` and `chain_prelander_pool()` rather than indexing them
 directly. Request bodies accept either spelling.
 """
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from typing import Any, Dict, List, Optional, Literal
 from datetime import datetime
 from enum import Enum
@@ -93,7 +93,32 @@ class RedirectChain(BaseModel):
     model_config = ConfigDict(populate_by_name=True, use_enum_values=True)
 
 
-class CreateRedirectChainRequest(BaseModel):
+class ChainDomainInputs(BaseModel):
+    @field_validator('anchor_domain', 'inter_domain', check_fields=False)
+    @classmethod
+    def normalize_host(cls, value):
+        from app.services.domain_service import normalize_domain
+        if value is None:
+            return value
+        host = normalize_domain(value)
+        if not host:
+            raise ValueError('Domain cannot be empty')
+        return host
+
+    @field_validator('prelander_pool', 'extra_domains', check_fields=False)
+    @classmethod
+    def normalize_hosts(cls, values):
+        from app.services.domain_service import normalize_domain
+        if values is None:
+            return values
+        normalized = [normalize_domain(value) for value in values]
+        if any(not host for host in normalized):
+            raise ValueError('Domain entries cannot be empty')
+        # Keep duplicates for layout validation; do not silently change hops.
+        return normalized
+
+
+class CreateRedirectChainRequest(ChainDomainInputs):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., min_length=1, max_length=100)
@@ -116,7 +141,7 @@ class CreateRedirectChainRequest(BaseModel):
     status: RedirectChainStatus = Field(RedirectChainStatus.ACTIVE)
 
 
-class UpdateRedirectChainRequest(BaseModel):
+class UpdateRedirectChainRequest(ChainDomainInputs):
     model_config = ConfigDict(populate_by_name=True)
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)

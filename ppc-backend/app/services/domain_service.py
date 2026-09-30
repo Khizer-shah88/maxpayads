@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from bson import ObjectId
 
 from app.config import settings
+from app.cache.kv_cache import invalidate_domain_routing
 from app.core.constants import (
     DOMAIN_TYPE_ANCHOR,
     DOMAIN_TYPE_INTER,
@@ -215,6 +216,7 @@ async def create_domain(db, data: dict) -> dict:
     if is_default:
         await _sync_legacy_setting(db, domain_type, domain_to_url(domain))
 
+    await invalidate_domain_routing()
     pub_map = await _publisher_name_map(db, doc.get("publisher_ids") or [])
     return _serialize(doc, pub_map)
 
@@ -273,6 +275,7 @@ async def update_domain(db, domain_id: str, data: dict) -> Optional[dict]:
     if updated.get("is_default"):
         await _sync_legacy_setting(db, updated["domain_type"], domain_to_url(updated["domain"]))
 
+    await invalidate_domain_routing()
     pub_map = await _publisher_name_map(db, updated.get("publisher_ids") or [])
     return _serialize(updated, pub_map)
 
@@ -283,6 +286,8 @@ async def delete_domain(db, domain_id: str) -> bool:
     except Exception:
         return False
     result = await db.redirection_domains.delete_one({"_id": oid})
+    if result.deleted_count:
+        await invalidate_domain_routing()
     return result.deleted_count > 0
 
 
@@ -328,6 +333,7 @@ async def verify_domain_dns(db, domain_id: str) -> Optional[dict]:
         }},
     )
 
+    await invalidate_domain_routing()
     updated = await db.redirection_domains.find_one({"_id": oid})
     pub_map = await _publisher_name_map(db, updated.get("publisher_ids") or [])
     out = _serialize(updated, pub_map)
@@ -345,11 +351,11 @@ async def resolve_domain_url(
 ) -> Optional[str]:
     """
     Resolve the best active domain URL for a publisher.
-    Priority: publisher-assigned → global default → legacy system_settings.
+    Priority: publisher-assigned → global default → active unassigned pool.
 
     Cached briefly (KV_TTL_DOMAIN_URL) — the /click hot path resolves the
     Inter and Prelander domains on every routed click; admin domain edits
-    surface within the TTL. Pass redis=None (tests) to always hit the DB.
+    invalidate these snapshots. Pass redis=None (tests) to always hit the DB.
     """
     if db is None:
         return None
@@ -360,6 +366,24 @@ async def resolve_domain_url(
 
     from app.cache.kv_cache import cached_json
     from app.config import settings
+
+    if canonical_type == DOMAIN_TYPE_PRELANDER:
+        async def _load_candidates():
+            query = {"domain_type": domain_type_filter(canonical_type), "status": "active"}
+            if require_verified:
+                query["dns_status"] = "verified"
+            return await db.redirection_domains.find(query).to_list(length=None)
+
+        # Cache the eligible records, never the random winner. A cached URL
+        # sent every click to one domain and ignored the pool's weights.
+        docs = await cached_json(redis, f"kv:dpool:{int(require_verified)}",
+                                 settings.KV_TTL_DOMAIN_URL, _load_candidates) or []
+        eligible = [d for d in docs if int(d.get("weight", 100) or 0) > 0]
+        assigned = [d for d in eligible if publisher_id and publisher_id in (d.get("publisher_ids") or [])]
+        defaults = [d for d in eligible if d.get("is_default")]
+        unassigned = [d for d in eligible if not d.get("publisher_ids")]
+        selected = _weighted_domain(assigned or defaults or unassigned)
+        return domain_to_url(selected) if selected else None
 
     cache_key = f"kv:durl:{canonical_type}:{publisher_id or '-'}:{int(require_verified)}"
 
@@ -437,10 +461,8 @@ async def select_active_prelander(db, pool: List[str]) -> Optional[str]:
     active domains returns None (the caller decides the fallback; the system
     never silently invents a replacement).
     """
-    import random as _random
-
     # Pool entries are plain hostnames — fetch their status/weight docs.
-    hostnames = [normalize_domain(d) for d in (pool or []) if d]
+    hostnames = list(dict.fromkeys(normalize_domain(d) for d in (pool or []) if d))
     if not hostnames:
         return None
 
@@ -450,17 +472,21 @@ async def select_active_prelander(db, pool: List[str]) -> Optional[str]:
     }).to_list(length=None)
 
     by_host = {normalize_domain(d.get("domain")): d for d in docs}
+    return _weighted_domain([by_host[host] for host in hostnames if host in by_host])
+
+
+def _weighted_domain(docs: List[dict]) -> Optional[str]:
+    """One draw per click, shared by the default and explicit chain pools."""
+    import random as _random
+
     active: List[tuple] = []
-    for host in hostnames:
-        doc = by_host.get(host)
-        if not doc:
-            continue
-        if doc.get("status", "active") != "active":
+    for doc in docs:
+        if doc.get("status") != "active":
             continue  # inactive prelander: gets no traffic
         weight = max(0, int(doc.get("weight", 100) or 0))
         if weight <= 0:
             continue  # weight 0 pauses the domain while keeping it configured
-        active.append((host, weight))
+        active.append((normalize_domain(doc.get("domain")), weight))
 
     if not active:
         return None
