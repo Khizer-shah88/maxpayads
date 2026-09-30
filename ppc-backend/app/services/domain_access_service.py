@@ -101,6 +101,8 @@ async def allow_path(db, host, path, redis=None):
         return role if role == 'anchor' else None
     if path.startswith('/d/'):
         return role if role in ('inter', 'prelander') else None
+    if path == '/prelander-fallback':
+        return role if role in ('portal', 'inter', 'prelander') else None
     if path.startswith('/_auth/'):
         return role if role == 'prelander' else None
     if path.startswith('/prelander/'):

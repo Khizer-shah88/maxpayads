@@ -35,6 +35,7 @@ def domains_db(monkeypatch):
     ('/ad.js', {'anchor'}),
     ('/go', {'anchor'}),
     ('/d/h_ticket', {'inter', 'prelander'}),
+    ('/prelander-fallback', {'portal', 'inter', 'prelander'}),
     ('/api/prelander/hop/h_ticket', {'inter'}),
     ('/api/prelander/resolve/session', {'prelander'}),
     ('/_auth/ticket', {'prelander'}),

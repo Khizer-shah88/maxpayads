@@ -13,7 +13,7 @@ function loadModule(file, imports = {}, globals = {}) {
   });
   const exports = {};
   vm.runInNewContext(outputText, {
-    exports, Response, process, ...globals,
+    exports, Response, URL, process, ...globals,
     require(name) {
       assert.ok(name in imports, `Unexpected import: ${name}`);
       return imports[name];
@@ -43,7 +43,7 @@ function browser({ referrer = '', historyLength = 1, marker = null, storageBlock
   const root = { hidden: true, style: {}, addEventListener() {}, replaceChildren(...children) { this.children = children; } };
   const location = { hostname: 'landing.example', pathname: '/', search: '',
     replace(url) { events.push(['replace', url]); } };
-  const history = { length: historyLength, back() { events.push(['back']); } };
+  const history = { length: historyLength, back() { throw Error('Back can close an in-app browser'); } };
   const document = {
     referrer, title: '', getElementById: () => root,
     querySelector: () => null,
@@ -53,7 +53,7 @@ function browser({ referrer = '', historyLength = 1, marker = null, storageBlock
   };
   const context = {
     URL, document, location, history,
-    window: { location, history },
+    window: { location, history, close() { throw Error('Must keep the browser open'); } },
     sessionStorage: {
       getItem() { if (storageBlocked) throw Error('Storage blocked'); return marker; },
       setItem(key, value) { if (storageBlocked) throw Error('Storage blocked'); marker = value; },
@@ -121,15 +121,15 @@ test('pasted tab immediately returns to its external referrer without resolving 
   assert.equal(b.root.hidden, true);
 });
 
-test('address-bar paste returns through history without timers', async () => {
+test('address-bar paste with history uses configured fallback without going back', async () => {
   const b = await runShell({ historyLength: 2 });
-  assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['back']]);
+  assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', '/prelander-fallback']]);
 });
 
-test('fresh pasted tab with no previous page immediately falls back to blank', async () => {
+test('fresh pasted tab with no previous page uses the configured fallback', async () => {
   const b = await runShell();
   assert.equal(b.root.hidden, true);
-  assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', 'about:blank']]);
+  assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', '/prelander-fallback']]);
 });
 
 for (const storageBlocked of [false, true]) {
@@ -152,7 +152,7 @@ for (const storageBlocked of [false, true]) {
 test('reload with a tab marker still validates the server session', async () => {
   const b = await runShell({ marker: '1', historyLength: 2, resolve: new Response('{}', { status: 403 }) });
   assert.equal(b.root.hidden, true);
-  assert.deepEqual(b.events, [['fetch', '/api/prelander/resolve/session'], ['back']]);
+  assert.deepEqual(b.events, [['fetch', '/api/prelander/resolve/session'], ['replace', '/prelander-fallback']]);
 });
 
 test('valid reload does not consume another arrival claim', async () => {
@@ -160,11 +160,13 @@ test('valid reload does not consume another arrival claim', async () => {
   assert.deepEqual(b.events, [['fetch', '/api/prelander/resolve/session'], ['render', '<h1>Authorized</h1>']]);
 });
 
-for (const referrer of ['https://landing.example/old', 'javascript:alert(1)', 'invalid']) {
+for (const referrer of ['https://landing.example/old', 'javascript:alert(1)', 'invalid',
+  'https://inter.example/d/h_consumed', 'https://other.example/_auth/used',
+  'https://other.example/prelander-fallback', 'https://user:pass@previous.example/']) {
   test(`unsafe or same-host referrer cannot become a redirect: ${referrer}`, async () => {
     const b = await runShell({ referrer });
     assert.equal(b.root.hidden, true);
-    assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', 'about:blank']]);
+    assert.deepEqual(b.events, [['fetch', '/api/prelander/claim'], ['replace', '/prelander-fallback']]);
   });
 }
 
@@ -224,23 +226,50 @@ async function runRoot({ cookie = '', check = new Response('{"authorized":true}'
   return { ...b, response };
 }
 
-test('incognito root with no cookies goes back without a backend request or expiry UI', async () => {
+test('incognito root with no cookies uses fallback without a session request or expiry UI', async () => {
   const b = await runRoot({ historyLength: 2, storageBlocked: true });
   assert.equal(b.response.status, 403);
-  assert.deepEqual(b.events, [['back']]);
+  assert.deepEqual(b.events, [['replace', '/prelander-fallback']]);
 });
 
-test('fresh incognito root with no previous entry uses blank fallback', async () => {
+test('fresh incognito root with no previous entry uses configured fallback', async () => {
   const b = await runRoot();
-  assert.deepEqual(b.events, [['replace', 'about:blank']]);
+  assert.deepEqual(b.events, [['replace', '/prelander-fallback']]);
 });
 
 test('expired root cookie takes the same previous-page fallback', async () => {
   const b = await runRoot({ cookie: 'mpa_pls=expired', historyLength: 2, check: new Response('{}', { status: 403 }) });
   assert.equal(b.response.status, 403);
   assert.equal(b.events[0][0], 'server-fetch');
-  assert.deepEqual(b.events[1], ['back']);
+  assert.deepEqual(b.events[1], ['replace', '/prelander-fallback']);
 });
+
+test('cookie-less root returns to a known previous website without touching history', async () => {
+  const b = await runRoot({ referrer: 'https://previous.example/page', historyLength: 3 });
+  assert.deepEqual(b.events, [['replace', 'https://previous.example/page']]);
+});
+
+for (const configured of ['https://fallback.example/previous', '', 'javascript:alert(1)',
+  'https://landing.example/', 'https://user:pass@fallback.example/',
+  'https://fallback.example/prelander-fallback', 'invalid']) {
+  test(`server fallback uses a safe configured destination: ${configured}`, async () => {
+    const next = require('next/server');
+    const env = { ENTRY_FALLBACK_URL: configured, ENABLE_SOURCE_DETERRENT: 'true' };
+    const entry = loadModule('lib/entry-guard.ts', {}, { process: { env } });
+    const { middleware } = loadModule('middleware.ts', {
+      'next/server': next, '@/lib/prelander-session': session, '@/lib/entry-guard': entry,
+    }, {
+      process: { env },
+      fetch() { throw Error('Fallback must work without the backend'); },
+    });
+    const response = await middleware(new next.NextRequest('https://landing.example/prelander-fallback?url=https://untrusted.example/'));
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), configured === 'https://fallback.example/previous'
+      ? configured : 'https://www.google.com/');
+    assert.equal(response.headers.get('cache-control'), 'no-store, private');
+    assert.equal(response.headers.get('x-sd'), null);
+  });
+}
 
 test('session-check outage does not send visitors back into the redirect chain', async () => {
   const b = await runRoot({ cookie: 'mpa_pls=valid', check: new Response('{}', { status: 503 }),
@@ -323,7 +352,7 @@ test('React prelander fallback has no redirect-flow loader', async () => {
   assert.equal(page.render(), null);
   await page.load();
   assert.equal(page.render(), null);
-  assert.deepEqual(page.events, [['fetch', '/api/prelander/claim'], ['back']]);
+  assert.deepEqual(page.events, [['fetch', '/api/prelander/claim'], ['replace', '/prelander-fallback']]);
 });
 
 test('expired React prelander returns to the previous page only once', async () => {
@@ -331,7 +360,7 @@ test('expired React prelander returns to the previous page only once', async () 
   assert.equal(page.render(), null);
   await page.load();
   page.mountFallback(page.render().type);
-  assert.deepEqual(page.events, [['fetch', '/api/prelander/resolve/session'], ['back']]);
+  assert.deepEqual(page.events, [['fetch', '/api/prelander/resolve/session'], ['replace', '/prelander-fallback']]);
 });
 
 test('React session outage shows recovery without returning to the Inter root', async () => {

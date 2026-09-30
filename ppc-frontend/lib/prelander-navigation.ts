@@ -5,21 +5,20 @@ export function returnToPreviousPage(): void {
     if (document.referrer) {
       const previous = new URL(document.referrer);
       if ((previous.protocol === 'https:' || previous.protocol === 'http:') &&
-          previous.hostname !== window.location.hostname) {
+          !previous.username && !previous.password &&
+          previous.hostname !== window.location.hostname &&
+          !previous.pathname.startsWith('/d/') &&
+          !previous.pathname.startsWith('/_auth/') &&
+          previous.pathname !== '/prelander-fallback') {
         window.location.replace(previous.href);
         return;
       }
     }
   } catch {}
 
-  // Address-bar pastes normally have no referrer, but the current tab may
-  // still have a previous page (including its browser new-tab page).
-  if (window.history.length > 1) {
-    window.history.back();
-    return;
-  }
-
-  // No previous entry exists in a fresh tab/window. Normal and private
-  // browsing use the same immediate fallback without closing the tab.
-  window.location.replace('about:blank');
+  // history.length cannot tell us whether Back exits a custom browser tab,
+  // opens a browser-internal page, or replays a consumed redirect ticket.
+  // Resolve the configured fallback server-side, including in fresh/private
+  // browsers with no referrer or storage. Keep this tab open with replace().
+  window.location.replace('/prelander-fallback');
 }
