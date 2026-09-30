@@ -304,7 +304,7 @@ async def delete_publisher_and_records(publisher_id: str, db) -> bool:
     return result.deleted_count > 0
 
 
-async def delete_publisher_stats_only(publisher_id: str, db) -> dict:
+async def delete_publisher_stats_only(publisher_id: str, db, redis=None) -> dict:
     """
     Delete only statistics data for a publisher. The publisher account and
     websites remain intact.
@@ -314,6 +314,8 @@ async def delete_publisher_stats_only(publisher_id: str, db) -> dict:
     attributed numbers anywhere (the reported bug: clicks still showed after
     this action).
 
+    Also clears Redis duplicate IP cache so users can click again with same IP.
+
     Returns: Dictionary with count of deleted records
     """
     id_match = {"$in": [publisher_id]}
@@ -322,6 +324,32 @@ async def delete_publisher_stats_only(publisher_id: str, db) -> dict:
     except Exception:
         pass
 
+    # Get all unique IPs from clicks before deleting (for Redis cache clearing)
+    unique_ips = set()
+    if redis:
+        try:
+            from app.core.constants import REDIS_DUPLICATE_CLICK_PREFIX
+            from datetime import datetime, timezone
+            
+            # Get all IPs for this publisher
+            cursor = db.clicks.find({"publisher_id": id_match}, {"ip_address": 1})
+            async for click in cursor:
+                if click.get("ip_address"):
+                    unique_ips.add(click["ip_address"])
+            
+            # Clear Redis duplicate IP keys for this publisher
+            # Key format: prefix:ip:publisher:YYYY-MM-DD
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            cleared_keys = 0
+            for ip in unique_ips:
+                key = f"{REDIS_DUPLICATE_CLICK_PREFIX}{ip}:{publisher_id}:{today}"
+                if await redis.delete(key):
+                    cleared_keys += 1
+            
+            logger.info(f"Cleared {cleared_keys} Redis duplicate IP keys for publisher {publisher_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clear Redis duplicate IP cache: {e}")
+    
     clicks_result = await db.clicks.delete_many({"publisher_id": id_match})
     withdrawals_result = await db.withdrawals.delete_many({"publisher_id": id_match})
     fraud_result = await db.fraud_logs.delete_many({"publisher_id": id_match})

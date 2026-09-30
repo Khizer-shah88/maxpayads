@@ -10,7 +10,7 @@ from app.services.publisher_service import (
 )
 from app.services.earnings_service import adjust_publisher_balance
 from app.services.cpc_engine import get_global_cpc_settings, set_country_cpc, delete_country_cpc
-from app.dependencies import get_db, get_current_admin
+from app.dependencies import get_db, get_current_admin, get_redis_client
 from app.core.exceptions import NotFoundError, UnauthorizedError
 from app.core.security import verify_password, hash_password
 from starlette.concurrency import run_in_threadpool
@@ -441,6 +441,7 @@ async def delete_publisher_stats(
     publisher_id: str,
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
+    redis=Depends(get_redis_client),
 ):
     """
     Delete ONLY statistics data for a publisher. The publisher account remains
@@ -450,13 +451,15 @@ async def delete_publisher_stats(
     and their counters/events, manual conversion entries, whitelabel stats
     profiles) AND resets the embedded counters the publishers page shows —
     deleting the stats must leave zero attributed numbers anywhere.
+    
+    Also clears Redis duplicate IP cache so users can click again with same IP.
     """
     # Verify publisher exists
     publisher = await get_publisher_by_id(publisher_id, db)
     if not publisher:
         raise NotFoundError("Publisher")
 
-    result = await delete_publisher_stats_only(publisher_id, db)
+    result = await delete_publisher_stats_only(publisher_id, db, redis)
     removed = sum(v for v in result.values() if isinstance(v, int))
     return {
         "success": True,
