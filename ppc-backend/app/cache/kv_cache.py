@@ -35,15 +35,17 @@ async def invalidate_domain_routing():
     if redis is None:
         return
     try:
+        deleted_count = 0
         for prefix in ('kv:durl:', 'kv:dpool:', 'kv:drole:', 'kv:chainscan:', 'kv:chainseq:'):
             batch = []
             async for key in redis.scan_iter(match=prefix + '*', count=128):
                 batch.append(key)
                 if len(batch) == 128:
-                    await redis.delete(*batch)
+                    deleted_count += await redis.delete(*batch)
                     batch.clear()
             if batch:
-                await redis.delete(*batch)
+                deleted_count += await redis.delete(*batch)
+        logger.info(f"Domain routing cache invalidated: {deleted_count} keys deleted")
     except Exception as exc:
         logger.warning('Routing cache invalidation failed; TTL remains in effect: %s', exc)
 

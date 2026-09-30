@@ -59,9 +59,7 @@ async def create_redirection_domain(
 ):
     try:
         doc = await domain_service.create_domain(db, data.model_dump())
-        # Force cache invalidation for smartlink generation
-        from app.cache.kv_cache import invalidate_domain_routing
-        await invalidate_domain_routing()
+        # Cache invalidation already handled in domain_service.create_domain()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "domain": doc, "message": "Domain added"}
@@ -76,9 +74,7 @@ async def update_redirection_domain(
 ):
     try:
         doc = await domain_service.update_domain(db, domain_id, data.model_dump(exclude_unset=True))
-        # Force cache invalidation for smartlink generation
-        from app.cache.kv_cache import invalidate_domain_routing
-        await invalidate_domain_routing()
+        # Cache invalidation already handled in domain_service.update_domain()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not doc:
@@ -107,9 +103,7 @@ async def toggle_redirection_domain_status(
         raise HTTPException(status_code=400, detail="status must be 'active' or 'paused'")
     try:
         doc = await domain_service.update_domain(db, domain_id, {"status": status_value})
-        # Force cache invalidation for smartlink generation
-        from app.cache.kv_cache import invalidate_domain_routing
-        await invalidate_domain_routing()
+        # Cache invalidation already handled in domain_service.update_domain()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not doc:
