@@ -128,6 +128,22 @@ def analyze_user_agent_structure(user_agent: str) -> Tuple[bool, Optional[str]]:
     return False, None
 ```
 
+### 4. Updated Tests (`tests/test_security.py`)
+
+Fixed 4 failing tests to match the new behavior:
+
+**test_empty_user_agent:**
+- Changed to expect `is_suspicious = False` (empty UA handled separately, not in structure analysis)
+
+**test_too_long_user_agent:**
+- Changed from 600 to 1500 characters to exceed the new 1000 character limit
+
+**test_classify_bot_traffic:**
+- Updated to accept `TRAFFIC_DUPLICATE` classification (bot UA = 40 points, between DUPLICATE 30 and SUSPICIOUS 50)
+
+**test_fraud_score_accumulation:**
+- Updated to expect 1 reason and score >= 10 (matching new empty UA weight of 10 points)
+
 ## How This Fixes the Issue
 
 1. **New users are no longer flagged**: With the higher thresholds and reduced weights, a typical new user will have a score below 30, classifying them as `TRAFFIC_VALID`
@@ -176,6 +192,12 @@ def analyze_user_agent_structure(user_agent: str) -> Tuple[bool, Optional[str]]:
    - `classify_traffic()` - Reduced signal weights
    - `analyze_user_agent_structure()` - Made more conservative
 
+2. `ppc-backend/tests/test_security.py`
+   - `test_empty_user_agent` - Updated expectations
+   - `test_too_long_user_agent` - Changed test data
+   - `test_classify_bot_traffic` - Updated assertions
+   - `test_fraud_score_accumulation` - Updated assertions
+
 ## Deployment
 
 Changes have been pushed to the main branch:
@@ -183,7 +205,15 @@ Changes have been pushed to the main branch:
 git push origin main
 ```
 
-The changes will take effect after the backend service is restarted or auto-deploys.
+**Commits:**
+1. `fc8a21b` - Fix statistics page showing valid clicks as invalid
+2. `3768793` - Fix failing security tests after fraud detection threshold changes
+
+The changes will take effect after the backend service is restarted or auto-deploys. All tests now pass.
+
+## CI/CD Status
+
+✅ **All 656 tests passing** after the fixes
 
 ## Rollback Plan
 
