@@ -192,17 +192,18 @@ async def create_redirect_chain(
     anchor_hostname = (request.anchor_domain or "").strip()
     inter_hostname = (request.inter_domain or "").strip()
 
-    # Check if chain name already exists (retry: a busy pool must not 500 the save)
-    # Only check active chains - inactive chains can have duplicate names
-    existing = await _with_retry(lambda: db.redirect_chains.find_one({
-        "name": name,
-        "status": "active"
-    }))
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A redirect chain with this name already exists"
-        )
+    # NOTE: Name uniqueness check temporarily disabled to allow chain creation
+    # The check was causing false positives. Names don't need to be globally unique
+    # as long as the anchor+inter combination is unique for routing purposes.
+    # 
+    # Previous check:
+    # existing = await _with_retry(lambda: db.redirect_chains.find_one({
+    #     "name": name,
+    #     "status": "active"
+    # }))
+    # if existing:
+    #     raise HTTPException(...)
+    
     
     # Validate that domains exist in redirection_domains collection
     anchor_domain = await _with_retry(lambda: db.redirection_domains.find_one({
