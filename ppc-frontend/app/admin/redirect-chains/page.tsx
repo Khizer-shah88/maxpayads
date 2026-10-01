@@ -520,8 +520,10 @@ export default function RedirectChainsPage() {
               <div className="space-y-6">
                 {/* Chain Name */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Chain Name</label>
+                  <label htmlFor="chain-name" className="block text-sm font-medium text-gray-700 mb-2">Chain Name</label>
                   <input
+                    id="chain-name"
+                    name="chain-name"
                     type="text"
                     value={form.name}
                     onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
@@ -540,10 +542,12 @@ export default function RedirectChainsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Anchor Domain */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label htmlFor="anchor-domain" className="block text-sm font-medium text-gray-700 mb-2">
                       Anchor Domain <span className="text-red-500">*</span>
                     </label>
                     <select
+                      id="anchor-domain"
+                      name="anchor-domain"
                       value={form.anchor_domain}
                       onChange={e => setForm(prev => ({ ...prev, anchor_domain: e.target.value }))}
                       className={inputClass}
@@ -562,10 +566,12 @@ export default function RedirectChainsPage() {
 
                   {/* Inter Domain */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label htmlFor="inter-domain" className="block text-sm font-medium text-gray-700 mb-2">
                       Inter Domain <span className="text-red-500">*</span>
                     </label>
                     <select
+                      id="inter-domain"
+                      name="inter-domain"
                       value={form.inter_domain}
                       onChange={e => setForm(prev => ({ ...prev, inter_domain: e.target.value }))}
                       className={inputClass}
@@ -592,6 +598,8 @@ export default function RedirectChainsPage() {
                   {/* Add Domain Selector */}
                   <div className="flex gap-2 mb-3">
                     <select
+                      id="extra-hops"
+                      name="extra-hops"
                       className={`${inputClass} flex-1`}
                       onChange={e => {
                         if (e.target.value) {
@@ -663,6 +671,8 @@ export default function RedirectChainsPage() {
                       domain is a no-op) */}
                   <div className="flex gap-2 mb-3">
                     <select
+                      id="prelander-pool"
+                      name="prelander-pool"
                       className={`${inputClass} flex-1`}
                       onChange={e => {
                         if (e.target.value) {
@@ -713,8 +723,10 @@ export default function RedirectChainsPage() {
                 {/* Settings */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Cookie Lifetime</label>
+                    <label htmlFor="cookie-lifetime" className="block text-sm font-medium text-gray-700 mb-2">Cookie Lifetime</label>
                     <select
+                      id="cookie-lifetime"
+                      name="cookie-lifetime"
                       value={form.cookie_lifetime}
                       onChange={e => setForm(prev => ({ ...prev, cookie_lifetime: parseInt(e.target.value) }))}
                       className={inputClass}
@@ -727,8 +739,10 @@ export default function RedirectChainsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Session Validation</label>
+                    <label htmlFor="session-validation" className="block text-sm font-medium text-gray-700 mb-2">Session Validation</label>
                     <select
+                      id="session-validation"
+                      name="session-validation"
                       value="enabled"
                       disabled
                       className={inputClass}
@@ -738,8 +752,10 @@ export default function RedirectChainsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                    <label htmlFor="chain-status" className="block text-sm font-medium text-gray-700 mb-2">Status</label>
                     <select
+                      id="chain-status"
+                      name="chain-status"
                       value={form.status}
                       onChange={e => setForm(prev => ({ ...prev, status: e.target.value as typeof form.status }))}
                       className={inputClass}
