@@ -135,7 +135,11 @@ async def _validate_chain_layout(db, chain, exclude_id=None):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
         if active_anchor:
-            raise HTTPException(status_code=400, detail="This Anchor already has an active chain")
+            existing_name = active_anchor.get('name', 'Unknown')
+            raise HTTPException(
+                status_code=400, 
+                detail=f"The anchor domain '{anchor}' is already used by active chain '{existing_name}'. Each anchor can only have one active chain. Please use a different anchor domain or deactivate the existing chain first."
+            )
 
 
 @router.get("", response_model=dict)
