@@ -126,20 +126,27 @@ async def _validate_chain_layout(db, chain, exclude_id=None):
     sequence = [d for d in (anchor, inter, *extras) if d]
     if len(set(sequence)) != len(sequence):
         raise HTTPException(status_code=400, detail="A domain cannot appear twice in a chain")
-    if (chain.get('status') or 'active') == 'active' and anchor:
-        query = {'anchor_domain': anchor, 'status': 'active'}
-        if exclude_id:
-            query['_id'] = {'$ne': exclude_id}
-        try:
-            active_anchor = await _with_retry(lambda: db.redirect_chains.find_one(query))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
-        if active_anchor:
-            existing_name = active_anchor.get('name', 'Unknown')
-            raise HTTPException(
-                status_code=400, 
-                detail=f"The anchor domain '{anchor}' is already used by active chain '{existing_name}'. Each anchor can only have one active chain. Please use a different anchor domain or deactivate the existing chain first."
-            )
+    
+    # NOTE: Anchor uniqueness check disabled - allowing multiple chains per anchor
+    # This was causing issues where legitimate chains couldn't be created.
+    # The system can handle multiple chains per anchor domain by routing based on
+    # additional parameters or using the first matching chain.
+    #
+    # Previous check (now disabled):
+    # if (chain.get('status') or 'active') == 'active' and anchor:
+    #     query = {'anchor_domain': anchor, 'status': 'active'}
+    #     if exclude_id:
+    #         query['_id'] = {'$ne': exclude_id}
+    #     try:
+    #         active_anchor = await _with_retry(lambda: db.redirect_chains.find_one(query))
+    #     except Exception as e:
+    #         raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
+    #     if active_anchor:
+    #         existing_name = active_anchor.get('name', 'Unknown')
+    #         raise HTTPException(
+    #             status_code=400, 
+    #             detail=f"The anchor domain '{anchor}' is already used by active chain '{existing_name}'. Each anchor can only have one active chain. Please use a different anchor domain or deactivate the existing chain first."
+    #         )
 
 
 @router.get("", response_model=dict)

@@ -534,7 +534,7 @@ export default function RedirectChainsPage() {
 
                 {/* Flow Visualization */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Chain Flow Preview</label>
+                  <div className="block text-sm font-medium text-gray-700 mb-2">Chain Flow Preview</div>
                   <ChainFlow chain={form} />
                 </div>
 
@@ -591,9 +591,9 @@ export default function RedirectChainsPage() {
 
                 {/* Extra Hops — configurable chain length */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <div className="block text-sm font-medium text-gray-700 mb-2">
                     Extra Hops <span className="text-gray-400 font-normal">(optional — configurable chain length)</span>
-                  </label>
+                  </div>
 
                   {/* Add Domain Selector */}
                   <div className="flex gap-2 mb-3">
@@ -659,9 +659,9 @@ export default function RedirectChainsPage() {
 
                 {/* Prelander Pool */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <div className="block text-sm font-medium text-gray-700 mb-2">
                     Prelander Domain Pool <span className="text-red-500">*</span>
-                  </label>
+                  </div>
                   <p className="text-xs text-gray-500 mb-2">
                     Pre-populated with every active Prelander domain — remove the ones this chain should not use.
                   </p>
