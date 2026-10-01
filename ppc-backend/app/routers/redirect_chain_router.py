@@ -281,15 +281,32 @@ async def create_redirect_chain(
     except HTTPException:
         raise
     except Exception as e:
-        # A duplicate-key race (two saves of the same chain name/anchor landing
-        # together) or a transient store failure must come back as a clear,
-        # actionable message — a bare 500 told the admin nothing.
+        # Log the actual error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to create chain: {type(e).__name__}: {e}")
+        
+        # If it's a duplicate key error, it means there's a database index
+        # Let's provide a more helpful message
         from pymongo.errors import DuplicateKeyError
         if isinstance(e, DuplicateKeyError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A redirect chain with this name already exists",
-            )
+            # Extract which field caused the duplicate
+            error_msg = str(e)
+            if "anchor_domain" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"The anchor domain '{chain_data.get('anchor_domain')}' is already used by another active chain. Please use a different anchor domain or deactivate the existing chain.",
+                )
+            elif "name" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"A chain with the name '{chain_data.get('name')}' already exists. Please use a different name.",
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"A redirect chain with these settings already exists. Error: {error_msg}",
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create the chain: {e}",
@@ -442,9 +459,28 @@ async def update_redirect_chain(
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update chain: {type(e).__name__}: {e}")
+        
         from pymongo.errors import DuplicateKeyError
         if isinstance(e, DuplicateKeyError):
-            raise HTTPException(status_code=400, detail="A redirect chain with this name already exists")
+            error_msg = str(e)
+            if "anchor_domain" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"The anchor domain is already used by another active chain. Please use a different anchor domain."
+                )
+            elif "name" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A chain with this name already exists. Please use a different name."
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A redirect chain with these settings already exists. Error: {error_msg}"
+                )
         raise HTTPException(status_code=500, detail=f"Failed to update the chain: {e}")
     
     # Return updated chain
