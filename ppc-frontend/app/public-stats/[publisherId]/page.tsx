@@ -128,7 +128,8 @@ export default function PublisherStatsPage() {
   const [error, setError] = useState(false)
   // The 7d/14d/30d chart filter was removed by request — the chart always
   // shows the full daily breakdown the report was generated with.
-  const [dateRange, setDateRange] = useState<number>(30) // Date range selector for daily breakdown
+  // Default report period is 7 days — the selector never goes above 30 days.
+  const [dateRange, setDateRange] = useState<number>(7) // Date range selector for daily breakdown
   // Platform click filters — empty set = show all platforms
   const [platformFilters, setPlatformFilters] = useState<Set<'windows' | 'mac' | 'android'>>(new Set())
   // Chart series visibility + hover crosshair + refresh timestamp
@@ -407,8 +408,6 @@ export default function PublisherStatsPage() {
               <option value={7}>Last 7 Days</option>
               <option value={14}>Last 14 Days</option>
               <option value={30}>Last 30 Days</option>
-              <option value={60}>Last 60 Days</option>
-              <option value={90}>Last 90 Days</option>
             </select>
             <button
               onClick={() => loadStats()}

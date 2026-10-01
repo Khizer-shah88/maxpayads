@@ -30,7 +30,7 @@ _EXPIRED_DETAIL = "This statistics link has expired."
 async def get_public_stats(
     share_id: str,
     request: Request,
-    days: int = Query(30, ge=1, le=90, description="Number of days to include"),
+    days: int = Query(7, ge=1, le=30, description="Number of days to include (max 30)"),
     db=Depends(get_db),
 ):
     """

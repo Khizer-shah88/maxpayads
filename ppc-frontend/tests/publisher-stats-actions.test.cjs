@@ -39,6 +39,7 @@ function pageHarness({ failSetup = false } = {}) {
     '@/components/shared/Sidebar': { default: () => null },
     '@/components/ui/badge': { StatusBadge: () => null },
     '@/components/ui/loading': { Spinner: () => null },
+    '@/components/ui/ConfirmDialog': { default: () => null },
     '@/lib/hooks/useAuth': { useAuth: () => ({ initialize() {} }) },
     '@/lib/api': {
       adminApi: {

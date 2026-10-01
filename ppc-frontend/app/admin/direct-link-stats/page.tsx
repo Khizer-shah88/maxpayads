@@ -174,10 +174,11 @@ export default function DirectLinkStatsPage() {
   const [addConvValue, setAddConvValue] = useState(0)
   const [addingConversion, setAddingConversion] = useState(false)
 
-  // Date filter
+  // Date filter — defaults to 7 days; the range never exceeds 30 days
+  // (Direct Link Stats reports are capped at a 30-day window).
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date()
-    d.setDate(d.getDate() - 30)
+    d.setDate(d.getDate() - 7)
     return d.toISOString().split('T')[0]
   })
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0])
@@ -213,10 +214,9 @@ export default function DirectLinkStatsPage() {
       setPublishers(allPubs)
       setLinks(allLinks)
 
-      // Process publisher domains — each row now also carries the real
-      // traffic stats (clicks/today conversions) and the global default
-      // domains, which the table's Clicks / Today / Assigned Domain /
-      // Default Domain columns render.
+      // Process publisher domains — each row also carries the real traffic
+      // stats (clicks/today conversions) which the table's Clicks / Today
+      // columns render.
       if (domainsResult.status === 'fulfilled') {
         const domainsData = domainsResult.value.data?.publisher_domains ?? []
         const domainsMap: Record<string, any> = {}
@@ -452,12 +452,6 @@ export default function DirectLinkStatsPage() {
         totalConversions,
         todayConversions,
         todayClicks: clickStats.today || 0,
-        assignedDomains: {
-          anchor: dom.anchor || [],
-          inter: dom.inter || [],
-          prelander: dom.prelander || [],
-        },
-        defaultDomains: dom.defaults || {},
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -683,8 +677,6 @@ export default function DirectLinkStatsPage() {
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">CR</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Assigned Domain</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Default Domain</th>
                     <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -753,56 +745,7 @@ export default function DirectLinkStatsPage() {
                           {pub.cr.toFixed(2)}%
                         </span>
                       </td>
-                      
-                      {/* Assigned Domains — this publisher's own Anchor/Inter/Prelander */}
-                      <td className="px-3 py-4">
-                        {(() => {
-                          const a = pub.assignedDomains
-                          const entries: { label: string; domains: string[]; cls: string }[] = [
-                            { label: 'A', domains: a.anchor, cls: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
-                            { label: 'I', domains: a.inter, cls: 'bg-purple-50 border-purple-100 text-purple-700' },
-                            { label: 'P', domains: a.prelander, cls: 'bg-teal-50 border-teal-100 text-teal-700' },
-                          ]
-                          const hasAny = entries.some(e => e.domains.length > 0)
-                          if (!hasAny) return <span className="text-xs text-gray-300">—</span>
-                          return (
-                            <div className="flex flex-col gap-1 max-w-[220px]">
-                              {entries.filter(e => e.domains.length > 0).map(e => (
-                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
-                                  <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
-                                  <span className="text-xs text-gray-600 truncate" title={e.domains.join(', ')}>
-                                    {e.domains.length === 1 ? e.domains[0] : `${e.domains[0]} +${e.domains.length - 1}`}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        })()}
-                      </td>
 
-                      {/* Default (global) Domains — what the publisher falls back to */}
-                      <td className="px-3 py-4">
-                        {(() => {
-                          const d = pub.defaultDomains || {}
-                          const entries = [
-                            { label: 'A', domain: d.anchor, cls: 'text-indigo-600' },
-                            { label: 'I', domain: d.inter, cls: 'text-purple-600' },
-                            { label: 'P', domain: d.prelander, cls: 'text-teal-600' },
-                          ].filter(e => e.domain)
-                          if (entries.length === 0) return <span className="text-xs text-gray-300">—</span>
-                          return (
-                            <div className="flex flex-col gap-0.5 max-w-[200px]">
-                              {entries.map(e => (
-                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
-                                  <span className={`text-[9px] font-bold flex-shrink-0 ${e.cls}`}>{e.label}</span>
-                                  <span className="text-xs text-gray-500 truncate" title={e.domain}>{e.domain}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        })()}
-                      </td>
-                      
                       {/* Actions */}
                       <td className="px-3 py-4">
                         <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
