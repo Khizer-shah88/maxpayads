@@ -452,6 +452,12 @@ export default function DirectLinkStatsPage() {
         totalConversions,
         todayConversions,
         todayClicks: clickStats.today || 0,
+        assignedDomains: {
+          anchor: dom.anchor || [],
+          inter: dom.inter || [],
+          prelander: dom.prelander || [],
+        },
+        defaultDomains: dom.defaults || {},
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -677,6 +683,7 @@ export default function DirectLinkStatsPage() {
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">CR</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Assigned Domain</th>
                     <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -744,6 +751,51 @@ export default function DirectLinkStatsPage() {
                         }`}>
                           {pub.cr.toFixed(2)}%
                         </span>
+                      </td>
+
+                      {/* Assigned Domains — publisher-specific, falls back to global default */}
+                      <td className="px-3 py-4">
+                        {(() => {
+                          const a = pub.assignedDomains || { anchor: [], inter: [], prelander: [] }
+                          const entries = [
+                            { label: 'A', domains: a.anchor, cls: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
+                            { label: 'I', domains: a.inter, cls: 'bg-purple-50 border-purple-100 text-purple-700' },
+                            { label: 'P', domains: a.prelander, cls: 'bg-teal-50 border-teal-100 text-teal-700' },
+                          ]
+                          const hasAny = entries.some(e => e.domains.length > 0)
+                          if (!hasAny) {
+                            // Fall back to global default domains
+                            const d = pub.defaultDomains || {}
+                            const defEntries = [
+                              { label: 'A', domain: d.anchor, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
+                              { label: 'I', domain: d.inter, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
+                              { label: 'P', domain: d.prelander, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
+                            ].filter(e => e.domain)
+                            if (defEntries.length === 0) return <span className="text-xs text-gray-300 italic">No domain</span>
+                            return (
+                              <div className="flex flex-col gap-1 max-w-[200px]">
+                                {defEntries.map(e => (
+                                  <div key={e.label} className="flex items-center gap-1.5 min-w-0">
+                                    <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
+                                    <span className="text-xs text-gray-500 truncate" title={e.domain}>{e.domain}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          }
+                          return (
+                            <div className="flex flex-col gap-1 max-w-[200px]">
+                              {entries.filter(e => e.domains.length > 0).map(e => (
+                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
+                                  <span className="text-xs text-gray-600 truncate" title={e.domains.join(', ')}>
+                                    {e.domains.length === 1 ? e.domains[0] : `${e.domains[0]} +${e.domains.length - 1}`}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </td>
 
                       {/* Actions */}
