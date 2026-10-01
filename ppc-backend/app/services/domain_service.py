@@ -221,6 +221,32 @@ async def create_domain(db, data: dict) -> dict:
     return _serialize(doc, pub_map)
 
 
+async def set_default_anchor(db, value: str) -> str:
+    """Save the dashboard domain in the same registry used by link generation.
+
+    Keep the previous Anchor registered for already published links. Explicit
+    publisher assignments still take precedence over the global default.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Enter an Anchor domain for smartlinks")
+    if "://" in value and urlparse(value.strip()).scheme.lower() not in ("http", "https"):
+        raise ValueError("Use an HTTP or HTTPS domain")
+    host = normalize_domain(value)
+    existing = await db.redirection_domains.find_one({"domain": host})
+    if existing:
+        if normalize_domain_type(existing.get("domain_type")) != DOMAIN_TYPE_ANCHOR:
+            raise ValueError("This hostname is already registered with another domain role")
+        await update_domain(db, str(existing["_id"]), {
+            "domain": host, "is_default": True, "status": "active",
+        })
+    else:
+        await create_domain(db, {
+            "domain": host, "domain_type": DOMAIN_TYPE_ANCHOR,
+            "is_default": True, "status": "active",
+        })
+    return domain_to_url(host)
+
+
 async def update_domain(db, domain_id: str, data: dict) -> Optional[dict]:
     try:
         oid = ObjectId(domain_id)

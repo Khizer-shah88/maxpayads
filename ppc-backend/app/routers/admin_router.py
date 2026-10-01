@@ -822,9 +822,10 @@ async def get_domain(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Get the configured platform domain."""
-    doc = await db.system_settings.find_one({"key": "platform_domain"})
-    domain = doc.get("value", "") if doc else ""
+    """Display the same default Anchor used by newly generated links."""
+    from app.services.domain_service import resolve_domain_url
+    from app.core.constants import DOMAIN_TYPE_ANCHOR
+    domain = await resolve_domain_url(db, DOMAIN_TYPE_ANCHOR) or ""
     return {"success": True, "domain": domain}
 
 
@@ -834,13 +835,12 @@ async def set_domain(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Set the platform domain (used in ad embed codes)."""
-    domain = data.get("domain", "").strip().rstrip("/")
-    await db.system_settings.update_one(
-        {"key": "platform_domain"},
-        {"$set": {"key": "platform_domain", "value": domain, "updated_at": datetime.utcnow()}},
-        upsert=True,
-    )
+    """Set the default Anchor for smartlinks and publisher embed codes."""
+    from app.services.domain_service import set_default_anchor
+    try:
+        domain = await set_default_anchor(db, data.get("domain", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"success": True, "message": "Domain updated", "domain": domain}
 
 

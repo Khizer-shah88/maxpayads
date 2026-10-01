@@ -16,6 +16,7 @@ import CountriesChart from '@/components/charts/CountriesChart'
 import DataTable from '@/components/tables/DataTable'
 import { adminApi, analyticsApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
+import { toast } from 'sonner'
 import type { AdminDashboardStats, ClickTrend, TopCountry } from '@/types'
 
 ChartJS.register(ArcElement, Tooltip, Legend)
@@ -258,7 +259,7 @@ export default function AdminDashboard() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Platform Domain</h3>
-                  <p className="text-xs text-gray-400">Used in publisher embed codes & smart links</p>
+                  <p className="text-xs text-gray-400">Default Anchor for publisher embed codes & smartlinks</p>
                 </div>
               </div>
               <div className="mb-4">
@@ -269,7 +270,7 @@ export default function AdminDashboard() {
                   placeholder="https://yourdomain.com"
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm"
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Include protocol (https://). Leave empty to auto-detect.</p>
+                <p className="text-xs text-gray-400 mt-1.5">Enter a domain pointing to this server. New links use this default; publisher-specific Anchor assignments take priority.</p>
               </div>
               {savedDomain && (
                 <div className="mb-4 p-3 bg-emerald-50 rounded-xl border border-emerald-200">
@@ -284,10 +285,13 @@ export default function AdminDashboard() {
                       const res = await adminApi.setDomain(domainValue)
                       setSavedDomain(res.data.domain)
                       setDomainModal(false)
-                    } catch { /* ignore */ }
+                      toast.success('Default smartlink domain updated')
+                    } catch (err: any) {
+                      toast.error(err.response?.data?.detail || 'Failed to update domain')
+                    }
                     finally { setSavingDomain(false) }
                   }}
-                  disabled={savingDomain}
+                  disabled={savingDomain || !domainValue.trim()}
                   className="flex-1 bg-primary hover:bg-primary-dark text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center disabled:bg-gray-300 transition-colors">
                   {savingDomain ? 'Saving...' : 'Save Domain'}
                 </button>
