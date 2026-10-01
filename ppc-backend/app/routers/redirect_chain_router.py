@@ -194,7 +194,10 @@ async def create_redirect_chain(
 
     # Check if chain name already exists (retry: a busy pool must not 500 the save)
     # Only check active chains - inactive chains can have duplicate names
-    existing = await _with_retry(lambda: db.redirect_chains.find_one({"name": name, "status": "active"}))
+    existing = await _with_retry(lambda: db.redirect_chains.find_one({
+        "name": name,
+        "status": "active"
+    }))
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

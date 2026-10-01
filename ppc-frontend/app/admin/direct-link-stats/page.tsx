@@ -457,7 +457,6 @@ export default function DirectLinkStatsPage() {
           inter: dom.inter || [],
           prelander: dom.prelander || [],
         },
-        defaultDomains: dom.defaults || {},
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -753,7 +752,7 @@ export default function DirectLinkStatsPage() {
                         </span>
                       </td>
 
-                      {/* Assigned Domains — publisher-specific, falls back to global default */}
+                      {/* Assigned Domains — publisher-specific only */}
                       <td className="px-3 py-4">
                         {(() => {
                           const a = pub.assignedDomains || { anchor: [], inter: [], prelander: [] }
@@ -764,24 +763,7 @@ export default function DirectLinkStatsPage() {
                           ]
                           const hasAny = entries.some(e => e.domains.length > 0)
                           if (!hasAny) {
-                            // Fall back to global default domains
-                            const d = pub.defaultDomains || {}
-                            const defEntries = [
-                              { label: 'A', domain: d.anchor, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
-                              { label: 'I', domain: d.inter, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
-                              { label: 'P', domain: d.prelander, cls: 'bg-gray-50 border-gray-200 text-gray-500' },
-                            ].filter(e => e.domain)
-                            if (defEntries.length === 0) return <span className="text-xs text-gray-300 italic">No domain</span>
-                            return (
-                              <div className="flex flex-col gap-1 max-w-[200px]">
-                                {defEntries.map(e => (
-                                  <div key={e.label} className="flex items-center gap-1.5 min-w-0">
-                                    <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
-                                    <span className="text-xs text-gray-500 truncate" title={e.domain}>{e.domain}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )
+                            return <span className="text-xs text-gray-300 italic">No domain</span>
                           }
                           return (
                             <div className="flex flex-col gap-1 max-w-[200px]">
