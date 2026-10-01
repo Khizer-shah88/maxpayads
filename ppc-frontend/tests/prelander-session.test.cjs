@@ -305,6 +305,41 @@ test('production source deterrent works on all pages including prelander domains
   }
 });
 
+for (const site of ['none', 'cross-site', 'same-site', 'same-origin']) {
+  test(`Inter ticket reached from a smartlink is not rejected by navigation metadata: ${site}`, async () => {
+    const next = require('next/server');
+    const { middleware } = loadModule('middleware.ts', {
+      'next/server': next, '@/lib/prelander-session': session,
+      '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
+    }, {
+      process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } },
+      fetch: async () => new Response('{"role":"inter"}'),
+    });
+    const response = await middleware(new next.NextRequest('https://inter.example/d/h_issued_ticket', {
+      headers: { 'sec-fetch-site': site, 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-middleware-next'), '1');
+    assert.equal(response.headers.get('x-sd'), null);
+  });
+}
+
+for (const [role, path] of [['prelander', '/d/session'], ['prelander', '/d/copied_slug'],
+  ['prelander', '/d/h_copied_ticket'], ['inter', '/d/copied_slug']]) {
+  test(`pasted protected pages still take the fallback: ${role} ${path}`, async () => {
+    const next = require('next/server');
+    const { middleware } = loadModule('middleware.ts', {
+      'next/server': next, '@/lib/prelander-session': session,
+      '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
+    }, { fetch: async () => new Response(JSON.stringify({ role })) });
+    const response = await middleware(new next.NextRequest(`https://${role}.example${path}`, {
+      headers: { 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' },
+    }));
+    assert.equal(response.status, 403);
+    assert.match(await response.text(), /prelander-fallback/);
+  });
+}
+
 // Exercise the React page's state transitions without introducing a test-only
 // DOM dependency. Render actual JSX and flush its asynchronous load effect.
 function slugPage({ slug = 'session', ...options } = {}) {
@@ -370,6 +405,31 @@ test('React session outage shows recovery without returning to the Inter root', 
   await page.load();
   assert.equal(page.render().props.role, 'alert');
   assert.deepEqual(page.events, [['fetch', '/api/prelander/resolve/session']]);
+});
+
+for (const nextUrl of ['https://next-inter.example/d/h_next', 'https://landing.example/_auth/one-use',
+  'https://campaign.example/download']) {
+  test(`authorized Inter ticket follows its recorded destination: ${nextUrl}`, async () => {
+    const page = slugPage({ slug: 'h_issued_ticket' });
+    page.context.fetchOverride = async (url) => {
+      page.events.push(['fetch', url]);
+      assert.equal(url, '/api/prelander/hop/h_issued_ticket');
+      return new Response(JSON.stringify({ next_url: nextUrl }));
+    };
+    page.context.setTimeoutOverride = (callback) => callback();
+    page.render();
+    await page.load();
+    assert.deepEqual(page.events, [['fetch', '/api/prelander/hop/h_issued_ticket'], ['replace', nextUrl]]);
+  });
+}
+
+test('invalid or consumed Inter ticket still redirects to fallback without rendering content', async () => {
+  const page = slugPage({ slug: 'h_consumed' });
+  page.context.fetchOverride = async () => new Response('{}', { status: 403 });
+  page.render();
+  await page.load();
+  assert.equal(page.render(), null);
+  assert.deepEqual(page.events, [['replace', '/prelander-fallback']]);
 });
 
 for (const decision of [{ bypass_redirect_url: 'https://offer.example/' }, { prelander_domain: 'https://landing.example' }]) {

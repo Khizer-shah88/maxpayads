@@ -75,10 +75,10 @@ def _is_direct_navigation(request: Request) -> bool:
     True when the request is a top-level document navigation started by the
     browser UI itself: a typed, pasted or bookmarked URL.
 
-    Browsers label such requests `Sec-Fetch-Site: none`. Visitors that came
-    through the redirect flow (Inter → Prelander) are labelled cross-site /
-    same-site / same-origin instead. Unlike the Referer header this is not
-    affected by `Referrer-Policy: no-referrer`, which our own redirects send.
+    Browsers label such requests `Sec-Fetch-Site: none`, but may preserve
+    that value through HTTP redirects from a typed Anchor smartlink. Use this
+    guard only for direct document access to data/claim API endpoints, never
+    to reject an Inter ticket or handoff before validating its authorization.
 
     Very old browsers do not send Sec-Fetch-* at all → False (fail open here;
     the /claim one-time flag is the second layer that still covers them).

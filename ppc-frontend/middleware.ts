@@ -136,7 +136,12 @@ export async function middleware(request: NextRequest) {
       return new NextResponse(null, { status: 503 });
     }
   }
-  if (pathname.startsWith('/d/') && request.headers.get('sec-fetch-site') === 'none') {
+  // A smartlink typed/bookmarked on the Anchor retains Sec-Fetch-Site: none
+  // through its HTTP redirect to Inter. That header cannot distinguish this
+  // valid arrival from a pasted URL. Let the opaque Inter ticket reach its
+  // POST exchange, which checks host, browser, expiry and single-use status.
+  const isInterTicket = role === 'inter' && pathname.startsWith('/d/h_');
+  if (pathname.startsWith('/d/') && !isInterTicket && request.headers.get('sec-fetch-site') === 'none') {
     return prelanderFallbackResponse();
   }
   if (role === 'anchor' && pathname === '/') {
