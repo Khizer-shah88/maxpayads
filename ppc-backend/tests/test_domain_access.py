@@ -114,6 +114,27 @@ async def test_direct_api_cannot_bypass_with_forwarded_or_prelander_host(domains
         assert (await client.get('/click', headers={'host': 'anchor.example'})).status_code == 200
 
 
+async def test_domain_access_probe_marks_known_vs_unknown(domains_db, monkeypatch):
+    from app.middleware import domain_access_middleware as guard
+    monkeypatch.setattr(guard, 'get_database', lambda: domains_db)
+
+    app = FastAPI()
+    app.add_middleware(guard.DomainAccessMiddleware)
+
+    @app.get('/domain-access')
+    async def domain_access():
+        return {'unexpected': True}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='https://inter.example') as client:
+        known = await client.get('/domain-access?path=/', headers={'host': 'inter.example', 'x-original-uri': '/'})
+        assert known.status_code == 200
+        assert known.headers.get('x-domain-known') == '1'
+
+        unknown = await client.get('/domain-access?path=/', headers={'host': 'unknown.example', 'x-original-uri': '/'})
+        assert unknown.status_code == 403
+        assert unknown.headers.get('x-domain-known') == '0'
+
+
 async def test_legacy_stats_domain_spelling_is_recognized(domains_db):
     domains_db.direct_links.docs[1]['stats_domain'] = 'https://custom.example/'
     assert await domain_role(domains_db, 'custom.example') == 'stats'
