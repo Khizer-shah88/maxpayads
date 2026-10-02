@@ -20,7 +20,7 @@
 import { NextResponse } from 'next/server';
 import { prelanderFallbackResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
 import type { NextRequest } from 'next/server';
-import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
+import { evaluateEntryAccess, getAllowedHostnames, getFallbackUrl, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
 // ─── Routes exempt from the entry guard ──────────────────────────────────────
 // (auth, pending, and prelander pages must always be reachable so publishers
@@ -92,7 +92,20 @@ export async function middleware(request: NextRequest) {
   // so the clean shell, React page and cookie-less response use one fallback.
   // No database/session dependency or source-deterrent worker is needed.
   if (pathname === '/prelander-fallback') {
-    return prelanderFallbackResponse();
+    let destination = 'https://www.google.com/';
+    try {
+      const configured = new URL(getFallbackUrl());
+      if (['https:', 'http:'].includes(configured.protocol) &&
+          !configured.username && !configured.password &&
+          configured.hostname !== host &&
+          configured.pathname !== '/prelander-fallback') {
+        destination = configured.href;
+      }
+    } catch {}
+    const response = NextResponse.redirect(destination, 302);
+    response.headers.set('Cache-Control', 'no-store, private');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
   }
 
   // Both containers receive the same explicit PORTAL_HOSTNAMES setting.

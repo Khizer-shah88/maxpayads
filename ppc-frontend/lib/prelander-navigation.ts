@@ -16,18 +16,6 @@ export function returnToPreviousPage(): void {
     }
   } catch {}
 
-  // If the browser has a real previous page, try to go back to it. When there
-  // is no usable history entry, fall back to Google instead of the site root.
-  if (window.history.length > 1) {
-    const currentUrl = window.location.href;
-    window.history.back();
-    window.setTimeout(() => {
-      if (window.location.href === currentUrl) {
-        window.location.replace('https://www.google.com/');
-      }
-    }, 250);
-    return;
-  }
-
-  window.location.replace('https://www.google.com/');
+  // No usable referrer: hand off to the server-side fallback route.
+  window.location.replace('/prelander-fallback');
 }
