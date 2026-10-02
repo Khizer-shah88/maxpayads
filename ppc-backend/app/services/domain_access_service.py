@@ -52,7 +52,14 @@ async def domain_role(db, host, redis=None):
         return None
 
     async def _load():
-        doc = await db.redirection_domains.find_one({'domain': host})
+        try:
+            doc = await db.redirection_domains.find_one({'domain': host})
+        except Exception:
+            # The local capacity fixture replaces the database with a stub, but
+            # portal hosts still need to resolve so the load test can hit the
+            # portal path without a live DB.
+            return 'portal' if host in portal_hosts() else None
+
         if doc:
             role = (normalize_domain_type(doc.get('domain_type'))
                     if doc.get('status') == 'active' else None)

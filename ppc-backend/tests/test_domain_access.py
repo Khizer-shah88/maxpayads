@@ -135,6 +135,19 @@ async def test_domain_access_probe_marks_known_vs_unknown(domains_db, monkeypatc
         assert unknown.headers.get('x-domain-known') == '0'
 
 
+async def test_portal_hosts_still_resolve_when_database_is_stubbed(monkeypatch):
+    from app.services.domain_access_service import domain_role
+
+    monkeypatch.setattr(settings, 'PORTAL_HOSTNAMES', 'localhost,127.0.0.1,portal.example')
+
+    class StubCollection:
+        async def find_one(self, query):
+            raise RuntimeError('db unavailable')
+
+    db = SimpleNamespace(redirection_domains=StubCollection(), system_settings=Collection(), direct_links=Collection())
+    assert await domain_role(db, '127.0.0.1') == 'portal'
+
+
 async def test_legacy_stats_domain_spelling_is_recognized(domains_db):
     domains_db.direct_links.docs[1]['stats_domain'] = 'https://custom.example/'
     assert await domain_role(domains_db, 'custom.example') == 'stats'
