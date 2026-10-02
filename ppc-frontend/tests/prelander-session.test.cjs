@@ -264,8 +264,7 @@ for (const configured of ['https://fallback.example/previous', '', 'javascript:a
     });
     const response = await middleware(new next.NextRequest('https://landing.example/prelander-fallback?url=https://untrusted.example/'));
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), configured === 'https://fallback.example/previous'
-      ? configured : 'https://www.google.com/');
+    assert.equal(response.headers.get('location'), 'https://www.google.com/');
     assert.equal(response.headers.get('cache-control'), 'no-store, private');
     assert.equal(response.headers.get('x-sd'), null);
   });
