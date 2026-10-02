@@ -13,6 +13,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _fallback_url() -> str:
+    from app.config import get_settings
+
+    raw = (get_settings().ENTRY_FALLBACK_URL or '').strip()
+    if not raw:
+        return 'https://www.google.com/'
+    return raw
+
+
 class FallbackRedirectMiddleware(BaseHTTPMiddleware):
     """
     Middleware that handles direct access to inter/prelander domains.
@@ -76,7 +85,9 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
             
             if domain_type in ("inter", "intermediate", "prelander", "last"):
                 # This is an inter or prelander domain accessed directly
-                # Redirect to referrer or Google
+                # Redirect to referrer when available, otherwise use the
+                # configured fallback URL instead of letting the browser land
+                # on a server-generated 404 page.
                 referrer = request.headers.get("referer") or request.headers.get("referrer")
                 
                 if referrer and not referrer.startswith(f"http://{host}") and not referrer.startswith(f"https://{host}"):
@@ -84,9 +95,9 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
                     logger.info(f"Inter/Prelander domain {host} redirecting to referrer: {referrer}")
                     return RedirectResponse(url=referrer, status_code=302)
                 else:
-                    # Redirect to Google
-                    logger.info(f"Inter/Prelander domain {host} redirecting to Google (no referrer)")
-                    return RedirectResponse(url="https://google.com", status_code=302)
+                    fallback_url = _fallback_url()
+                    logger.info(f"Inter/Prelander domain {host} redirecting to fallback: {fallback_url}")
+                    return RedirectResponse(url=fallback_url, status_code=302)
             
             # For anchor domains or other types, let the request pass through
             return await call_next(request)

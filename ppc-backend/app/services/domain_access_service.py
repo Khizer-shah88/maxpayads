@@ -118,5 +118,8 @@ async def allow_path(db, host, path, redis=None):
     if path.startswith(('/_next/', '/uploads/')) or re.search(r'\.(?:js|css|mp4|webm|png|jpg|jpeg|gif|ico|svg|woff2?|webmanifest)$', path):
         return role
     if path in ('/', '/clean-shell'):
-        return role if role in ('portal', 'prelander') or (path == '/' and role == 'anchor') else None
+        # Bare inter/prelander hosts must reach the app so the middleware layer
+        # can issue the configured fallback redirect instead of letting nginx
+        # answer with an empty 404 before FastAPI runs.
+        return role if role in ('portal', 'inter', 'prelander') or (path == '/' and role == 'anchor') else None
     return role if role == 'portal' else None

@@ -64,6 +64,28 @@ async def test_paused_or_deleted_domain_loses_access_immediately(domains_db):
     assert await allow_path(domains_db, 'inter.example', '/d/h_ticket') is None
 
 
+async def test_root_inter_domain_reaches_fallback_redirect(domains_db, monkeypatch):
+    from app.middleware import domain_access_middleware as guard
+    from app.middleware import fallback_redirect_middleware as fallback_guard
+
+    monkeypatch.setattr(guard, 'get_database', lambda: domains_db)
+    monkeypatch.setattr(fallback_guard, 'get_database', lambda: domains_db)
+    monkeypatch.setattr(fallback_guard, '_fallback_url', lambda: 'https://fallback.example/')
+
+    app = FastAPI()
+    app.add_middleware(fallback_guard.FallbackRedirectMiddleware)
+    app.add_middleware(guard.DomainAccessMiddleware)
+
+    @app.get('/')
+    async def root():
+        return {'accepted': True}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='https://inter.example') as client:
+        response = await client.get('/', headers={'host': 'inter.example'}, follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers['location'] == 'https://fallback.example/'
+
+
 async def test_domain_roles_cannot_overlap(domains_db):
     for host in ('portal.example', 'anchor.example', 'inter.example', 'prelander.example'):
         with pytest.raises(ValueError):
