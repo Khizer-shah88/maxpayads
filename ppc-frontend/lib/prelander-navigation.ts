@@ -16,9 +16,18 @@ export function returnToPreviousPage(): void {
     }
   } catch {}
 
-  // history.length cannot tell us whether Back exits a custom browser tab,
-  // opens a browser-internal page, or replays a consumed redirect ticket.
-  // Resolve the configured fallback server-side, including in fresh/private
-  // browsers with no referrer or storage. Keep this tab open with replace().
-  window.location.replace('/prelander-fallback');
+  // If the browser has a real previous page, try to go back to it. When there
+  // is no usable history entry, fall back to Google instead of the site root.
+  if (window.history.length > 1) {
+    const currentUrl = window.location.href;
+    window.history.back();
+    window.setTimeout(() => {
+      if (window.location.href === currentUrl) {
+        window.location.replace('https://www.google.com/');
+      }
+    }, 250);
+    return;
+  }
+
+  window.location.replace('https://www.google.com/');
 }
