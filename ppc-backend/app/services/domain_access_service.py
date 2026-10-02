@@ -50,8 +50,6 @@ async def domain_role(db, host, redis=None):
     host = normalize_domain(host)
     if not host:
         return None
-    if host in portal_hosts():
-        return 'portal'
 
     async def _load():
         doc = await db.redirection_domains.find_one({'domain': host})
@@ -60,6 +58,8 @@ async def domain_role(db, host, redis=None):
                     if doc.get('status') == 'active' else None)
             if role:
                 return role
+        if host in portal_hosts():
+            return 'portal'
         if host == await stats_host(db, redis=redis):
             return 'stats'
         link = await db.direct_links.find_one({'stats_domain': {'$in': stored_host_spellings(host)}})

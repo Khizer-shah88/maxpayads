@@ -284,6 +284,15 @@ test('authorized root still reaches the clean prelander shell', async () => {
   assert.equal(b.events[0][0], 'server-fetch');
 });
 
+test('inter root never renders the portal shell and falls back immediately', async () => {
+  const b = await runRoot({
+    check: new Response('{"role":"inter"}'),
+    referrer: 'https://facebook.com/',
+  });
+  assert.equal(b.response.status, 403);
+  assert.deepEqual(b.events, [['replace', 'https://facebook.com/']]);
+});
+
 test('production source deterrent works on all pages including prelander domains', async () => {
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {

@@ -104,7 +104,7 @@ export async function middleware(request: NextRequest) {
   // traffic/stats URLs still use the complete API policy even on a portal host.
   const configuredPortals = (process.env.PORTAL_HOSTNAMES || '').split(',').map(value => value.trim().toLowerCase());
   const configuredPortalPage = configuredPortals.includes(host) && (
-    pathname === '/' || pathname === '/admin' || pathname.startsWith('/admin/') ||
+    pathname === '/admin' || pathname.startsWith('/admin/') ||
     pathname === '/publisher' || pathname.startsWith('/publisher/') || pathname.startsWith('/_next/')
   );
 
@@ -237,6 +237,13 @@ export async function middleware(request: NextRequest) {
       } catch (err) {
         return sessionUnavailableResponse(503);
       }
+  }
+
+  // Inter domains never serve the portal shell at their root. A direct paste
+  // or fresh tab should still go through the same fallback path as a denied
+  // prelander visit: previous page when available, otherwise Google.
+  if (role === 'inter' && pathname === '/') {
+    return prelanderFallbackResponse();
   }
 
   // ════════════════════════════════════════════════════════════════════════════
