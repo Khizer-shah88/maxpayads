@@ -189,7 +189,76 @@ async def serve_ad(
 
 
 @app.get("/", tags=["System"])
-async def root():
+async def root(request: Request):
+    """
+    Root handler - checks if domain is registered and handles accordingly
+    """
+    from fastapi.responses import RedirectResponse, Response
+    from app.database import get_database
+    
+    # Get the host
+    host = request.headers.get("host", "").lower().split(":")[0]
+    
+    # Skip if it's localhost or internal
+    if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("192.168."):
+        return {
+            "name": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "status": "running",
+            "docs": "/docs",
+        }
+    
+    # Check if this domain is registered in admin panel
+    db = get_database()
+    if db:
+        # Check redirection_domains
+        domain_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+        
+        # Also check if it's configured as admin/portal domain
+        if not domain_doc:
+            system_settings = await db.system_settings.find_one({"key": "platform_domain"})
+            admin_domain = system_settings.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if system_settings else None
+            
+            # Check stats domain
+            stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+            stats_domain = stats_domain_doc.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if stats_domain_doc else None
+            
+            # If domain is admin or stats, show API info
+            if host in [admin_domain, stats_domain]:
+                return {
+                    "name": settings.APP_NAME,
+                    "version": settings.APP_VERSION,
+                    "status": "running",
+                    "docs": "/docs",
+                }
+            
+            # If domain is not registered anywhere, close connection
+            return Response(content=b"", status_code=444, headers={"Connection": "close"})
+        
+        # If it's a registered redirection domain
+        if domain_doc:
+            domain_type = domain_doc.get("domain_type", "")
+            
+            # If it's an inter or prelander domain accessed directly, redirect
+            if domain_type in ("inter", "intermediate", "prelander", "last"):
+                # Try to get referrer
+                referrer = request.headers.get("referer") or request.headers.get("referrer")
+                if referrer and not referrer.startswith(f"http://{host}") and not referrer.startswith(f"https://{host}"):
+                    # Redirect to referrer if it's not from the same domain
+                    return RedirectResponse(url=referrer, status_code=302)
+                else:
+                    # Fallback to Google
+                    return RedirectResponse(url="https://google.com", status_code=302)
+            
+            # For anchor domains, show API info
+            return {
+                "name": settings.APP_NAME,
+                "version": settings.APP_VERSION,
+                "status": "running",
+                "docs": "/docs",
+            }
+    
+    # Default response
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
