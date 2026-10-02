@@ -17,6 +17,7 @@ from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.domain_access_middleware import DomainAccessMiddleware
 from app.middleware.security_middleware import SecurityMiddleware
 from app.middleware.capacity import CapacityMiddleware
+from app.middleware.fallback_redirect_middleware import FallbackRedirectMiddleware
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
@@ -102,6 +103,8 @@ app.add_middleware(
 )
 
 # Custom middleware (order matters - first added wraps last)
+# FallbackRedirectMiddleware must be FIRST to catch requests before routing
+app.add_middleware(FallbackRedirectMiddleware)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
