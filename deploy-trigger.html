@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaxPayAds - Deploy Trigger</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        p {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 MaxPayAds Deployment</h1>
+        <p>Trigger deployment and reload without SSH access</p>
+        
+        <div class="input-group">
+            <label for="apiUrl">API URL</label>
+            <input type="text" id="apiUrl" placeholder="https://yourdomain.com" value="https://vertexmonetize.com">
+        </div>
+        
+        <div class="input-group">
+            <label for="deployToken">Deploy Token</label>
+            <input type="password" id="deployToken" placeholder="your-secret-deploy-token-12345">
+        </div>
+        
+        <button onclick="pullAndReload()">
+            📥 Pull Code & Reload
+        </button>
+        
+        <button onclick="reloadOnly()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+            🔄 Reload Only
+        </button>
+        
+        <button onclick="checkStatus()" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+            📊 Check Status
+        </button>
+        
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.innerHTML = message;
+            statusDiv.style.display = 'block';
+        }
+
+        function showLoading(message) {
+            showStatus(`<div class="spinner"></div>${message}`, 'info');
+        }
+
+        async function makeRequest(endpoint, buttonText) {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const token = document.getElementById('deployToken').value.trim();
+            
+            if (!apiUrl || !token) {
+                showStatus('❌ Please enter both API URL and Deploy Token', 'error');
+                return;
+            }
+            
+            showLoading(buttonText);
+            
+            try {
+                const response = await fetch(`${apiUrl}${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Deploy-Token': token,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus(`✅ ${data.message || 'Success!'}`, 'success');
+                } else {
+                    showStatus(`❌ ${data.detail || 'Failed'}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function pullAndReload() {
+            await makeRequest('/deploy/pull-and-reload', 'Pulling code and reloading...');
+        }
+
+        async function reloadOnly() {
+            await makeRequest('/deploy/reload', 'Reloading application...');
+        }
+
+        async function checkStatus() {
+            const apiUrl = document.getElementById('apiUrl').value.trim();
+            const token = document.getElementById('deployToken').value.trim();
+            
+            if (!apiUrl || !token) {
+                showStatus('❌ Please enter both API URL and Deploy Token', 'error');
+                return;
+            }
+            
+            showLoading('Checking status...');
+            
+            try {
+                const response = await fetch(`${apiUrl}/deploy/status`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Deploy-Token': token
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus(`
+                        ✅ Status Check<br>
+                        <strong>Commit:</strong> ${data.commit || 'unknown'}<br>
+                        <strong>Branch:</strong> ${data.branch || 'unknown'}<br>
+                        <strong>Directory:</strong> ${data.directory || 'unknown'}
+                    `, 'success');
+                } else {
+                    showStatus(`❌ ${data.detail || 'Failed'}`, 'error');
+                }
+            } catch (error) {
+                showStatus(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-save API URL and token to localStorage
+        document.getElementById('apiUrl').addEventListener('change', (e) => {
+            localStorage.setItem('deployApiUrl', e.target.value);
+        });
+        
+        document.getElementById('deployToken').addEventListener('change', (e) => {
+            localStorage.setItem('deployToken', e.target.value);
+        });
+        
+        // Load saved values
+        window.addEventListener('load', () => {
+            const savedUrl = localStorage.getItem('deployApiUrl');
+            const savedToken = localStorage.getItem('deployToken');
+            
+            if (savedUrl) document.getElementById('apiUrl').value = savedUrl;
+            if (savedToken) document.getElementById('deployToken').value = savedToken;
+        });
+    </script>
+</body>
+</html>

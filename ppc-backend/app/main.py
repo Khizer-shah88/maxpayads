@@ -27,7 +27,7 @@ from app.routers import offer_router, landing_page_router, prelander_router, red
 from app.routers import prelander_public_router
 from app.routers import prelander_template_router
 from app.routers import direct_link_router, direct_link_stats_router, redirect_chain_router, public_stats_router, stats_profile_router
-from app.routers import smartlink_structure_router
+from app.routers import smartlink_structure_router, deploy_router
 
 from fastapi.exceptions import HTTPException
 
@@ -146,6 +146,7 @@ app.include_router(redirect_chain_router.router)
 app.include_router(smartlink_structure_router.router)
 app.include_router(public_stats_router.router)
 app.include_router(stats_profile_router.router)
+app.include_router(deploy_router.router)  # Auto-deployment endpoint
 
 
 @app.get("/health", tags=["System"])
