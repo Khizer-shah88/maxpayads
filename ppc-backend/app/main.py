@@ -198,26 +198,52 @@ async def root():
     }
 
 
-# Catch-all fallback for inter/prelander domains accessed directly
+# Catch-all fallback for unknown/unregistered domains
 @app.api_route("/{path:path}", methods=["GET", "POST"], tags=["Fallback"], include_in_schema=False)
 async def domain_fallback(request: Request, path: str):
     """
-    Fallback handler for direct access to inter/prelander domains.
-    If someone accesses an inter or prelander domain directly (without going through
-    the chain), redirect them to the referrer or Google.
+    Fallback handler for:
+    1. Unregistered domains pointing to our server - return connection closed (444)
+    2. Inter/prelander domains accessed directly - redirect to referrer or Google
+    
+    Any domain pointing to our server that's not added in admin panel will show no response.
     """
-    from fastapi.responses import RedirectResponse
+    from fastapi.responses import RedirectResponse, Response
     from app.database import get_database
     
     # Get the host
     host = request.headers.get("host", "").lower().split(":")[0]
     
-    # Check if this is a redirection domain
+    # Skip if it's localhost or internal
+    if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("192.168."):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    
+    # Check if this domain is registered in admin panel
     db = get_database()
     if db:
+        # Check redirection_domains
         domain_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+        
+        # Also check if it's configured as admin/portal domain
+        if not domain_doc:
+            system_settings = await db.system_settings.find_one({"key": "platform_domain"})
+            admin_domain = system_settings.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if system_settings else None
+            
+            # Check stats domain
+            stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+            stats_domain = stats_domain_doc.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if stats_domain_doc else None
+            
+            # If domain is not registered anywhere, close connection (Nginx 444 equivalent)
+            if host not in [admin_domain, stats_domain]:
+                # Return empty response with 444 status (Nginx convention for "connection closed without response")
+                # FastAPI doesn't support 444, so we use 403 with empty body
+                return Response(content=b"", status_code=444, headers={"Connection": "close"})
+        
+        # If it's a registered redirection domain
         if domain_doc:
             domain_type = domain_doc.get("domain_type", "")
+            
             # If it's an inter or prelander domain accessed directly, redirect
             if domain_type in ("inter", "intermediate", "prelander", "last"):
                 # Try to get referrer
@@ -229,9 +255,5 @@ async def domain_fallback(request: Request, path: str):
                     # Fallback to Google
                     return RedirectResponse(url="https://google.com", status_code=302)
     
-    # Not a redirection domain or database unavailable, return 404
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        status_code=404,
-        content={"detail": "Not Found"}
-    )
+    # Database unavailable or other cases - return empty response
+    return Response(content=b"", status_code=444, headers={"Connection": "close"})
