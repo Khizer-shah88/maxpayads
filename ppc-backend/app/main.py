@@ -196,3 +196,42 @@ async def root():
         "status": "running",
         "docs": "/docs",
     }
+
+
+# Catch-all fallback for inter/prelander domains accessed directly
+@app.api_route("/{path:path}", methods=["GET", "POST"], tags=["Fallback"], include_in_schema=False)
+async def domain_fallback(request: Request, path: str):
+    """
+    Fallback handler for direct access to inter/prelander domains.
+    If someone accesses an inter or prelander domain directly (without going through
+    the chain), redirect them to the referrer or Google.
+    """
+    from fastapi.responses import RedirectResponse
+    from app.database import get_database
+    
+    # Get the host
+    host = request.headers.get("host", "").lower().split(":")[0]
+    
+    # Check if this is a redirection domain
+    db = get_database()
+    if db:
+        domain_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+        if domain_doc:
+            domain_type = domain_doc.get("domain_type", "")
+            # If it's an inter or prelander domain accessed directly, redirect
+            if domain_type in ("inter", "intermediate", "prelander", "last"):
+                # Try to get referrer
+                referrer = request.headers.get("referer") or request.headers.get("referrer")
+                if referrer and not referrer.startswith(f"http://{host}") and not referrer.startswith(f"https://{host}"):
+                    # Redirect to referrer if it's not from the same domain
+                    return RedirectResponse(url=referrer, status_code=302)
+                else:
+                    # Fallback to Google
+                    return RedirectResponse(url="https://google.com", status_code=302)
+    
+    # Not a redirection domain or database unavailable, return 404
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Not Found"}
+    )
