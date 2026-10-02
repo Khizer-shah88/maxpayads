@@ -12,6 +12,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Import at module level so tests can monkeypatch it
+from app.database import get_database
+
 
 def _fallback_url() -> str:
     from app.config import get_settings
@@ -62,7 +65,6 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
         
         # Check if this domain is registered
         try:
-            from app.database import get_database
             db = get_database()
             
             if db is None:
