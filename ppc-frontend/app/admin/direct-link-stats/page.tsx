@@ -219,6 +219,7 @@ export default function DirectLinkStatsPage() {
       // columns render.
       if (domainsResult.status === 'fulfilled') {
         const domainsData = domainsResult.value.data?.publisher_domains ?? []
+        console.log('[DirectLinkStats] Publisher domains data:', domainsData.slice(0, 2)) // Log first 2 for debugging
         const domainsMap: Record<string, any> = {}
         domainsData.forEach((pd: any) => {
           domainsMap[pd.publisher_id] = {
@@ -227,6 +228,7 @@ export default function DirectLinkStatsPage() {
             clicks: pd.clicks || { total: 0, today: 0, today_conversions: 0 },
           }
         })
+        console.log('[DirectLinkStats] Domains map sample:', Object.entries(domainsMap).slice(0, 2))
         setPublisherDomains(domainsMap)
       }
 
@@ -254,6 +256,14 @@ export default function DirectLinkStatsPage() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Auto-refresh every 30 seconds for real-time data
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadData()
+    }, 30000) // 30 seconds
+    return () => clearInterval(interval)
+  }, [loadData])
 
   // Load saved stats domain setting
   useEffect(() => {
@@ -443,6 +453,24 @@ export default function DirectLinkStatsPage() {
         clickStats.today_conversions || 0,
         activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0),
       )
+      
+      // Extract assigned domains from the domain data
+      const assignedDomains = {
+        anchor: dom.anchor || [],
+        inter: dom.inter || [],
+        prelander: dom.prelander || [],
+      }
+      
+      // Debug log for first publisher to verify data structure
+      if (pub.id === paginatedPublishers[0]?.id) {
+        console.log('[DirectLinkStats] First publisher domain data:', {
+          pubId: pub.id,
+          pubName: pub.name,
+          domData: dom,
+          assignedDomains,
+        })
+      }
+      
       return {
         ...pub,
         linkCount: activeLinks.length,  // only count active links
@@ -452,11 +480,7 @@ export default function DirectLinkStatsPage() {
         totalConversions,
         todayConversions,
         todayClicks: clickStats.today || 0,
-        assignedDomains: {
-          anchor: dom.anchor || [],
-          inter: dom.inter || [],
-          prelander: dom.prelander || [],
-        },
+        assignedDomains,
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
