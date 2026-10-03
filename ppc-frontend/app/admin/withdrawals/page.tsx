@@ -115,7 +115,7 @@ export default function AdminWithdrawalsPage() {
     { key: 'status', label: 'Status', render: (w: Withdrawal) => <StatusBadge status={w.status} /> },
     { key: 'transaction_id', label: 'TXN ID', render: (w: Withdrawal) => <span className="font-mono text-xs text-gray-400">{w.transaction_id || '—'}</span> },
     { key: 'proof_url', label: 'Proof', render: (w: Withdrawal) => w.proof_url ? (
-      <a href={`${API_BASE}${w.proof_url}`} target="_blank" rel="noreferrer"
+      <a href={`${API_BASE}/api/withdrawals/proof/${w.proof_url.split('/').pop()}`} target="_blank" rel="noreferrer"
         className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
         <Paperclip size={12} /><ExternalLink size={12} />View
       </a>

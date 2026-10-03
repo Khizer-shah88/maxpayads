@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from typing import Optional
-import os, uuid, aiofiles
+import os, uuid, aiofiles, mimetypes
 from app.schemas.withdrawal_schema import WithdrawalRequest, WithdrawalAction
 from app.services.withdrawal_service import (
     create_withdrawal_request, get_publisher_withdrawals,
@@ -172,3 +173,41 @@ async def delete_withdrawal_endpoint(
     if not deleted:
         raise NotFoundError("Withdrawal")
     return {"success": True, "message": "Withdrawal deleted"}
+
+
+@router.get("/proof/{filename}")
+async def serve_proof_file(
+    filename: str,
+    current_user: dict = Depends(get_current_admin),
+):
+    """
+    Serve withdrawal proof files with correct Content-Type headers.
+    Only accessible by admins.
+    """
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise NotFoundError("Proof file")
+    
+    # Determine content type based on file extension
+    content_type, _ = mimetypes.guess_type(filepath)
+    if not content_type:
+        # Default content types for common formats
+        ext = os.path.splitext(filename)[1].lower()
+        content_type = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.pdf': 'application/pdf',
+        }.get(ext, 'application/octet-stream')
+    
+    return FileResponse(
+        filepath,
+        media_type=content_type,
+        filename=filename,
+        headers={
+            "Content-Disposition": f"inline; filename={filename}",  # Display in browser instead of download
+        }
+    )
