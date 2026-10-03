@@ -47,9 +47,10 @@ _PASS_THROUGH_PREFIXES = (
     "/campaigns",
     "/direct-links",
     "/deploy/",
-    # Prelander + inter chain paths
+    # Prelander + inter chain paths (CRITICAL - these must work for redirect flow)
     "/p/",           # /p/render?token=...  (prelander renderer)
     "/d/",           # /d/{slug}  (inter domain loader / next.js page)
+    "/_auth/",       # /_auth/{token}  (prelander handoff authentication)
     # All remaining API routes (Nginx may or may not strip /api prefix)
     "/landing-pages",
     "/offers",
@@ -67,6 +68,9 @@ _PASS_THROUGH_PREFIXES = (
     "/ad.js",
     "/health",
     "/domain-access",
+    "/favicon.ico",
+    "/_next/",       # Next.js assets (CSS, JS, images)
+    "/terminal.mp4", # Mac prelander video
 )
 
 # Hosts that always pass through without any DB check
@@ -100,8 +104,9 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
         if any(path == p or path.startswith(p) for p in _PASS_THROUGH_PREFIXES):
             return await call_next(request)
 
-        # ── 3. Only intercept bare root access — all other paths pass through
-        #       (e.g. /p/render, /d/slug, /favicon.ico …)
+        # ── 3. Only intercept bare root access on inter/prelander domains
+        #       But ONLY if it's truly a direct browser navigation to the domain
+        #       (not an internal redirect or API call)
         if path not in ("/", ""):
             return await call_next(request)
 
@@ -147,18 +152,28 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
             domain_type = domain_doc.get("domain_type", "")
 
             if domain_type in ("inter", "intermediate", "prelander", "last"):
-                # Bare root access to an inter/prelander domain → redirect away
+                # Bare root access to an inter/prelander domain — check referrer first
+                # If this is coming from our own domain (internal redirect), allow it
                 referrer = (
                     request.headers.get("referer")
                     or request.headers.get("referrer")
                     or ""
                 )
-                if referrer and not referrer.startswith(
-                    (f"http://{host}", f"https://{host}")
+                
+                # If coming from the same domain, it's an internal navigation - allow it
+                if referrer and (
+                    referrer.startswith(f"http://{host}")
+                    or referrer.startswith(f"https://{host}")
                 ):
-                    logger.info(f"{host}/ → referrer {referrer}")
+                    logger.info(f"{host}/ → internal navigation, allowing through")
+                    return await call_next(request)
+                
+                # External referrer - redirect back to it
+                if referrer:
+                    logger.info(f"{host}/ → external referrer {referrer}")
                     return RedirectResponse(url=referrer, status_code=302)
 
+                # No referrer - redirect to fallback (Google)
                 fallback = _fallback_url()
                 logger.info(f"{host}/ → fallback {fallback}")
                 return RedirectResponse(url=fallback, status_code=302)
