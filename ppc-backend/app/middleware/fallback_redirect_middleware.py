@@ -93,9 +93,8 @@ class FallbackRedirectMiddleware(BaseHTTPMiddleware):
 
         # ── 2. Skip known API / router paths ─────────────────────────────
         path = request.url.path
-        for prefix in _PASS_THROUGH_PREFIXES:
-            if path == prefix or path.startswith(prefix if prefix.endswith("/") else prefix):
-                return await call_next(request)
+        if any(path == p or path.startswith(p) for p in _PASS_THROUGH_PREFIXES):
+            return await call_next(request)
 
         # ── 3. Only intercept bare root access — all other paths pass through
         #       (e.g. /p/render, /d/slug, /favicon.ico …)
