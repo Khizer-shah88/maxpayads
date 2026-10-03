@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     ADMIN_NAME: str = "Super Admin"
     
     # Admin security question (for password change verification)
-    ADMIN_SECURITY_QUESTION: str = "What is your mother's maiden name?"
+    ADMIN_SECURITY_QUESTION: str = "What is your father's name?"
     ADMIN_SECURITY_ANSWER: str = ""  # Empty by default, must be set in production
 
     # GeoIP
