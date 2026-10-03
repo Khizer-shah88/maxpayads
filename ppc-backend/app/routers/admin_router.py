@@ -928,28 +928,73 @@ async def change_password(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Change admin password."""
+    """
+    Change admin password with security question verification.
+    
+    Requires:
+    - current_password: Current admin password
+    - security_answer: Answer to the configured security question
+    - new_password: New password (min 8 characters)
+    
+    Security: Both current password and security answer must be correct.
+    """
     current_password = data.get("current_password", "")
+    security_answer = data.get("security_answer", "")
     new_password = data.get("new_password", "")
+    
+    # Validate required fields
     if not current_password or not new_password:
         raise HTTPException(status_code=400, detail="Current and new password are required")
+    if not security_answer:
+        raise HTTPException(status_code=400, detail="Security question answer is required")
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
 
-    # Re-fetch the full publisher document to get password_hash
-    # (get_current_user strips password_hash before returning)
+    # Re-fetch the full publisher document to get password_hash and security_answer_hash
+    # (get_current_user strips sensitive fields before returning)
     full_user = await db.publishers.find_one(
         {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
     )
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Verify current password
     if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
+        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
 
+    # Verify security answer
+    security_answer_hash = full_user.get("security_answer_hash")
+    if not security_answer_hash:
+        raise HTTPException(status_code=400, detail="Security question not configured for this account")
+    
+    # Normalize answer: lowercase and strip whitespace for comparison
+    normalized_answer = security_answer.strip().lower()
+    if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
+        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
+
+    # All validations passed - update password
     new_hash = await run_in_threadpool(hash_password, new_password)
     await db.publishers.update_one(
         {"_id": full_user["_id"]},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}},
     )
     return {"success": True, "message": "Password changed successfully"}
+
+
+@router.get("/security-question")
+async def get_security_question(
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Get the security question for the current admin.
+    Returns only the question text, never the answer.
+    """
+    full_user = await db.publishers.find_one(
+        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
+    )
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    security_question = full_user.get("security_question", "What is your mother's maiden name?")
+    return {"success": True, "question": security_question}
