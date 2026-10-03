@@ -16,7 +16,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import at module level so tests can monkeypatch it
-from app.database import get_database
+# This must be done before the class definition for test compatibility
+from app.database import get_database as _get_database
+
+# Module-level reference for monkeypatching in tests
+get_database = _get_database
 
 
 def _fallback_url() -> str:
