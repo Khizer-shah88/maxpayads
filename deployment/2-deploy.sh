@@ -87,10 +87,8 @@ FRONTEND_PROBE_HOST="${PORTAL_HOSTNAMES%%,*}"
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
 
-# ── Setup security question (if not already configured) ──────────────────────
-echo "Checking admin security question configuration..."
-cd "$APP_DIR/ppc-backend"
-python scripts/auto_setup_security_question.py || echo "⚠️  Security question setup failed or skipped"
+# Return to app directory for docker-compose
+cd "$APP_DIR"
 
 # ── Validate Compose ─────────────────────────────────────────────────────────
 echo "Validating Docker Compose configuration..."
@@ -233,6 +231,16 @@ else
     echo "Frontend: NOT READY after probing http://${FRONTEND_PROBE_HOST} (and https)"
     exit 1
   fi
+fi
+
+# ── Setup admin security question (inside FastAPI container) ────────────────
+echo ""
+echo "--- Security Question Setup ---"
+if docker exec ppc_fastapi python scripts/auto_setup_security_question.py 2>&1; then
+  echo "Security question check complete"
+else
+  echo "⚠️  Security question setup skipped or failed (non-fatal)"
+  echo "   To configure manually: docker exec ppc_fastapi python scripts/auto_setup_security_question.py"
 fi
 
 echo ""
