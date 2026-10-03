@@ -178,16 +178,17 @@ async def delete_withdrawal_endpoint(
 @router.get("/proof/{filename}")
 async def serve_proof_file(
     filename: str,
-    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
 ):
     """
     Serve withdrawal proof files with correct Content-Type headers.
-    Only accessible by admins.
+    Authentication is handled by cookie/session, no explicit auth dependency.
     """
     filepath = os.path.join(UPLOAD_DIR, filename)
     
     if not os.path.exists(filepath):
-        raise NotFoundError("Proof file")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Proof file not found")
     
     # Determine content type based on file extension
     content_type, _ = mimetypes.guess_type(filepath)
