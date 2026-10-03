@@ -87,6 +87,11 @@ FRONTEND_PROBE_HOST="${PORTAL_HOSTNAMES%%,*}"
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
 
+# ── Setup security question (if not already configured) ──────────────────────
+echo "Checking admin security question configuration..."
+cd "$APP_DIR/ppc-backend"
+python scripts/auto_setup_security_question.py || echo "⚠️  Security question setup failed or skipped"
+
 # ── Validate Compose ─────────────────────────────────────────────────────────
 echo "Validating Docker Compose configuration..."
 
