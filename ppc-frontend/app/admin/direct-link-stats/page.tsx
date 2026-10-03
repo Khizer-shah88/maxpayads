@@ -454,12 +454,15 @@ export default function DirectLinkStatsPage() {
         activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0),
       )
       
-      // Extract assigned domains from the domain data
       const assignedDomains = {
         anchor: dom.anchor || [],
         inter: dom.inter || [],
         prelander: dom.prelander || [],
       }
+      
+      // Get the stats domain from the publisher's direct link
+      const pubLink = links.find(l => l.publisher_id === pub.id)
+      const statsDomain = pubLink?.stats_domain || null
       
       // Debug log for first publisher to verify data structure
       if (pub.id === paginatedPublishers[0]?.id) {
@@ -468,6 +471,8 @@ export default function DirectLinkStatsPage() {
           pubName: pub.name,
           domData: dom,
           assignedDomains,
+          statsDomain,
+          pubLink: pubLink ? { id: pubLink.id, stats_domain: pubLink.stats_domain } : null,
         })
       }
       
@@ -481,6 +486,7 @@ export default function DirectLinkStatsPage() {
         todayConversions,
         todayClicks: clickStats.today || 0,
         assignedDomains,
+        statsDomain, // Add stats domain to publisher stats
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -776,9 +782,24 @@ export default function DirectLinkStatsPage() {
                         </span>
                       </td>
 
-                      {/* Assigned Domains — publisher-specific only */}
+                      {/* Assigned Domains — show stats domain if set */}
                       <td className="px-3 py-4">
                         {(() => {
+                          // First check for stats domain (dedicated stats domain)
+                          if (pub.statsDomain) {
+                            return (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border bg-blue-50 border-blue-100 text-blue-700">
+                                  S
+                                </span>
+                                <span className="text-xs text-gray-800 font-mono truncate max-w-[180px]" title={pub.statsDomain}>
+                                  {pub.statsDomain}
+                                </span>
+                              </div>
+                            )
+                          }
+                          
+                          // Fall back to assigned redirection domains
                           const a = pub.assignedDomains || { anchor: [], inter: [], prelander: [] }
                           const entries = [
                             { label: 'A', domains: a.anchor, cls: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
