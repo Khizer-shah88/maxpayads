@@ -759,6 +759,20 @@ async def get_publisher_domains(
     for r in manual_rows:
         pid = str(r["_id"])
         today_conv_map[pid] = today_conv_map.get(pid, 0) + (r.get("total", 0) or 0)
+    
+    # ALL-TIME conversions — direct-link events (all time)…
+    all_conv_rows = await db.direct_link_events.aggregate([
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": 1}}},
+    ]).to_list(length=None)
+    total_conv_map = {str(r["_id"]): r.get("total", 0) for r in all_conv_rows}
+    
+    # …plus ALL admin-entered manual conversions (all dates)
+    all_manual_rows = await db.direct_link_manual_conversions.aggregate([
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": "$conversions"}}},
+    ]).to_list(length=None)
+    for r in all_manual_rows:
+        pid = str(r["_id"])
+        total_conv_map[pid] = total_conv_map.get(pid, 0) + (r.get("total", 0) or 0)
 
     # Build response
     results = []
@@ -800,6 +814,7 @@ async def get_publisher_domains(
                 "total": total_clicks_map.get(pub_id, 0),
                 "today": today_clicks_map.get(pub_id, 0),
                 "today_conversions": today_conv_map.get(pub_id, 0),
+                "total_conversions": total_conv_map.get(pub_id, 0),  # ALL-TIME conversions
             },
         })
 

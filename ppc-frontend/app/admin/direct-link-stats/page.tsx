@@ -448,11 +448,10 @@ export default function DirectLinkStatsPage() {
       // populated) link counters so legacy data still shows when present.
       const linkClicks = activeLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
       const totalClicks = Math.max(clickStats.total || 0, linkClicks)
-      const totalConversions = activeLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
-      const todayConversions = Math.max(
-        clickStats.today_conversions || 0,
-        activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0),
-      )
+      
+      // CONVERSIONS: Use real data from backend (includes manual conversions)
+      const totalConversions = clickStats.total_conversions || 0
+      const todayConversions = clickStats.today_conversions || 0
       
       const assignedDomains = {
         anchor: dom.anchor || [],
@@ -470,6 +469,10 @@ export default function DirectLinkStatsPage() {
           pubId: pub.id,
           pubName: pub.name,
           domData: dom,
+          clickStats,
+          totalClicks,
+          totalConversions,
+          todayConversions,
           assignedDomains,
           statsDomain,
           pubLink: pubLink ? { id: pubLink.id, stats_domain: pubLink.stats_domain } : null,
