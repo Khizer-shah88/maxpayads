@@ -691,6 +691,13 @@ async def get_publisher_domains(
         domain_type = normalize_domain_type(domain.get("domain_type"), default="unknown")
         publisher_ids = domain.get("publisher_ids", [])
         domain_name = domain.get("domain")
+        
+        # Debug: log each domain with publishers
+        if publisher_ids:
+            logger.info(
+                f"[DirectLinkStats] Processing domain {domain_name} ({domain_type}) "
+                f"with publisher_ids: {[str(pid) for pid in publisher_ids]}"
+            )
 
         for pub_id in publisher_ids:
             # Normalize publisher_id to string for consistent comparison
@@ -706,10 +713,19 @@ async def get_publisher_domains(
 
             if domain_type == DOMAIN_TYPE_ANCHOR:
                 publisher_domains[pub_id_str]["anchor"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned anchor {domain_name} to publisher {pub_id_str}")
             elif domain_type == DOMAIN_TYPE_INTER:
                 publisher_domains[pub_id_str]["inter"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned inter {domain_name} to publisher {pub_id_str}")
             elif domain_type == DOMAIN_TYPE_PRELANDER:
                 publisher_domains[pub_id_str]["prelander"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned prelander {domain_name} to publisher {pub_id_str}")
+    
+    # Log summary of assignments
+    logger.info(f"[DirectLinkStats] Total publishers with assigned domains: {len(publisher_domains)}")
+    if publisher_domains:
+        sample_pub_id = list(publisher_domains.keys())[0]
+        logger.info(f"[DirectLinkStats] Sample assignment - Publisher {sample_pub_id}: {publisher_domains[sample_pub_id]}")
 
     # ── Real traffic stats per publisher (one aggregation per metric) ──────
     # clicks: the publisher's smartlink traffic (clicks collection, timestamp).
