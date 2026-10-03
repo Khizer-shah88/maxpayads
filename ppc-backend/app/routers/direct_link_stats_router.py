@@ -28,6 +28,8 @@ from app.schemas.stats_profile_schema import (
 )
 
 router = APIRouter(prefix="/direct-links", tags=["Direct Link Stats"])
+
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 
@@ -654,6 +656,20 @@ async def get_publisher_domains(
     # Get all redirection domains
     domains_cursor = db.redirection_domains.find({"status": "active"})
     domains = await domains_cursor.to_list(length=1000)
+    
+    # Debug: log how many domains have publisher_ids
+    domains_with_pubs = [d for d in domains if d.get("publisher_ids")]
+    logger.info(
+        f"[DirectLinkStats] Total active domains: {len(domains)}, "
+        f"with publisher_ids: {len(domains_with_pubs)}"
+    )
+    if domains_with_pubs:
+        sample = domains_with_pubs[0]
+        logger.info(
+            f"[DirectLinkStats] Sample domain: {sample.get('domain')} "
+            f"type={sample.get('domain_type')} "
+            f"publisher_ids={sample.get('publisher_ids')}"
+        )
 
     # Get all publishers
     publishers_cursor = db.publishers.find({"role": "publisher"})
@@ -677,19 +693,23 @@ async def get_publisher_domains(
         domain_name = domain.get("domain")
 
         for pub_id in publisher_ids:
-            if pub_id not in publisher_domains:
-                publisher_domains[pub_id] = {
+            # Normalize publisher_id to string for consistent comparison
+            # (publisher_ids field might contain ObjectId or string)
+            pub_id_str = str(pub_id)
+            
+            if pub_id_str not in publisher_domains:
+                publisher_domains[pub_id_str] = {
                     "anchor": [],
                     "inter": [],
                     "prelander": [],
                 }
 
             if domain_type == DOMAIN_TYPE_ANCHOR:
-                publisher_domains[pub_id]["anchor"].append(domain_name)
+                publisher_domains[pub_id_str]["anchor"].append(domain_name)
             elif domain_type == DOMAIN_TYPE_INTER:
-                publisher_domains[pub_id]["inter"].append(domain_name)
+                publisher_domains[pub_id_str]["inter"].append(domain_name)
             elif domain_type == DOMAIN_TYPE_PRELANDER:
-                publisher_domains[pub_id]["prelander"].append(domain_name)
+                publisher_domains[pub_id_str]["prelander"].append(domain_name)
 
     # ── Real traffic stats per publisher (one aggregation per metric) ──────
     # clicks: the publisher's smartlink traffic (clicks collection, timestamp).
@@ -733,6 +753,15 @@ async def get_publisher_domains(
             "inter": [],
             "prelander": [],
         })
+
+        # Debug logging for first 2 publishers
+        if len(results) < 2:
+            logger.info(
+                f"[DirectLinkStats] Publisher {pub.get('name')} ({pub_id}): "
+                f"anchor={domains_info.get('anchor', [])}, "
+                f"inter={domains_info.get('inter', [])}, "
+                f"prelander={domains_info.get('prelander', [])}"
+            )
 
         results.append({
             "publisher_id": pub_id,
