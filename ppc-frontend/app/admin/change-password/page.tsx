@@ -30,9 +30,11 @@ export default function ChangePasswordPage() {
     try {
       const res = await adminApi.getSecurityQuestion()
       setSecurityQuestion(res.data.question)
-    } catch (err) {
+    } catch (err: any) {
+      console.error('Failed to load security question:', err)
       toast.error('Failed to load security question')
-      setSecurityQuestion('What is your mother\'s maiden name?')
+      // Use the default question as fallback
+      setSecurityQuestion('What is your father\'s name?')
     } finally {
       setLoadingQuestion(false)
     }
