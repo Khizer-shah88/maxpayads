@@ -1414,8 +1414,10 @@ async def _get_prelander_data(
         # content substituted for {Password}. Either, both, or neither
         # shortcode may appear — the engine leaves missing values empty.
         # Render failure falls back to the simple customisation fields above.
+        # JavaScript is obfuscated to make view-source unreadable.
         if template_doc.get("full_html_template"):
             from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext
+            from app.utils.js_obfuscator import obfuscate_html_javascript
             try:
                 ctx = RedirectContext(
                     click_id=str(offer_id or campaign_id or ""),
@@ -1423,9 +1425,11 @@ async def _get_prelander_data(
                     os=os_lower,
                     password=password or "",
                 )
-                response["rendered_html"] = PrelanderTemplateEngine().render(
+                rendered_html = PrelanderTemplateEngine().render(
                     template_doc["full_html_template"], ctx
                 )
+                # Obfuscate JavaScript to make view-source unreadable
+                response["rendered_html"] = obfuscate_html_javascript(rendered_html, aggressive=True)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
     return response
