@@ -78,22 +78,6 @@ export function sourceDeterrentScript(): string {
 })();`;
 }
 
-/**
- * Obfuscate inline JavaScript before returning it in an HTML document so the
- * browser's View Source shows only unreadable base64+eval code. The code still
- * runs normally because the document executes the decoded payload immediately.
- */
-export function obfuscateInlineScript(script: string): string {
-  const source = String(script ?? '').trim();
-  if (!source) return '';
-
-  const encoded = typeof Buffer !== 'undefined'
-    ? Buffer.from(source, 'utf8').toString('base64')
-    : btoa(unescape(encodeURIComponent(source)));
-
-  return `<script>!function(){try{var _=atob(${JSON.stringify(encoded)});eval(_)}catch(e){console.error('[prelander-obfuscation]',e)}}();</script>`;
-}
-
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */
 export function sourceDeterrentScriptTag(): string {
   const body = sourceDeterrentScript();

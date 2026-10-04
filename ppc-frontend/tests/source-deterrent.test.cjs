@@ -10,11 +10,7 @@ const pageModule = {};
 vm.runInNewContext(ts.transpileModule(
   readFileSync(path.join(__dirname, '../lib/source-deterrent-script.ts'), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
-).outputText, {
-  exports: pageModule,
-  process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } },
-  Buffer: require('node:buffer').Buffer,
-});
+).outputText, { exports: pageModule, process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } } });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function worker({ store = new Map(), cacheUnavailable = false } = {}) {
@@ -175,13 +171,4 @@ test('page pings immediately, on controller change, and every 100ms', async () =
   intervals[0].fn();
   assert.equal(messages.length, 4);
   assert.ok(messages.every(message => message === 'SOURCE_DETERRENT_PING'));
-});
-
-test('clean-shell route does not expose readable inline JavaScript in the HTML source', () => {
-  const scriptSource = `var d = document; function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }`;
-  const encoded = pageModule.obfuscateInlineScript(scriptSource);
-  assert.ok(encoded.includes('atob('));
-  assert.ok(!encoded.includes('function esc'));
-  assert.ok(!encoded.includes('document'));
-  assert.ok(!encoded.includes('navigator.clipboard'));
 });
