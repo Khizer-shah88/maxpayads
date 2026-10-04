@@ -1,6 +1,6 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
-import { sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
+import { obfuscateInlineScript, sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
 import { createTabGuard } from '@/lib/tab-guard';
 
 export const dynamic = 'force-dynamic';
@@ -66,8 +66,7 @@ ${SOURCE_DETERRENT_SCRIPT}
 </head>
 <body>
   <div id="pl-root" hidden></div>
-  <script>
-  ;(async function () {
+  ${obfuscateInlineScript(String.raw`;(async function () {
     var d = document
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
@@ -193,8 +192,7 @@ ${SOURCE_DETERRENT_SCRIPT}
       root.hidden = false
       wire(root)
     } catch (e) { unavailable() }
-  })()
-  </script>
+  })()`)}
 </body>
 </html>`;
 
