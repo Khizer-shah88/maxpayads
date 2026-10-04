@@ -72,23 +72,23 @@ function worker({ store = new Map(), cacheUnavailable = false } = {}) {
   };
 }
 
-test('silent marked document gets the reduced 10ms wait', async () => {
+test('silent marked document gets the full restored 300ms wait', async () => {
   const w = worker();
   const navigation = await w.navigate('source');
-  await w.advance(9);
+  await w.advance(299);
   assert.equal(w.navigations.length, 0);
   await w.advance(1);
   await navigation.task;
-  assert.deepEqual(w.navigations, [{ id: 'source', url: 'https://landing.example/', at: 10 }]);
+  assert.deepEqual(w.navigations, [{ id: 'source', url: 'https://landing.example/', at: 300 }]);
 });
 
-test('normal page starting after 5ms is not prematurely redirected', async () => {
+test('normal page starting after 250ms is not prematurely redirected', async () => {
   const w = worker();
   const navigation = await w.navigate('normal');
-  await w.advance(5);
+  await w.advance(250);
   assert.equal(w.navigations.length, 0);
   await w.ping('normal');
-  await w.advance(5);
+  await w.advance(50);
   await navigation.task;
   assert.equal(w.navigations.length, 0);
 });
