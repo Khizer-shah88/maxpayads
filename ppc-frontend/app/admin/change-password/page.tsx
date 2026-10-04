@@ -50,10 +50,7 @@ export default function ChangePasswordPage() {
       toast.error('New passwords do not match')
       return
     }
-    if (!securityAnswer.trim()) {
-      toast.error('Security question answer is required')
-      return
-    }
+    // Security answer is optional - backend will skip validation if not configured
     setLoading(true)
     try {
       await adminApi.changePassword(currentPassword, securityAnswer, newPassword)
@@ -128,9 +125,8 @@ export default function ChangePasswordPage() {
                       type={showAnswer ? 'text' : 'password'}
                       value={securityAnswer}
                       onChange={e => setSecurityAnswer(e.target.value)}
-                      required
                       className={inputClass}
-                      placeholder="Enter your answer"
+                      placeholder="Enter your answer (optional)"
                     />
                     <button
                       type="button"
@@ -191,7 +187,7 @@ export default function ChangePasswordPage() {
 
             <button
               type="submit"
-              disabled={loading || !currentPassword || !securityAnswer || !newPassword || !confirmPassword || loadingQuestion}
+              disabled={loading || !currentPassword || !newPassword || !confirmPassword || loadingQuestion}
               className="w-full bg-primary hover:bg-primary-dark text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
             >
               <Lock size={16} />

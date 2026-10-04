@@ -945,8 +945,6 @@ async def change_password(
     # Validate required fields
     if not current_password or not new_password:
         raise HTTPException(status_code=400, detail="Current and new password are required")
-    if not security_answer:
-        raise HTTPException(status_code=400, detail="Security question answer is required")
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
 
