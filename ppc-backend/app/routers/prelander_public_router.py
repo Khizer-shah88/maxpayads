@@ -8,6 +8,7 @@ Security:
 - No direct access without valid context
 - Short-lived tokens (5 minutes)
 - Server-side validation only (no JavaScript tricks)
+- JavaScript obfuscation to prevent source code inspection
 """
 
 import logging
@@ -23,6 +24,7 @@ from app.services.prelander_service import (
     get_default_template,
     generate_fallback_html,
 )
+from app.utils.js_obfuscator import obfuscate_html_javascript
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +75,10 @@ async def render_prelander(
     
     if not template_doc or not template_doc.get("full_html_template"):
         # Fallback: Generate simple prelander
+        html = _generate_simple_prelander(context)
+        obfuscated_html = obfuscate_html_javascript(html, aggressive=True)
         return HTMLResponse(
-            content=_generate_simple_prelander(context),
+            content=obfuscated_html,
             status_code=200,
         )
     
@@ -85,7 +89,11 @@ async def render_prelander(
             template_doc["full_html_template"],
             context,
         )
-        return HTMLResponse(content=rendered_html, status_code=200)
+        
+        # Obfuscate all JavaScript in the rendered HTML
+        obfuscated_html = obfuscate_html_javascript(rendered_html, aggressive=True)
+        
+        return HTMLResponse(content=obfuscated_html, status_code=200)
     
     except Exception as e:
         logger.error(f"Template rendering error: {e}")
