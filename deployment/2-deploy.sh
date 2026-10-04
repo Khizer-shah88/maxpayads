@@ -236,11 +236,17 @@ fi
 # ── Setup admin security question (inside FastAPI container) ────────────────
 echo ""
 echo "--- Security Question Setup ---"
-if docker exec ppc_fastapi python scripts/auto_setup_security_question.py 2>&1; then
-  echo "Security question check complete"
+echo "Waiting for MongoDB to be fully ready..."
+sleep 5
+if docker exec ppc_fastapi python scripts/auto_setup_security_question.py 2>&1 | tee /tmp/security_setup.log; then
+  echo "Security question setup completed"
 else
-  echo "⚠️  Security question setup skipped or failed (non-fatal)"
-  echo "   To configure manually: docker exec ppc_fastapi python scripts/auto_setup_security_question.py"
+  echo "⚠️  Security question setup failed"
+  echo "Logs:"
+  cat /tmp/security_setup.log
+  echo ""
+  echo "To configure manually after deployment:"
+  echo "  docker exec ppc_fastapi python scripts/auto_setup_security_question.py"
 fi
 
 echo ""

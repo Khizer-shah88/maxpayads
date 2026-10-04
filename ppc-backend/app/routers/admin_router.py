@@ -945,6 +945,8 @@ async def change_password(
     # Validate required fields
     if not current_password or not new_password:
         raise HTTPException(status_code=400, detail="Current and new password are required")
+    if not security_answer:
+        raise HTTPException(status_code=400, detail="Security question answer is required")
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
 
@@ -960,22 +962,15 @@ async def change_password(
     if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
 
-    # Verify security answer (if configured)
+    # Verify security answer
     security_answer_hash = full_user.get("security_answer_hash")
-    if security_answer_hash:
-        # Security question is configured - verify the answer
-        if not security_answer:
-            raise HTTPException(status_code=400, detail="Security question answer is required")
-        
-        # Normalize answer: lowercase and strip whitespace for comparison
-        normalized_answer = security_answer.strip().lower()
-        if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
-            raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
-    else:
-        # Security question not configured - skip validation (allows password change without it)
-        # This maintains backward compatibility and allows admins to change password even if
-        # security question setup failed during deployment
-        pass
+    if not security_answer_hash:
+        raise HTTPException(status_code=400, detail="Security question not configured for this account. Please contact administrator.")
+    
+    # Normalize answer: lowercase and strip whitespace for comparison
+    normalized_answer = security_answer.strip().lower()
+    if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
+        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
 
     # All validations passed - update password
     new_hash = await run_in_threadpool(hash_password, new_password)
