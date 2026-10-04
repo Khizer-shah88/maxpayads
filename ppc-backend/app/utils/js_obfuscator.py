@@ -27,8 +27,7 @@ def _generate_random_name(length: int = 8) -> str:
 def _obfuscate_strings(js_code: str) -> str:
     """Convert string literals to base64 encoded forms."""
     def replace_string(match):
-        quote = match.group(1)
-        content = match.group(2)
+        content = match.group(1)  # The captured string content (without quotes)
         if len(content) < 3:  # Don't obfuscate very short strings
             return match.group(0)
         try:
