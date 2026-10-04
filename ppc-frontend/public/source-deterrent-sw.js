@@ -36,7 +36,7 @@ const PING = "SOURCE_DETERRENT_PING";
 // Reduced to 10ms for near-instant redirect on view-source attempts.
 // The page pings immediately in <head>, so normal pages will heartbeat
 // before this tiny grace period expires.
-const GRACE_MS = 10;
+const GRACE_MS = 200;
 
 // Loop guard -- the most important line here. Without a cap, a visitor who
 // genuinely cannot run JS (JS disabled, hydration crash, blocked inline script,
