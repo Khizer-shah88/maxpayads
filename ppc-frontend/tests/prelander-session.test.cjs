@@ -33,10 +33,7 @@ const shell = process.env.PRELANDER_TEST_BUILD === '1'
   ...navigationImports,
   '@/lib/tab-guard': tab,
   '@/lib/prelander-session': session,
-  '@/lib/source-deterrent-script': {
-    sourceDeterrentScriptTag: () => '',
-    obfuscateInlineScript: (script) => `<script>${script}</script>`,
-  },
+  '@/lib/source-deterrent-script': { sourceDeterrentScriptTag: () => '' },
 });
 
 function browser({ referrer = '', historyLength = 1, marker = null, storageBlocked = false,
