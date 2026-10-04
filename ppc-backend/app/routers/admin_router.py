@@ -952,9 +952,15 @@ async def change_password(
 
     # Re-fetch the full publisher document to get password_hash and security_answer_hash
     # (get_current_user strips sensitive fields before returning)
-    full_user = await db.publishers.find_one(
-        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
-    )
+    admin_id = current_user["id"]
+    # Handle both string IDs (like "admin_001") and ObjectId
+    try:
+        if isinstance(admin_id, str) and len(admin_id) == 24:
+            admin_id = ObjectId(admin_id)
+    except:
+        pass  # Keep as string if conversion fails
+    
+    full_user = await db.publishers.find_one({"_id": admin_id})
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -1002,9 +1008,15 @@ async def get_security_question(
     """
     from app.config import settings
     
-    full_user = await db.publishers.find_one(
-        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
-    )
+    admin_id = current_user["id"]
+    # Handle both string IDs (like "admin_001") and ObjectId
+    try:
+        if isinstance(admin_id, str) and len(admin_id) == 24:
+            admin_id = ObjectId(admin_id)
+    except:
+        pass  # Keep as string if conversion fails
+    
+    full_user = await db.publishers.find_one({"_id": admin_id})
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
     
