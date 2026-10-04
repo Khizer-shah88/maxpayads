@@ -990,11 +990,14 @@ async def get_security_question(
     Get the security question for the current admin.
     Returns only the question text, never the answer.
     """
+    from app.config import settings
+    
     full_user = await db.publishers.find_one(
         {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
     )
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    security_question = full_user.get("security_question", "What is your mother's maiden name?")
+    # Use question from database if set, otherwise use config default
+    security_question = full_user.get("security_question", settings.ADMIN_SECURITY_QUESTION)
     return {"success": True, "question": security_question}

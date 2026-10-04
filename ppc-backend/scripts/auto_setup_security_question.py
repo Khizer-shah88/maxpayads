@@ -34,9 +34,9 @@ async def auto_setup_security_question():
     # Get security question and answer from environment
     security_question = os.getenv(
         "ADMIN_SECURITY_QUESTION", 
-        "What is your mother's maiden name?"
+        settings.ADMIN_SECURITY_QUESTION
     )
-    security_answer = os.getenv("ADMIN_SECURITY_ANSWER", "").strip()
+    security_answer = os.getenv("ADMIN_SECURITY_ANSWER", settings.ADMIN_SECURITY_ANSWER).strip()
 
     if not security_answer:
         print("⚠️  ADMIN_SECURITY_ANSWER environment variable not set!")

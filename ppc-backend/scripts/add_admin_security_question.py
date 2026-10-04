@@ -45,8 +45,8 @@ async def add_security_question():
     print("changing the admin password. The answer will be hashed and")
     print("stored securely (never in plain text).\n")
 
-    # Default security question
-    default_question = "What is your mother's maiden name?"
+    # Default security question from config
+    default_question = settings.ADMIN_SECURITY_QUESTION
     print(f"Default question: {default_question}")
     custom = input("\nUse custom question? (yes/no, default=no): ").strip().lower()
     
