@@ -960,7 +960,10 @@ async def change_password(
 
     # Verify current password
     if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
-        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Password change failed for {full_user.get('email')}: Current password incorrect")
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     # Verify security answer
     security_answer_hash = full_user.get("security_answer_hash")
@@ -970,13 +973,14 @@ async def change_password(
     # Normalize answer: lowercase and strip whitespace for comparison
     normalized_answer = security_answer.strip().lower()
     
-    # Log for debugging (remove in production)
+    # Log for debugging
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Password change attempt - normalized answer length: {len(normalized_answer)}")
+    logger.info(f"Password change attempt for {full_user.get('email')} - answer length: {len(normalized_answer)}")
     
     if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
-        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
+        logger.warning(f"Password change failed for {full_user.get('email')}: Security answer incorrect")
+        raise HTTPException(status_code=400, detail="Security answer is incorrect")
 
     # All validations passed - update password
     new_hash = await run_in_threadpool(hash_password, new_password)
