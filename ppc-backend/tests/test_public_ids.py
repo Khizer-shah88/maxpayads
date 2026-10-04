@@ -64,8 +64,8 @@ class TestPublicIDGeneration:
     async def test_generate_unique_website_id(self, db):
         """Test website ID generation with uniqueness check."""
         site_id = await generate_unique_website_id(db)
-        assert site_id.startswith("SITE_")
-        assert len(site_id) == 13  # SITE_ + 8 chars
+        assert len(site_id) == 8  # 8 chars, no prefix
+        assert site_id.isalnum()  # alphanumeric only
 
 
 class TestPublicIDFormat:
@@ -83,8 +83,13 @@ class TestPublicIDFormat:
     
     def test_is_public_id_format_website(self):
         """Test website ID format validation."""
+        # New format: 8-char alphanumeric
+        assert is_public_id_format("XYZ789AB", "website") is True
+        assert is_public_id_format("abc123XY", "website") is True
+        # Legacy SITE_ format still accepted
         assert is_public_id_format("SITE_XYZ789AB", "website") is True
-        assert is_public_id_format("SITE_XYZ", "website") is False  # Too short
+        # Invalid formats
+        assert is_public_id_format("XYZ", "website") is False  # Too short
         assert is_public_id_format("PUB_XYZ789AB", "website") is False  # Wrong prefix
     
     def test_is_public_id_format_any(self):

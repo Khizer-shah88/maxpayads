@@ -178,13 +178,14 @@ async def resolve_website_id(db, identifier: str) -> Optional[str]:
     Accepts:
     - MongoDB ObjectId string
     - Public ID (8-character alphanumeric, no prefix)
+    - Legacy Public ID (SITE_XXXXXXXX format)
     
     Returns internal _id string or None if not found.
     """
     from bson import ObjectId
     
-    # Try public_id lookup first (8-char alphanumeric without prefix)
-    if len(identifier) == ID_LENGTH and identifier.replace('_', '').isalnum():
+    # Try public_id lookup first (both new and legacy formats)
+    if (len(identifier) == ID_LENGTH and identifier.replace('_', '').isalnum()) or identifier.startswith("SITE_"):
         website = await db.websites.find_one({"public_id": identifier})
         if website:
             return str(website["_id"])

@@ -69,7 +69,9 @@ class TestAdminPublisherCreation:
         website = await db.websites.find_one({"publisher_id": publisher_id})
         assert website is not None
         assert website["domain"] == "example-site.com"
-        assert website["public_id"].startswith("SITE_")
+        # New format: 8-char alphanumeric, no prefix
+        assert len(website["public_id"]) == 8
+        assert website["public_id"].isalnum()
         
         # Teardown
         await db.websites.delete_many({"publisher_id": publisher_id})
@@ -182,7 +184,9 @@ class TestAdminWebsiteManagement:
         assert website is not None
         assert website["publisher_id"] == str(test_publisher["_id"])
         assert website["name"] == "Admin Added Site"
-        assert website["public_id"].startswith("SITE_")
+        # New format: 8-char alphanumeric, no prefix
+        assert len(website["public_id"]) == 8
+        assert website["public_id"].isalnum()
     
     async def test_admin_add_website_missing_domain(self, client, admin_token, test_publisher):
         """Test admin website creation requires domain."""
@@ -394,7 +398,9 @@ class TestPublicIDUniqueness:
         # Generate second ID — must not re-use an existing ID
         site_id_2 = await generate_unique_website_id(db)
         assert site_id_1 != site_id_2
-        assert site_id_2.startswith("SITE_")
+        # New format: 8-char alphanumeric, no prefix
+        assert len(site_id_2) == 8
+        assert site_id_2.isalnum()
         
         # Cleanup
         await db.websites.delete_many({"domain": "site1_unique.com"})
