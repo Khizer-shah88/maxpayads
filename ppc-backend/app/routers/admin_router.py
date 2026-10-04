@@ -969,6 +969,12 @@ async def change_password(
     
     # Normalize answer: lowercase and strip whitespace for comparison
     normalized_answer = security_answer.strip().lower()
+    
+    # Log for debugging (remove in production)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Password change attempt - normalized answer length: {len(normalized_answer)}")
+    
     if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
         raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
 
