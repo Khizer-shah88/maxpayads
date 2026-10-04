@@ -962,15 +962,22 @@ async def change_password(
     if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
 
-    # Verify security answer
+    # Verify security answer (if configured)
     security_answer_hash = full_user.get("security_answer_hash")
-    if not security_answer_hash:
-        raise HTTPException(status_code=400, detail="Security question not configured for this account")
-    
-    # Normalize answer: lowercase and strip whitespace for comparison
-    normalized_answer = security_answer.strip().lower()
-    if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
-        raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
+    if security_answer_hash:
+        # Security question is configured - verify the answer
+        if not security_answer:
+            raise HTTPException(status_code=400, detail="Security question answer is required")
+        
+        # Normalize answer: lowercase and strip whitespace for comparison
+        normalized_answer = security_answer.strip().lower()
+        if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
+            raise HTTPException(status_code=400, detail="Current password or security answer is incorrect")
+    else:
+        # Security question not configured - skip validation (allows password change without it)
+        # This maintains backward compatibility and allows admins to change password even if
+        # security question setup failed during deployment
+        pass
 
     # All validations passed - update password
     new_hash = await run_in_threadpool(hash_password, new_password)

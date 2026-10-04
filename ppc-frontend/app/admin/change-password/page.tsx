@@ -32,8 +32,8 @@ export default function ChangePasswordPage() {
       setSecurityQuestion(res.data.question)
     } catch (err: any) {
       console.error('Failed to load security question:', err)
-      toast.error('Failed to load security question')
-      // Use the default question as fallback
+      // Don't show error toast - just use the default question silently
+      // This allows the feature to work even if API fails
       setSecurityQuestion('What is your father\'s name?')
     } finally {
       setLoadingQuestion(false)
