@@ -292,7 +292,7 @@ export default function PublishersPage() {
       key: 'custom_cpc',
       label: 'CPC',
       render: (p: Publisher) => (
-        <span className="font-mono text-gray-700" title="Base rate (Desktop). Mobile: -15%, Tablet: -10%">
+        <span className="font-mono text-gray-700">
           ${(p.custom_cpc != null && p.custom_cpc !== undefined ? Number(p.custom_cpc) : 0.0).toFixed(2)}
         </span>
       )

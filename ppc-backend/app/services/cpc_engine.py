@@ -26,11 +26,10 @@ async def calculate_cpc(
     2. Country-specific CPC from system settings
     3. Global country rate from constants
     4. Global default CPC
+    
+    Note: All device types (desktop, mobile, tablet) pay the same rate.
     """
-    # Resolve the base CPC by priority, THEN apply the device modifier once so
-    # mobile/tablet pricing is consistent no matter which source set the rate.
-    # (Previously the modifier only ran on the constants fallback, so any admin
-    #  country override or publisher custom CPC silently dropped device pricing.)
+    # Resolve the base CPC by priority
     cpc: Optional[float] = None
 
     # Country CPC settings and rate tables store uppercase ISO codes
@@ -61,12 +60,9 @@ async def calculate_cpc(
     if cpc is None:
         cpc = COUNTRY_CPC_RATES.get("DEFAULT", settings.DEFAULT_CPC)
 
-    # Apply device type modifier uniformly to the resolved base rate.
-    if device_type == "mobile":
-        cpc *= 0.85
-    elif device_type == "tablet":
-        cpc *= 0.90
-
+    # Device modifiers REMOVED - all traffic pays the same rate
+    # No longer applying discounts for mobile/tablet traffic
+    
     return round(cpc, 6)
 
 
