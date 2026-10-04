@@ -26,6 +26,7 @@ const navigation = loadModule('lib/prelander-navigation.ts');
 const navigationImports = { '@/lib/prelander-navigation': navigation };
 const tab = loadModule('lib/tab-guard.ts', navigationImports);
 const session = loadModule('lib/prelander-session.ts', navigationImports);
+const sourceDeterrent = loadModule('lib/source-deterrent-script.ts', {}, { process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } } });
 // PRELANDER_TEST_BUILD=1 also checks serialization after Next's minification.
 const shell = process.env.PRELANDER_TEST_BUILD === '1'
   ? require('../.next/server/app/clean-shell/route.js').routeModule.userland
@@ -33,10 +34,7 @@ const shell = process.env.PRELANDER_TEST_BUILD === '1'
   ...navigationImports,
   '@/lib/tab-guard': tab,
   '@/lib/prelander-session': session,
-  '@/lib/source-deterrent-script': {
-    sourceDeterrentScriptTag: () => '',
-    obfuscateInlineScript: (script) => `<script>${script}</script>`,
-  },
+  '@/lib/source-deterrent-script': sourceDeterrent,
 });
 
 function browser({ referrer = '', historyLength = 1, marker = null, storageBlocked = false,

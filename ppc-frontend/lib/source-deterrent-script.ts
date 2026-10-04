@@ -82,21 +82,37 @@ export function sourceDeterrentScript(): string {
  * Obfuscate inline JavaScript before returning it in an HTML document so the
  * browser's View Source shows only unreadable base64+eval code. The code still
  * runs normally because the document executes the decoded payload immediately.
+ *
+ * IMPORTANT: this implementation intentionally avoids Buffer/atob/btoa so it
+ * works in both browser contexts and the Node VM-based frontend tests without
+ * any runtime globals beyond the standard JS API.
  */
-function utf8ToBase64(value: string): string {
-  const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function utf8HexEncode(value: string): string {
   let output = '';
 
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b1 = bytes.charCodeAt(i);
-    const b2 = bytes.charCodeAt(i + 1) || 0;
-    const b3 = bytes.charCodeAt(i + 2) || 0;
+  for (let i = 0; i < value.length; i += 1) {
+    let code = value.charCodeAt(i);
 
-    output += alphabet[(b1 >> 2) & 63];
-    output += alphabet[((b1 & 3) << 4) | ((b2 >> 4) & 15)];
-    output += (i + 1 < bytes.length) ? alphabet[((b2 & 15) << 2) | ((b3 >> 6) & 3)] : '=';
-    output += (i + 2 < bytes.length) ? alphabet[b3 & 63] : '=';
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
+        i += 1;
+      }
+    }
+
+    if (code < 0x80) {
+      output += code.toString(16).padStart(2, '0');
+    } else if (code < 0x800) {
+      output += ((0xc0 | (code >> 6)).toString(16).padStart(2, '0'));
+      output += ((0x80 | (code & 0x3f)).toString(16).padStart(2, '0'));
+    } else if (code < 0xd800 || code >= 0xe000) {
+      output += ((0xe0 | (code >> 12)).toString(16).padStart(2, '0'));
+      output += ((0x80 | ((code >> 6) & 0x3f)).toString(16).padStart(2, '0'));
+      output += ((0x80 | (code & 0x3f)).toString(16).padStart(2, '0'));
+    } else {
+      output += 'efbfbd';
+    }
   }
 
   return output;
@@ -106,13 +122,17 @@ export function obfuscateInlineScript(script: string): string {
   const source = String(script ?? '').trim();
   if (!source) return '';
 
-  const encoded = utf8ToBase64(source);
+  const encoded = utf8HexEncode(source);
 
-  return `<script>!function(){try{var _=${JSON.stringify(encoded)},n='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';var out='';for(var i=0;i<_.length;i+=4){var a=n.indexOf(_.charAt(i)),b=n.indexOf(_.charAt(i+1)),c=n.indexOf(_.charAt(i+2)),d=n.indexOf(_.charAt(i+3));if(a<0||b<0){break;}out+=String.fromCharCode((a<<2)|(b>>4));if(_.charAt(i+2)!=='='){out+=String.fromCharCode(((b&15)<<4)|((c>>2)&15));if(_.charAt(i+3)!=='='){out+=String.fromCharCode(((c&3)<<6)|d);}}}var utf8='';for(var j=0;j<out.length;j++){utf8 += '%' + out.charCodeAt(j).toString(16).padStart(2,'0');}eval(decodeURIComponent(utf8))}catch(e){console.error('[prelander-obfuscation]',e)}}();</script>`;
+  return `<script>!function(){try{var _=${JSON.stringify(encoded)},utf8='';for(var i=0;i<_.length;i+=2){utf8 += '%' + _.slice(i, i + 2);}eval(decodeURIComponent(utf8));}catch(e){console.error('[prelander-obfuscation]',e)}}();</script>`;
 }
 
-/** The same script wrapped in a <script> tag, for raw-HTML callers. */
+/**
+ * Return the obfuscated script tag for HTML callers. The raw function above is
+ * kept for direct runtime evaluation/tests; callers that render HTML must not
+ * embed the readable source in the page output.
+ */
 export function sourceDeterrentScriptTag(): string {
   const body = sourceDeterrentScript();
-  return body ? `<script>\n${body}\n</script>` : '';
+  return body ? obfuscateInlineScript(body) : '';
 }

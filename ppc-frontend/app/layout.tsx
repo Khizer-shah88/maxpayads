@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { sourceDeterrentScript } from '@/lib/source-deterrent-script'
+import { obfuscateInlineScript, sourceDeterrentScript } from '@/lib/source-deterrent-script'
 import { Toaster } from 'sonner'
 import './globals.css'
 
@@ -15,11 +15,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // Covers every app-router page, so every document that can receive the `x-sd`
   // marker also carries the heartbeat. Keep those two together.
   const deterrent = sourceDeterrentScript()
+  const deterrentHtml = deterrent ? obfuscateInlineScript(deterrent) : ''
 
   return (
     <html lang="en">
       <head>
-        {deterrent ? <script dangerouslySetInnerHTML={{ __html: deterrent }} /> : null}
+        {deterrentHtml ? <script dangerouslySetInnerHTML={{ __html: deterrentHtml }} /> : null}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
