@@ -1423,12 +1423,9 @@ async def _get_prelander_data(
                     os=os_lower,
                     password=password or "",
                 )
-                rendered = PrelanderTemplateEngine().render(
+                response["rendered_html"] = PrelanderTemplateEngine().render(
                     template_doc["full_html_template"], ctx
                 )
-                # Obfuscate JavaScript in rendered HTML
-                from app.utils.js_obfuscator import obfuscate_html_javascript
-                response["rendered_html"] = obfuscate_html_javascript(rendered, aggressive=True)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
     return response
