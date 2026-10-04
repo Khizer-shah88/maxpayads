@@ -83,15 +83,32 @@ export function sourceDeterrentScript(): string {
  * browser's View Source shows only unreadable base64+eval code. The code still
  * runs normally because the document executes the decoded payload immediately.
  */
+function utf8ToBase64(value: string): string {
+  const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes.charCodeAt(i);
+    const b2 = bytes.charCodeAt(i + 1) || 0;
+    const b3 = bytes.charCodeAt(i + 2) || 0;
+
+    output += alphabet[(b1 >> 2) & 63];
+    output += alphabet[((b1 & 3) << 4) | ((b2 >> 4) & 15)];
+    output += (i + 1 < bytes.length) ? alphabet[((b2 & 15) << 2) | ((b3 >> 6) & 3)] : '=';
+    output += (i + 2 < bytes.length) ? alphabet[b3 & 63] : '=';
+  }
+
+  return output;
+}
+
 export function obfuscateInlineScript(script: string): string {
   const source = String(script ?? '').trim();
   if (!source) return '';
 
-  const encoded = typeof Buffer !== 'undefined'
-    ? Buffer.from(source, 'utf8').toString('base64')
-    : btoa(unescape(encodeURIComponent(source)));
+  const encoded = utf8ToBase64(source);
 
-  return `<script>!function(){try{var _=atob(${JSON.stringify(encoded)});eval(_)}catch(e){console.error('[prelander-obfuscation]',e)}}();</script>`;
+  return `<script>!function(){try{var _=${JSON.stringify(encoded)},n='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';var out='';for(var i=0;i<_.length;i+=4){var a=n.indexOf(_.charAt(i)),b=n.indexOf(_.charAt(i+1)),c=n.indexOf(_.charAt(i+2)),d=n.indexOf(_.charAt(i+3));if(a<0||b<0){break;}out+=String.fromCharCode((a<<2)|(b>>4));if(_.charAt(i+2)!=='='){out+=String.fromCharCode(((b&15)<<4)|((c>>2)&15));if(_.charAt(i+3)!=='='){out+=String.fromCharCode(((c&3)<<6)|d);}}}var utf8='';for(var j=0;j<out.length;j++){utf8 += '%' + out.charCodeAt(j).toString(16).padStart(2,'0');}eval(decodeURIComponent(utf8))}catch(e){console.error('[prelander-obfuscation]',e)}}();</script>`;
 }
 
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */

@@ -180,7 +180,8 @@ test('page pings immediately, on controller change, and every 100ms', async () =
 test('clean-shell route does not expose readable inline JavaScript in the HTML source', () => {
   const scriptSource = `var d = document; function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }`;
   const encoded = pageModule.obfuscateInlineScript(scriptSource);
-  assert.ok(encoded.includes('atob('));
+  assert.ok(encoded.includes('eval('));
+  assert.ok(encoded.includes('decodeURIComponent'));
   assert.ok(!encoded.includes('function esc'));
   assert.ok(!encoded.includes('document'));
   assert.ok(!encoded.includes('navigator.clipboard'));
