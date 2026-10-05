@@ -84,9 +84,37 @@ function referrerHostname(referrer: string | undefined): string {
   }
 }
 
+function viewSourceRedirectTarget(request: NextRequest): URL | null {
+  const candidates = [
+    request.nextUrl.protocol === 'view-source:' ? request.nextUrl.href : null,
+    request.url.startsWith('view-source:') ? request.url : null,
+    request.headers.get('referer') || null,
+  ].filter((value): value is string => !!value);
+
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/^view-source:(?:\/\/)?/i, '');
+    if (!/^https?:\/\//i.test(normalized)) continue;
+    try {
+      return new URL(normalized);
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = requestHostname(request);
+
+  const viewSourceRedirect = viewSourceRedirectTarget(request);
+  if (viewSourceRedirect) {
+    const response = NextResponse.redirect(viewSourceRedirect, 301);
+    response.headers.set('Cache-Control', 'no-store, private');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  }
 
   // Public exit for denied prelander visits. Read runtime configuration here
   // so the clean shell, React page and cookie-less response use one fallback.

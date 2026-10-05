@@ -293,6 +293,24 @@ test('inter root never renders the portal shell and falls back immediately', asy
   assert.deepEqual(b.events, [['replace', 'https://facebook.com/']]);
 });
 
+test('view-source requests are redirected back to the regular page with a permanent redirect', async () => {
+  const next = require('next/server');
+  const { middleware } = loadModule('middleware.ts', {
+    'next/server': next, '@/lib/prelander-session': session,
+    '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
+  }, {
+    process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } },
+    async fetch(url) {
+      return new Response(url.includes('/domain-access') ? '{"role":"prelander"}' : '{"authorized":true}');
+    },
+  });
+
+  const response = await middleware(new next.NextRequest('view-source:https://landing.example/prelander'));
+  assert.equal(response.status, 301);
+  assert.equal(response.headers.get('location'), 'https://landing.example/prelander');
+  assert.equal(response.headers.get('cache-control'), 'no-store, private');
+});
+
 test('production source deterrent works on all pages including prelander domains', async () => {
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {
