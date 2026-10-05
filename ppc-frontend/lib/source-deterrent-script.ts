@@ -45,37 +45,21 @@ function allowLocalhost(): boolean {
 /**
  * Returns the inline script body, or '' when the feature is off — in which case
  * callers embed nothing at all.
+ * 
+ * Shipped with no comments or extra whitespace: this literal string is what a
+ * view-source tab shows verbatim for the fraction of a second before the
+ * worker bounces it, and explanatory comments only help whoever's reading it
+ * in that window. The annotated version lives above, in this file's own
+ * source and in ~/view-source-demo/source-deterrent/snippet.html — the PING
+ * string below must stay identical to the worker's PING constant.
  */
 export function sourceDeterrentScript(): string {
   if (!sourceDeterrentEnabled()) return '';
-
-  // Body follows ~/view-source-demo/source-deterrent/snippet.html. The PING
-  // string must stay identical to the worker's PING constant.
-  return `(function () {
-  if (!('serviceWorker' in navigator)) return;
-
-  // Service workers require a secure context. A plain-http staging host gets no
-  // feature at all -- by design, not by accident.
-  if (!window.isSecureContext) return;
-  ${allowLocalhost()
-    ? '// SOURCE_DETERRENT_ALLOW_LOCALHOST=true — localhost skip disabled for local verification.'
-    : "// Never run in local development: it interferes with reading your own source.\n  if (['localhost', '127.0.0.1', '[::1]'].indexOf(location.hostname) !== -1) return;"}
-
-  navigator.serviceWorker.register('/source-deterrent-sw.js', { scope: '/' }).catch(function () {});
-
-  function ping() {
-    var controller = navigator.serviceWorker.controller;
-    if (controller) controller.postMessage('SOURCE_DETERRENT_PING');
-  }
-  // Ping immediately, again once a worker is controlling this page, then keep
-  // proving liveness. The interval must be well under the worker's GRACE_MS.
-  // (controllerchange is an addition to the reference: it closes the gap on the
-  // very first load, where the worker starts controlling after ready resolves.)
-  ping();
-  navigator.serviceWorker.ready.then(ping);
-  navigator.serviceWorker.addEventListener('controllerchange', ping);
-  setInterval(ping, 100);
-})();`;
+  
+  const localhostGuard = allowLocalhost()
+    ? ''
+    : "if(['localhost','127.0.0.1','[::1]'].indexOf(location.hostname)!==-1)return;";
+  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
 }
 
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */

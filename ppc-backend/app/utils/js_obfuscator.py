@@ -182,7 +182,10 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
         pattern = r'<script(?:\s+[^>]*)?>(.+?)</script>'
         html = re.sub(pattern, replace_script, html, flags=re.DOTALL | re.IGNORECASE)
         
-        return html
+        # Strip comments/whitespace from the surrounding HTML and any inline
+        # <style> blocks too -- view-source showed clean indented markup even
+        # though the <script> content was already obfuscated.
+        return minify_html(html)
     
     except Exception as e:
         logger.error(f"HTML JavaScript obfuscation failed: {e}")
