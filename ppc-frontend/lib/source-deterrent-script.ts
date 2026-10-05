@@ -57,9 +57,9 @@ export function sourceDeterrentScript(): string {
     ? ''
     : "if(['localhost','127.0.0.1','[::1]'].indexOf(location.hostname)!==-1)return;";
   
-  // Enhanced Firefox view-source detection
+  // Enhanced Firefox view-source detection with safe guards
   // In view-source, document.write and DOM manipulation fail silently
-  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}try{var t=document.createElement('div');t.id='_vs_check';document.body.appendChild(t);if(!document.getElementById('_vs_check')){window.location.href='https://www.google.com';return;}document.body.removeChild(t);}catch(e){window.location.href='https://www.google.com';return;}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
+  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}try{if(typeof document!=='undefined'&&document.body){var t=document.createElement('div');t.id='_vs_check';document.body.appendChild(t);if(!document.getElementById('_vs_check')){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}document.body.removeChild(t);}}catch(e){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
 }
 
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */
