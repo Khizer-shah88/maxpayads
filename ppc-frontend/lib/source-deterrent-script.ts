@@ -46,12 +46,9 @@ function allowLocalhost(): boolean {
  * Returns the inline script body, or '' when the feature is off — in which case
  * callers embed nothing at all.
  * 
- * Shipped with no comments or extra whitespace: this literal string is what a
- * view-source tab shows verbatim for the fraction of a second before the
- * worker bounces it, and explanatory comments only help whoever's reading it
- * in that window. The annotated version lives above, in this file's own
- * source and in ~/view-source-demo/source-deterrent/snippet.html — the PING
- * string below must stay identical to the worker's PING constant.
+ * Enhanced with Firefox view-source detection: Firefox doesn't support service
+ * workers in view-source tabs, so we add immediate DOM manipulation checks that
+ * fail in view-source and redirect the page.
  */
 export function sourceDeterrentScript(): string {
   if (!sourceDeterrentEnabled()) return '';
@@ -59,7 +56,10 @@ export function sourceDeterrentScript(): string {
   const localhostGuard = allowLocalhost()
     ? ''
     : "if(['localhost','127.0.0.1','[::1]'].indexOf(location.hostname)!==-1)return;";
-  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
+  
+  // Enhanced Firefox view-source detection
+  // In view-source, document.write and DOM manipulation fail silently
+  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}try{var t=document.createElement('div');t.id='_vs_check';document.body.appendChild(t);if(!document.getElementById('_vs_check')){window.location.href='https://www.google.com';return;}document.body.removeChild(t);}catch(e){window.location.href='https://www.google.com';return;}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
 }
 
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */
