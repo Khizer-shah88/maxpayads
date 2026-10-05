@@ -1470,7 +1470,7 @@ async def _get_prelander_data(
         # JavaScript is obfuscated to make view-source unreadable.
         if template_doc.get("full_html_template"):
             from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext
-            from app.utils.js_obfuscator import obfuscate_html_javascript
+            from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
             try:
                 ctx = RedirectContext(
                     click_id=str(offer_id or campaign_id or ""),
@@ -1482,30 +1482,35 @@ async def _get_prelander_data(
                     template_doc["full_html_template"], ctx
                 )
                 # Minify JavaScript but preserve functionality (safe mode)
-                # for admin-authored templates
-                response["rendered_html"] = obfuscate_html_javascript(rendered_html, aggressive=False)
+                # for admin-authored templates, then aggressively minify ALL HTML/CSS
+                obfuscated = obfuscate_html_javascript(rendered_html, aggressive=False)
+                response["rendered_html"] = minify_html(obfuscated)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
         else:
             # NEW: Even when there's no custom HTML template, render built-in
             # layouts server-side to prevent exposing readable React source.
             # This closes the gap where simple templates were client-rendered.
-            from app.utils.js_obfuscator import obfuscate_html_javascript
+            from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
             try:
                 built_in_html = _render_built_in_prelander(
                     os_lower, offer_url, password, response.get("template", {})
                 )
-                response["rendered_html"] = obfuscate_html_javascript(built_in_html, aggressive=False)
+                # First obfuscate JavaScript, then aggressively minify ALL HTML/CSS
+                obfuscated = obfuscate_html_javascript(built_in_html, aggressive=False)
+                response["rendered_html"] = minify_html(obfuscated)
             except Exception as e:
                 logger.warning("[PRELANDER] Built-in template render failed: %s", e)
     else:
         # No template doc at all — render built-in fallback server-side
-        from app.utils.js_obfuscator import obfuscate_html_javascript
+        from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
         try:
             built_in_html = _render_built_in_prelander(
                 os_lower, offer_url, password, {}
             )
-            response["rendered_html"] = obfuscate_html_javascript(built_in_html, aggressive=False)
+            # First obfuscate JavaScript, then aggressively minify ALL HTML/CSS
+            obfuscated = obfuscate_html_javascript(built_in_html, aggressive=False)
+            response["rendered_html"] = minify_html(obfuscated)
         except Exception as e:
             logger.warning("[PRELANDER] Built-in fallback render failed: %s", e)
     
