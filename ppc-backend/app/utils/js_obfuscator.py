@@ -195,11 +195,14 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
 def minify_html(html: str) -> str:
     """
     Aggressive HTML and CSS minification to make view-source completely unreadable.
-    Removes all whitespace, newlines, and makes CSS/HTML structure unreadable.
+    Removes all whitespace, newlines, titles, and makes CSS/HTML structure unreadable.
     """
     try:
         # Remove all HTML comments (except IE conditional comments)
         html = re.sub(r'<!--(?!\[if).*?-->', '', html, flags=re.DOTALL)
+        
+        # Remove or empty the title tag to hide page purpose
+        html = re.sub(r'<title[^>]*>.*?</title>', '<title></title>', html, flags=re.DOTALL | re.IGNORECASE)
         
         # Minify CSS inside <style> tags - remove ALL whitespace and newlines
         def minify_css(match):
