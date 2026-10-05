@@ -81,6 +81,7 @@ export default function PrelanderSlugPage() {
         try {
           const access = await guardTab()
           if (access === 'redirected') { setReturning(true); return }
+          
           const res = await fetch('/api/prelander/resolve/session', {
             credentials: "include",
             headers: { 'X-Prelander-Host': hostname },
@@ -191,7 +192,8 @@ export default function PrelanderSlugPage() {
           return
         }
 
-        // Legacy slug resolution can mint the arrival, so claim after resolve.
+        // IMPORTANT: Only check tab guard AFTER successful data resolution
+        // This ensures the arrival flag was minted by the backend first
         const access = await guardTab()
         if (access === 'redirected') { setReturning(true); return }
 
@@ -247,16 +249,14 @@ export default function PrelanderSlugPage() {
 
   if (!data) return <PreviousPageFallback />
 
-  // Note: Bypass OFF always shows the landing page — even when the backend has
-  // no active template (the built-in layout renders as fallback). The visitor
-  // is only forwarded straight to the campaign URL when Bypass is ON, which
-  // happens earlier via `bypass_redirect_url` from /domain-type.
-
   // Admin pasted a complete HTML template → the backend already rendered it
   // server-side ({Campaign_URL} / {Password} shortcodes substituted). Serve it
   // as a full-page document instead of the built-in layouts.
   if (data.rendered_html) return <FullHtmlPrelander html={data.rendered_html} fallbackFavicon={data.template?.favicon_url} />
 
+  // DEPRECATED: Built-in layouts should now be server-rendered too
+  // If we reach this point, the backend didn't return rendered_html
+  // This is a fallback for backwards compatibility
   if (data.os === 'mac') return <MacPrelander data={data} />
   return <WindowsPrelander data={data} />
 }

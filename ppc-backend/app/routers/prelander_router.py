@@ -829,6 +829,20 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
         # normal JSON return (the first load still works; only reloads would).
         logger.debug("[PRELANDER] Session cookie mint failed (non-fatal): %s", e)
 
+    # ENSURE ARRIVAL FLAG IS MINTED (fix first-redirect issue): Even when session
+    # cookie already exists, we need to mint the arrival flag for successful
+    # resolutions to prevent first-time visitors from being redirected to Google
+    try:
+        from app.services import prelander_auth_service as pas
+        redis = get_redis_safe() 
+        if redis is not None and auth_session:
+            pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+            if pl_session_cookie:
+                # Mint arrival flag for this successful resolution
+                await _mark_arrival(redis, pl_session_cookie, max(auth_session.expires_at - int(time.time()), 60))
+    except Exception as e:
+        logger.debug("[PRELANDER] Arrival flag mint failed (non-fatal): %s", e)
+
     return await _get_prelander_data(
         request, decoded["os"], db,
         offer_id=session_offer or decoded.get("offer_id"),
