@@ -3,12 +3,25 @@ name: Deploy Production
 on:
   push:
     branches: [main]
+    # Only trigger deployment for actual code changes, not workflow/doc changes
+    paths-ignore:
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/frontend-ci.yml'
+      - '.github/workflows/capacity-check.yml'
+      - '**.md'
+      - 'scripts/verify-production-build.sh'
   workflow_dispatch:
+
+# Ensure only one deployment runs at a time
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 15
 
     env:
       APP_DIR: /home/deploy/maxpayads/fahad
