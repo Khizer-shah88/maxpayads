@@ -1428,8 +1428,9 @@ async def _get_prelander_data(
                 rendered_html = PrelanderTemplateEngine().render(
                     template_doc["full_html_template"], ctx
                 )
-                # Obfuscate JavaScript to make view-source unreadable
-                response["rendered_html"] = obfuscate_html_javascript(rendered_html, aggressive=True)
+                # Minify JavaScript but preserve functionality (safe mode)
+                # for admin-authored templates
+                response["rendered_html"] = obfuscate_html_javascript(rendered_html, aggressive=False)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
     return response

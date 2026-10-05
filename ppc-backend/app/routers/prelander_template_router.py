@@ -549,8 +549,8 @@ async def preview_template(
         )
         rendered = PrelanderTemplateEngine().render(html, ctx)
         
-        # Obfuscate JavaScript to make view-source unreadable
-        obfuscated = obfuscate_html_javascript(rendered, aggressive=True)
+        # Minify JavaScript but preserve functionality (safe mode for admin templates)
+        obfuscated = obfuscate_html_javascript(rendered, aggressive=False)
     except ValueError as e:
         raise ValidationError(str(e))
     except Exception as e:

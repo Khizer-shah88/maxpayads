@@ -589,10 +589,11 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             )
 
         # A server-rendered custom template is returned as rendered_html —
-        # serve it as a complete document with obfuscated JavaScript.
+        # serve it as a complete document with safe minification (preserves
+        # admin-authored JavaScript functionality).
         if data.get("rendered_html"):
             from app.utils.js_obfuscator import obfuscate_html_javascript
-            obfuscated = obfuscate_html_javascript(data["rendered_html"], aggressive=True)
+            obfuscated = obfuscate_html_javascript(data["rendered_html"], aggressive=False)
             return HTMLResponse(content=obfuscated, status_code=200)
 
         # No active template → skip straight to the offer (same rule as the
@@ -601,10 +602,10 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             return RedirectResponse(url=data["offer_url"], status_code=302)
 
         # Simple customisation fields → build the standard prelander document
-        # with obfuscated JavaScript.
+        # with safe minification.
         from app.utils.js_obfuscator import obfuscate_html_javascript
         html = _build_simple_prelander_html(data)
-        obfuscated = obfuscate_html_javascript(html, aggressive=True)
+        obfuscated = obfuscate_html_javascript(html, aggressive=False)
         return HTMLResponse(content=obfuscated, status_code=200)
 
 

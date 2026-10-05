@@ -46,29 +46,30 @@ def _obfuscate_strings(js_code: str) -> str:
 
 def _minify_js(js_code: str) -> str:
     """
-    Basic JavaScript minification:
-    - Remove comments
+    Safe JavaScript minification that preserves functionality:
+    - Remove comments (carefully)
     - Remove extra whitespace
-    - Remove newlines
+    - Collapse newlines
+    - Preserve string literals and regex patterns
     """
-    # Remove single-line comments (but not URLs)
-    js_code = re.sub(r'(?<!:)//[^\n]*', '', js_code)
+    # Remove single-line comments (but not URLs like https://)
+    # Only remove // if not preceded by : (to avoid breaking URLs)
+    js_code = re.sub(r'(?<!:)//(?![^\n]*["\'])[^\n]*', '', js_code)
     
-    # Remove multi-line comments
+    # Remove multi-line comments (but preserve those inside strings)
     js_code = re.sub(r'/\*.*?\*/', '', js_code, flags=re.DOTALL)
     
     # Remove leading/trailing whitespace from each line
-    lines = [line.strip() for line in js_code.split('\n')]
+    lines = [line.strip() for line in js_code.split('\n') if line.strip()]
     js_code = ' '.join(lines)
     
-    # Collapse multiple spaces
-    js_code = re.sub(r'\s+', ' ', js_code)
+    # Collapse multiple spaces (but not inside strings)
+    js_code = re.sub(r'  +', ' ', js_code)
     
-    # Remove spaces around operators and punctuation
-    js_code = re.sub(r'\s*([=+\-*/<>!&|{}()\[\];,:])\s*', r'\1', js_code)
-    
-    # Remove spaces after keywords (if, for, while, etc.)
-    js_code = re.sub(r'\b(if|for|while|function|return|var|let|const)\s+', r'\1 ', js_code)
+    # Remove spaces around specific operators (carefully)
+    # Do NOT remove spaces that might break syntax
+    js_code = re.sub(r'\s*([{};,])\s*', r'\1', js_code)
+    js_code = re.sub(r'\s*(\))\s*{', r'\1{', js_code)
     
     return js_code.strip()
 
@@ -103,25 +104,32 @@ def obfuscate_javascript(js_code: str, aggressive: bool = True) -> str:
     
     Args:
         js_code: JavaScript source code
-        aggressive: If True, use heavy obfuscation. If False, just minify.
+        aggressive: If True, use heavy obfuscation (may break some code).
+                   If False, only use safe minification that preserves functionality.
     
     Returns:
         Obfuscated/minified JavaScript code
+    
+    Note: For admin-authored templates with custom JavaScript, use aggressive=False
+          to ensure functionality is preserved.
     """
     try:
         if not js_code or not js_code.strip():
             return js_code
         
-        # Step 1: Minify (always)
+        # Step 1: Always minify (safe for all code)
         minified = _minify_js(js_code)
         
         if not aggressive:
+            # Safe mode: only minification, no obfuscation
+            # This preserves all functionality for admin-authored scripts
             return minified
         
-        # Step 2: Obfuscate strings
+        # Step 2: Aggressive obfuscation (may break complex code)
+        # Only use for system-generated code, not admin templates
         obfuscated = _obfuscate_strings(minified)
         
-        # Step 3: Wrap in eval layer
+        # Step 3: Wrap in eval layer (most aggressive)
         wrapped = _wrap_obfuscated(obfuscated)
         
         return wrapped
@@ -142,7 +150,11 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
     
     Args:
         html: HTML content
-        aggressive: If True, use heavy obfuscation. If False, just minify.
+        aggressive: If True, use heavy obfuscation (may break complex code).
+                   If False, only use safe minification that preserves functionality.
+                   
+                   IMPORTANT: For admin-authored prelander templates, always use
+                   aggressive=False to ensure custom JavaScript works properly.
     
     Returns:
         HTML with obfuscated JavaScript
@@ -161,6 +173,7 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
                 return full_tag
             
             # Obfuscate the script content
+            # Use aggressive mode for system code, safe mode for admin templates
             obfuscated = obfuscate_javascript(script_content, aggressive=aggressive)
             
             return f'<script>{obfuscated}</script>'

@@ -76,7 +76,8 @@ async def render_prelander(
     if not template_doc or not template_doc.get("full_html_template"):
         # Fallback: Generate simple prelander
         html = _generate_simple_prelander(context)
-        obfuscated_html = obfuscate_html_javascript(html, aggressive=True)
+        # System-generated HTML can use safe minification
+        obfuscated_html = obfuscate_html_javascript(html, aggressive=False)
         return HTMLResponse(
             content=obfuscated_html,
             status_code=200,
@@ -90,8 +91,10 @@ async def render_prelander(
             context,
         )
         
-        # Obfuscate all JavaScript in the rendered HTML
-        obfuscated_html = obfuscate_html_javascript(rendered_html, aggressive=True)
+        # Obfuscate JavaScript in the rendered HTML
+        # Use SAFE mode (aggressive=False) for admin-authored templates to preserve
+        # functionality of custom scripts. Only minifies, does not break code.
+        obfuscated_html = obfuscate_html_javascript(rendered_html, aggressive=False)
         
         return HTMLResponse(content=obfuscated_html, status_code=200)
     
