@@ -86,9 +86,10 @@ function referrerHostname(referrer: string | undefined): string {
 
 function viewSourceRedirectTarget(request: NextRequest): URL | null {
   const candidates = [
-    request.nextUrl.protocol === 'view-source:' ? request.nextUrl.href : null,
-    request.url.startsWith('view-source:') ? request.url : null,
-    request.headers.get('referer') || null,
+    request.nextUrl.href,
+    request.url,
+    request.nextUrl.pathname,
+    request.headers.get('referer') || '',
   ].filter((value): value is string => !!value);
 
   for (const candidate of candidates) {
@@ -107,14 +108,6 @@ function viewSourceRedirectTarget(request: NextRequest): URL | null {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = requestHostname(request);
-
-  const viewSourceRedirect = viewSourceRedirectTarget(request);
-  if (viewSourceRedirect) {
-    const response = NextResponse.redirect(viewSourceRedirect, 301);
-    response.headers.set('Cache-Control', 'no-store, private');
-    response.headers.set('Referrer-Policy', 'no-referrer');
-    return response;
-  }
 
   // Public exit for denied prelander visits. Read runtime configuration here
   // so the clean shell, React page and cookie-less response use one fallback.
@@ -152,6 +145,16 @@ export async function middleware(request: NextRequest) {
       role = (await check.json()).role;
     } catch {
       return new NextResponse(null, { status: 503 });
+    }
+  }
+
+  if (role === 'prelander' && request.nextUrl.protocol === 'view-source:') {
+    const target = viewSourceRedirectTarget(request);
+    if (target) {
+      const response = NextResponse.redirect(target, 301);
+      response.headers.set('Cache-Control', 'no-store, private');
+      response.headers.set('Referrer-Policy', 'no-referrer');
+      return response;
     }
   }
   // A smartlink typed/bookmarked on the Anchor retains Sec-Fetch-Site: none
@@ -514,15 +517,9 @@ function addSecurityHeaders(response: NextResponse, pathname?: string): NextResp
 
   response.headers.set('Content-Security-Policy', cspHeader);
 
-  // Mark all documents that carry the source deterrent heartbeat script.
-  // The root layout (app/layout.tsx) injects the script on ALL pages when
-  // ENABLE_SOURCE_DETERRENT=true, so we set x-sd on ordinary documents.
-  // This allows view-source deterrent to work on all pages including prelander
-  // domains, redirecting view-source:https://domain.com/ back to https://domain.com/
-  // Hop tickets are consumed by POST and cannot be safely replayed by a
-  // worker reload. They contain no prelander content; keep the deterrent
-  // enabled for the final page and other ordinary documents.
-  if (process.env.ENABLE_SOURCE_DETERRENT === 'true' && !pathname?.startsWith('/d/h_')) {
+  // Only prelander pages carry the source-deterrent marker. Redirect domains
+  // and portal pages must not be treated as prelander content.
+  if (process.env.ENABLE_SOURCE_DETERRENT === 'true' && pathname?.startsWith('/d/') && !pathname.startsWith('/d/h_')) {
     response.headers.set('x-sd', '1');
   }
 
