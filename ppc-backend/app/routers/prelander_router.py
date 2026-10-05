@@ -1202,18 +1202,6 @@ def _render_built_in_prelander(os: str, offer_url: str, password: Optional[str],
         pwd_section = f'<div class="{c13}"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg><span class="{c14}">{password}</span></div>' if password else ''
         
         return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title></title><style>.{c1}{{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}.{c2}{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:500px;width:100%;padding:40px}}.{c3}{{width:56px;height:56px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}}.{c4}{{font-size:22px;color:#111;text-align:center;margin-bottom:8px}}.{c5}{{font-size:14px;color:#666;text-align:center;margin-bottom:24px}}.{c6}{{display:flex;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:4px;margin-bottom:16px}}.{c7}{{flex:1;padding:12px;font-family:monospace;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.{c8}{{padding:12px 20px;background:#111;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px}}.{c8}:hover{{background:#1f2937}}.{c9}{{display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px}}.{c13}{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:14px;margin-top:16px}}.{c14}{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:2px}}</style></head><body class="{c1}"><div class="{c2}"><div class="{c3}"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div><h1 class="{c4}">{title_text}</h1><p class="{c5}">{subtitle_text}</p><label class="{c9}">Download Link</label><div class="{c6}"><div class="{c7}">{offer_url}</div><button class="{c8}" onclick="navigator.clipboard.writeText(\'{offer_url}\');this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'{button_text}\',2000);">{button_text}</button></div>{pwd_section}</div></body></html>'
-<div class="icon"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div>
-<h1>{title}</h1>
-<p>{subtitle}</p>
-<label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Download Link</label>
-<div class="link-box">
-<div class="url">{offer_url}</div>
-<button onclick="navigator.clipboard.writeText('{offer_url}');this.textContent='Copied!';setTimeout(()=>this.textContent='{button_text}',2000);">{button_text}</button>
-</div>
-{"<div class='pwd'><svg viewBox='0 0 24 24'><path d='M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z'/></svg><span class='pwd-text'>{password}</span></div>" if password else ""}
-</div>
-</body>
-</html>'''
 
 
 async def _get_prelander_data(
