@@ -194,18 +194,38 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
 
 def minify_html(html: str) -> str:
     """
-    Basic HTML minification (optional enhancement).
-    Removes unnecessary whitespace while preserving functionality.
+    Aggressive HTML and CSS minification to make view-source completely unreadable.
+    Removes all whitespace, newlines, and makes CSS/HTML structure unreadable.
     """
     try:
-        # Remove comments (except IE conditional comments)
+        # Remove all HTML comments (except IE conditional comments)
         html = re.sub(r'<!--(?!\[if).*?-->', '', html, flags=re.DOTALL)
         
-        # Remove whitespace between tags
+        # Minify CSS inside <style> tags - remove ALL whitespace and newlines
+        def minify_css(match):
+            css = match.group(1)
+            # Remove all comments
+            css = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
+            # Remove ALL whitespace including newlines
+            css = re.sub(r'\s+', '', css)
+            # Remove spaces around specific CSS characters
+            css = re.sub(r'\s*([{}:;,])\s*', r'\1', css)
+            return f'<style>{css}</style>'
+        
+        html = re.sub(r'<style[^>]*>(.*?)</style>', minify_css, html, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Remove ALL whitespace between tags
         html = re.sub(r'>\s+<', '><', html)
         
-        # Collapse multiple spaces
-        html = re.sub(r'\s{2,}', ' ', html)
+        # Remove ALL newlines
+        html = re.sub(r'\n', '', html)
+        
+        # Collapse ALL multiple spaces to single space
+        html = re.sub(r'\s{2,}', '', html)
+        
+        # Remove spaces around tag boundaries
+        html = re.sub(r'\s*<\s*', '<', html)
+        html = re.sub(r'\s*>\s*', '>', html)
         
         return html.strip()
     
