@@ -164,7 +164,7 @@ export async function middleware(request: NextRequest) {
   const isInterTicket = role === 'inter' && pathname.startsWith('/d/h_');
   // An HTTP handoff can also retain Sec-Fetch-Site: none. The session entry
   // uses the server session gate and one-time arrival claim below instead.
-  const isPrelanderEntry = role === 'prelander' && (pathname === '/d/session' || pathname === '/clean-shell');
+  const isPrelanderEntry = role === 'prelander' && (pathname === '/' || pathname === '/d/session' || pathname === '/clean-shell');
   if (pathname.startsWith('/d/') && !isInterTicket && !isPrelanderEntry && request.headers.get('sec-fetch-site') === 'none') {
     return prelanderFallbackResponse();
   }
@@ -240,42 +240,11 @@ export async function middleware(request: NextRequest) {
   // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
-  if (role === 'prelander' && pathname === '/') {
-    // Check if this is a fresh arrival with a session cookie (from /_auth redirect)
-    const hasSession = request.cookies.get('mpa_pls')?.value;
-    
-    if (hasSession) {
-      // Validate the session and serve content
-      try {
-        const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
-        const cookieHeader = request.headers.get('cookie') || '';
-        const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
-          headers: { cookie: cookieHeader, host: request.headers.get('host') || host, 'x-real-ip': request.headers.get('x-real-ip') || '' },
-          redirect: 'manual',
-          cache: 'no-store',
-        });
-
-        if (checkRes.status === 200) {
-          const check = await checkRes.json().catch(() => null);
-          if (check?.authorized) {
-            // Serve the clean shell for prelander content
-            const url = request.nextUrl.clone();
-            url.pathname = '/clean-shell';
-            const page = NextResponse.rewrite(url);
-            addSecurityHeaders(page, '/d/shell');
-            page.headers.delete('x-sd');
-            page.headers.set('Cache-Control', 'no-store, private');
-            return page;
-          }
-        }
-      } catch (err) {
-        // On error, fall through to default behavior
-      }
-    }
-    
+  if (role === 'prelander' && pathname === '/' && !request.cookies.get('mpa_pls')?.value) {
     // The arrival document changes its visible URL to / without fetching it.
     // Later document requests (including view-source and reload) have no new
     // content to commit. Never authorize this root using the shared cookie.
+    // However, if there IS a session cookie, let isPrelanderEntry handle it below.
     return prelanderNoContentResponse();
   }
 
