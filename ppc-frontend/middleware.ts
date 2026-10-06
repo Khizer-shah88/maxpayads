@@ -215,16 +215,16 @@ export async function middleware(request: NextRequest) {
       if (exchangeRes.status === 302) {
         // Exchange succeeded: capture the mpa_pls (and tab-bootstrap)
         // Set-Cookie headers from the backend and replay them on our own
-        // redirect to the session entry. The visitor is now fully authorized.
+        // redirect to /clean-shell. This avoids /d/session in URL bar.
         const setCookies = exchangeRes.headers.getSetCookie?.() ?? [];
-        const redirectRes = NextResponse.redirect(new URL('/d/session', request.nextUrl.origin), 302);
+        const redirectRes = NextResponse.redirect(new URL('/clean-shell', request.nextUrl.origin), 302);
         redirectRes.headers.set('Cache-Control', 'no-store, private');
         redirectRes.headers.set('Referrer-Policy', 'no-referrer');
         for (const cookie of setCookies) {
           redirectRes.headers.append('set-cookie', cookie);
         }
         console.log(
-          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to session entry`,
+          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to clean-shell`,
         );
         return redirectRes;
       }

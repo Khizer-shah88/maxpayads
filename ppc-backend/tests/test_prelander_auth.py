@@ -246,7 +246,7 @@ async def test_handoff_enters_session_route_before_cleaning_url(session_api, red
     ) as client:
         response = await client.get(f"/prelander/_auth/{handoff}")
         assert response.status_code == 302
-        assert response.headers["location"] == "/d/session"
+        assert response.headers["location"] == "/clean-shell"
         assert response.headers["cache-control"] == "no-store, private"
         assert response.headers["referrer-policy"] == "no-referrer"
         assert pas.PL_SESSION_COOKIE in response.cookies
