@@ -1145,11 +1145,10 @@ async def prelander_bootstrap(
         # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
         await _mark_arrival(redis, pl_session_id, session.expires_at - int(time.time()))
 
-        # Render through the session-checked entry, then let the document use
-        # history.replaceState to display /. Direct root requests return 204;
-        # redirecting there would leave the visitor on the previous hop.
+        # Redirect directly to root path to avoid showing /d/session in URL bar.
+        # The frontend will handle session resolution at root path.
         # The route contains no click/campaign IDs; binding stays server-side.
-        dest = "/d/session"
+        dest = "/"
         response = RedirectResponse(url=dest, status_code=302)
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Referrer-Policy"] = "no-referrer"

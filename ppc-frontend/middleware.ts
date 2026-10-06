@@ -215,16 +215,17 @@ export async function middleware(request: NextRequest) {
       if (exchangeRes.status === 302) {
         // Exchange succeeded: capture the mpa_pls (and tab-bootstrap)
         // Set-Cookie headers from the backend and replay them on our own
-        // redirect to the session entry. The visitor is now fully authorized.
+        // redirect to the root path (/) which will resolve the prelander content.
+        // The visitor is now fully authorized.
         const setCookies = exchangeRes.headers.getSetCookie?.() ?? [];
-        const redirectRes = NextResponse.redirect(new URL('/d/session', request.nextUrl.origin), 302);
+        const redirectRes = NextResponse.redirect(new URL('/', request.nextUrl.origin), 302);
         redirectRes.headers.set('Cache-Control', 'no-store, private');
         redirectRes.headers.set('Referrer-Policy', 'no-referrer');
         for (const cookie of setCookies) {
           redirectRes.headers.append('set-cookie', cookie);
         }
         console.log(
-          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to session entry`,
+          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to root`,
         );
         return redirectRes;
       }
@@ -240,6 +241,38 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
   if (role === 'prelander' && pathname === '/') {
+    // Check if this is a fresh arrival with a session cookie (from /_auth redirect)
+    const hasSession = request.cookies.get('mpa_pls')?.value;
+    
+    if (hasSession) {
+      // Validate the session and serve content
+      try {
+        const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
+        const cookieHeader = request.headers.get('cookie') || '';
+        const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
+          headers: { cookie: cookieHeader, host: request.headers.get('host') || host, 'x-real-ip': request.headers.get('x-real-ip') || '' },
+          redirect: 'manual',
+          cache: 'no-store',
+        });
+
+        if (checkRes.status === 200) {
+          const check = await checkRes.json().catch(() => null);
+          if (check?.authorized) {
+            // Serve the clean shell for prelander content
+            const url = request.nextUrl.clone();
+            url.pathname = '/clean-shell';
+            const page = NextResponse.rewrite(url);
+            addSecurityHeaders(page, '/d/shell');
+            page.headers.delete('x-sd');
+            page.headers.set('Cache-Control', 'no-store, private');
+            return page;
+          }
+        }
+      } catch (err) {
+        // On error, fall through to default behavior
+      }
+    }
+    
     // The arrival document changes its visible URL to / without fetching it.
     // Later document requests (including view-source and reload) have no new
     // content to commit. Never authorize this root using the shared cookie.
