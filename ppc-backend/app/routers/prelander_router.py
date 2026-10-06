@@ -1090,15 +1090,16 @@ async def prelander_bootstrap(
 ):
     """
     Prelander-side bootstrap (STEP 4): exchange the ONE-TIME handoff for a
-    prelander-domain browsing-session cookie, then redirect to /clean-shell.
-    No /d/session appears in URL - goes directly to clean-shell which renders content.
+    prelander-domain browsing-session cookie, then redirect to root with marker.
+    URL shows only domain/ - no path prefix visible to user.
 
       GET /_auth/{opaque-token}
         → validate + CONSUME the handoff (getdel — replay impossible)
         → establish the server-side browsing session
         → flag the arrival (one-time /claim for the tab that just arrived)
         → set the HttpOnly SameSite=Lax prelander-domain cookie
-        → 302 → /clean-shell → render content
+        → 302 → /?_s=1 → middleware rewrites to /clean-shell → renders content
+        → history.replaceState removes query param → final URL is just /
 
     A second use of the same handoff (back button, shared link, retry) finds
     nothing and gets the STEP 6 denied fallback.
@@ -1145,10 +1146,10 @@ async def prelander_bootstrap(
         # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
         await _mark_arrival(redis, pl_session_id, session.expires_at - int(time.time()))
 
-        # Redirect to /clean-shell which serves content immediately without URL change.
-        # This avoids /d/session appearing in the URL bar while maintaining all functionality.
+        # Redirect to /d/session - middleware will rewrite this to /clean-shell
+        # and JavaScript will clean the URL to just / via history.replaceState.
         # The route contains no click/campaign IDs; binding stays server-side.
-        dest = "/clean-shell"
+        dest = "/d/session"
         response = RedirectResponse(url=dest, status_code=302)
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Referrer-Policy"] = "no-referrer"

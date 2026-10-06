@@ -135,7 +135,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       // CLEAN FINAL URL: bare root, no slug, no ids, no params.
       if (location.pathname !== '/' || location.search) {
         try { history.replaceState({}, '', '/') } catch (e) {}
-      }
       // Admin full-HTML template → replace the whole document exactly as authored.
       if (data.rendered_html) { d.open(); d.write(data.rendered_html); d.close(); return }
       var root = d.getElementById('pl-root')
