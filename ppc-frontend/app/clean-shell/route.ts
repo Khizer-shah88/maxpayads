@@ -90,25 +90,31 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     }
     
     // BFCACHE PROTECTION: Reset on page show event (fires on back/forward/reload)
-    window.addEventListener('pageshow', function(e) {
-      if (e.persisted) {
-        // Page restored from bfcache - reset load time to block downloads
-        loadTime = Date.now()
-        console.log('[PRELANDER] Page restored from bfcache - blocking downloads')
-      }
-    })
+    // Only add if window.addEventListener exists (not in test environment)
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('pageshow', function(e) {
+        if (e.persisted) {
+          // Page restored from bfcache - reset load time to block downloads
+          loadTime = Date.now()
+          console.log('[PRELANDER] Page restored from bfcache - blocking downloads')
+        }
+      })
+    }
     
     // VISIBILITY PROTECTION: Reset timer when page becomes visible
-    document.addEventListener('visibilitychange', function() {
-      if (document.visibilityState === 'visible') {
-        var timeSinceLoad = Date.now() - loadTime
-        if (timeSinceLoad > 60000) {
-          // If more than 1 minute since load, this might be a tab restore
-          loadTime = Date.now()
-          console.log('[PRELANDER] Tab restored - blocking downloads')
+    // Only add if document.addEventListener exists (not in test environment)
+    if (typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+          var timeSinceLoad = Date.now() - loadTime
+          if (timeSinceLoad > 60000) {
+            // If more than 1 minute since load, this might be a tab restore
+            loadTime = Date.now()
+            console.log('[PRELANDER] Tab restored - blocking downloads')
+          }
         }
-      }
-    })
+      })
+    }
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
