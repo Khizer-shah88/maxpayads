@@ -55,6 +55,12 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
   .pl-video video { width: 100%; height: 100%; }
   .pl-foot { text-align: center; font-size: 12px; color: #9ca3af; padding: 0 24px 24px; }
 </style>
+<script>
+// INSTANT URL CLEAN: if arrived at /d/session, immediately replace with /
+if (location.pathname === '/d/session') {
+  location.replace('/');
+}
+</script>
 </head>
 <body>
   <div id="pl-root" hidden></div>
@@ -131,10 +137,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
           lnk.href = fvHref
           d.head.appendChild(lnk)
         }
-      }
-      // CLEAN FINAL URL: bare root, no slug, no ids, no params.
-      if (location.pathname !== '/' || location.search) {
-        try { history.replaceState({}, '', '/') } catch (e) {}
       }
       // Admin full-HTML template → replace the whole document exactly as authored.
       if (data.rendered_html) { d.open(); d.write(data.rendered_html); d.close(); return }
