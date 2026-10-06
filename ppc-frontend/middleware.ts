@@ -164,7 +164,7 @@ export async function middleware(request: NextRequest) {
   const isInterTicket = role === 'inter' && pathname.startsWith('/d/h_');
   // An HTTP handoff can also retain Sec-Fetch-Site: none. The session entry
   // uses the server session gate and one-time arrival claim below instead.
-  const isPrelanderEntry = role === 'prelander' && (pathname === '/' || pathname === '/d/session' || pathname === '/clean-shell');
+  const isPrelanderEntry = role === 'prelander' && (pathname === '/d/session' || pathname === '/clean-shell');
   if (pathname.startsWith('/d/') && !isInterTicket && !isPrelanderEntry && request.headers.get('sec-fetch-site') === 'none') {
     return prelanderFallbackResponse();
   }
@@ -215,17 +215,16 @@ export async function middleware(request: NextRequest) {
       if (exchangeRes.status === 302) {
         // Exchange succeeded: capture the mpa_pls (and tab-bootstrap)
         // Set-Cookie headers from the backend and replay them on our own
-        // redirect to the root path (/) which will resolve the prelander content.
-        // The visitor is now fully authorized.
+        // redirect to the session entry. The visitor is now fully authorized.
         const setCookies = exchangeRes.headers.getSetCookie?.() ?? [];
-        const redirectRes = NextResponse.redirect(new URL('/', request.nextUrl.origin), 302);
+        const redirectRes = NextResponse.redirect(new URL('/d/session', request.nextUrl.origin), 302);
         redirectRes.headers.set('Cache-Control', 'no-store, private');
         redirectRes.headers.set('Referrer-Policy', 'no-referrer');
         for (const cookie of setCookies) {
           redirectRes.headers.append('set-cookie', cookie);
         }
         console.log(
-          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to root`,
+          `[_AUTH_RECOVERY] exchange completed server-side (${setCookies.length} cookies) — redirecting to session entry`,
         );
         return redirectRes;
       }
@@ -241,21 +240,10 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
   if (role === 'prelander' && pathname === '/') {
-    const hasSession = request.cookies.get('mpa_pls')?.value;
-    const secFetchSite = request.headers.get('sec-fetch-site');
-    
-    // Direct navigation (pasted/typed URL) always gets 204, even with valid session
-    if (secFetchSite === 'none') {
-      return prelanderNoContentResponse();
-    }
-    
-    // No session cookie = return 204
-    if (!hasSession) {
-      return prelanderNoContentResponse();
-    }
-    
-    // Has session AND not a paste = let isPrelanderEntry validate and serve content
-    // Fall through to isPrelanderEntry check below
+    // The arrival document changes its visible URL to / without fetching it.
+    // Later document requests (including view-source and reload) have no new
+    // content to commit. Never authorize this root using the shared cookie.
+    return prelanderNoContentResponse();
   }
 
   if (isPrelanderEntry) {
