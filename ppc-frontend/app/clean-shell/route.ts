@@ -61,24 +61,54 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
   <script>
   ;(async function () {
     var d = document
+    
+    // PREVENT AUTOMATIC DOWNLOADS ON RELOAD/REFRESH
+    // Set a flag in sessionStorage to track if this is a reload
+    var isReload = false
+    try {
+      isReload = sessionStorage.getItem('pl_visited') === '1'
+      sessionStorage.setItem('pl_visited', '1')
+    } catch (e) {}
+    
     // CLEAN URL IMMEDIATELY before any async operations
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
     
-    // PREVENT AUTOMATIC DOWNLOADS ON PAGE LOAD/RELOAD
-    // Block window.open (which triggers downloads) for first 500ms
-    // but allow location.replace (used for legitimate redirects)
+    // Block window.open during page load AND on reload
     var loadTime = Date.now()
     var originalOpen = window.open
+    var blockDuration = isReload ? 2000 : 500 // Longer block on reload
     
     window.open = function() {
-      if (Date.now() - loadTime < 500) {
-        console.log('[PRELANDER] Blocked automatic window.open on page load')
+      var elapsed = Date.now() - loadTime
+      if (elapsed < blockDuration) {
+        console.log('[PRELANDER] Blocked automatic window.open (elapsed: ' + elapsed + 'ms, reload: ' + isReload + ')')
         return null
       }
       return originalOpen.apply(window, arguments)
     }
+    
+    // BFCACHE PROTECTION: Reset on page show event (fires on back/forward/reload)
+    window.addEventListener('pageshow', function(e) {
+      if (e.persisted) {
+        // Page restored from bfcache - reset load time to block downloads
+        loadTime = Date.now()
+        console.log('[PRELANDER] Page restored from bfcache - blocking downloads')
+      }
+    })
+    
+    // VISIBILITY PROTECTION: Reset timer when page becomes visible
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') {
+        var timeSinceLoad = Date.now() - loadTime
+        if (timeSinceLoad > 60000) {
+          // If more than 1 minute since load, this might be a tab restore
+          loadTime = Date.now()
+          console.log('[PRELANDER] Tab restored - blocking downloads')
+        }
+      }
+    })
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
