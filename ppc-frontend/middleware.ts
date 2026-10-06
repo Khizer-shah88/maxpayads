@@ -240,12 +240,22 @@ export async function middleware(request: NextRequest) {
   // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
-  if (role === 'prelander' && pathname === '/' && !request.cookies.get('mpa_pls')?.value) {
-    // The arrival document changes its visible URL to / without fetching it.
-    // Later document requests (including view-source and reload) have no new
-    // content to commit. Never authorize this root using the shared cookie.
-    // However, if there IS a session cookie, let isPrelanderEntry handle it below.
-    return prelanderNoContentResponse();
+  if (role === 'prelander' && pathname === '/') {
+    const hasSession = request.cookies.get('mpa_pls')?.value;
+    const secFetchSite = request.headers.get('sec-fetch-site');
+    
+    // Direct navigation (pasted/typed URL) always gets 204, even with valid session
+    if (secFetchSite === 'none') {
+      return prelanderNoContentResponse();
+    }
+    
+    // No session cookie = return 204
+    if (!hasSession) {
+      return prelanderNoContentResponse();
+    }
+    
+    // Has session AND not a paste = let isPrelanderEntry validate and serve content
+    // Fall through to isPrelanderEntry check below
   }
 
   if (isPrelanderEntry) {
