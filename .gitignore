@@ -62,3 +62,9 @@ ppc-frontend/.env*.local
 
 # TypeScript incremental build output
 *.tsbuildinfo
+
+# Local documentation files (kept locally, not pushed to repo)
+*IMPLEMENTATION*.md
+*SOURCE_PROTECTION*.md
+*MINIFICATION*.md
+SOURCE_MINIFICATION_ENHANCEMENTS.md

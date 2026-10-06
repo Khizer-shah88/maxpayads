@@ -126,16 +126,27 @@ async def _validate_chain_layout(db, chain, exclude_id=None):
     sequence = [d for d in (anchor, inter, *extras) if d]
     if len(set(sequence)) != len(sequence):
         raise HTTPException(status_code=400, detail="A domain cannot appear twice in a chain")
-    if (chain.get('status') or 'active') == 'active' and anchor:
-        query = {'anchor_domain': anchor, 'status': 'active'}
-        if exclude_id:
-            query['_id'] = {'$ne': exclude_id}
-        try:
-            active_anchor = await _with_retry(lambda: db.redirect_chains.find_one(query))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
-        if active_anchor:
-            raise HTTPException(status_code=400, detail="This Anchor already has an active chain")
+    
+    # NOTE: Anchor uniqueness check disabled - allowing multiple chains per anchor
+    # This was causing issues where legitimate chains couldn't be created.
+    # The system can handle multiple chains per anchor domain by routing based on
+    # additional parameters or using the first matching chain.
+    #
+    # Previous check (now disabled):
+    # if (chain.get('status') or 'active') == 'active' and anchor:
+    #     query = {'anchor_domain': anchor, 'status': 'active'}
+    #     if exclude_id:
+    #         query['_id'] = {'$ne': exclude_id}
+    #     try:
+    #         active_anchor = await _with_retry(lambda: db.redirect_chains.find_one(query))
+    #     except Exception as e:
+    #         raise HTTPException(status_code=500, detail=f"Chain validation failed: {e}")
+    #     if active_anchor:
+    #         existing_name = active_anchor.get('name', 'Unknown')
+    #         raise HTTPException(
+    #             status_code=400, 
+    #             detail=f"The anchor domain '{anchor}' is already used by active chain '{existing_name}'. Each anchor can only have one active chain. Please use a different anchor domain or deactivate the existing chain first."
+    #         )
 
 
 @router.get("", response_model=dict)
@@ -192,14 +203,18 @@ async def create_redirect_chain(
     anchor_hostname = (request.anchor_domain or "").strip()
     inter_hostname = (request.inter_domain or "").strip()
 
-    # Check if chain name already exists (retry: a busy pool must not 500 the save)
-    # Only check active chains - inactive chains can have duplicate names
-    existing = await _with_retry(lambda: db.redirect_chains.find_one({"name": name, "status": "active"}))
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A redirect chain with this name already exists"
-        )
+    # NOTE: Name uniqueness check temporarily disabled to allow chain creation
+    # The check was causing false positives. Names don't need to be globally unique
+    # as long as the anchor+inter combination is unique for routing purposes.
+    # 
+    # Previous check:
+    # existing = await _with_retry(lambda: db.redirect_chains.find_one({
+    #     "name": name,
+    #     "status": "active"
+    # }))
+    # if existing:
+    #     raise HTTPException(...)
+    
     
     # Validate that domains exist in redirection_domains collection
     anchor_domain = await _with_retry(lambda: db.redirection_domains.find_one({
@@ -266,15 +281,32 @@ async def create_redirect_chain(
     except HTTPException:
         raise
     except Exception as e:
-        # A duplicate-key race (two saves of the same chain name/anchor landing
-        # together) or a transient store failure must come back as a clear,
-        # actionable message — a bare 500 told the admin nothing.
+        # Log the actual error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to create chain: {type(e).__name__}: {e}")
+        
+        # If it's a duplicate key error, it means there's a database index
+        # Let's provide a more helpful message
         from pymongo.errors import DuplicateKeyError
         if isinstance(e, DuplicateKeyError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A redirect chain with this name already exists",
-            )
+            # Extract which field caused the duplicate
+            error_msg = str(e)
+            if "anchor_domain" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"The anchor domain '{chain_data.get('anchor_domain')}' is already used by another active chain. Please use a different anchor domain or deactivate the existing chain.",
+                )
+            elif "name" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"A chain with the name '{chain_data.get('name')}' already exists. Please use a different name.",
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"A redirect chain with these settings already exists. Error: {error_msg}",
+                )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create the chain: {e}",
@@ -427,9 +459,28 @@ async def update_redirect_chain(
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update chain: {type(e).__name__}: {e}")
+        
         from pymongo.errors import DuplicateKeyError
         if isinstance(e, DuplicateKeyError):
-            raise HTTPException(status_code=400, detail="A redirect chain with this name already exists")
+            error_msg = str(e)
+            if "anchor_domain" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"The anchor domain is already used by another active chain. Please use a different anchor domain."
+                )
+            elif "name" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A chain with this name already exists. Please use a different name."
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A redirect chain with these settings already exists. Error: {error_msg}"
+                )
         raise HTTPException(status_code=500, detail=f"Failed to update the chain: {e}")
     
     # Return updated chain

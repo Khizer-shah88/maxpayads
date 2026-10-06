@@ -525,7 +525,11 @@ async def preview_template(
     Render the stored full HTML template with Global Campaign values
     substituted, for the admin preview iframe. Uses the exact engine + context
     the live prelander flow uses, so what the admin sees is what renders.
+    
+    JavaScript is obfuscated to make view-source unreadable.
     """
+    from app.utils.js_obfuscator import obfuscate_html_javascript
+    
     t = await db.prelander_templates.find_one({"_id": _tpl_oid(template_id)})
     if not t:
         raise NotFoundError("Prelander Template")
@@ -544,6 +548,9 @@ async def preview_template(
             password=password or "",
         )
         rendered = PrelanderTemplateEngine().render(html, ctx)
+        
+        # Minify JavaScript but preserve functionality (safe mode for admin templates)
+        obfuscated = obfuscate_html_javascript(rendered, aggressive=False)
     except ValueError as e:
         raise ValidationError(str(e))
     except Exception as e:
@@ -552,7 +559,7 @@ async def preview_template(
 
     return {
         "success": True,
-        "html": rendered,
+        "html": obfuscated,
         "campaign_url": campaign_url,
         "password": password,
     }

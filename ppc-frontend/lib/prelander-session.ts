@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
 
 /** The visible root is not an entry point, even for a browser with a session. */
@@ -16,6 +17,8 @@ export function prelanderNoContentResponse(): Response {
   });
 }
 
+=======
+>>>>>>> 28bf1b75a66502a8c3d830b856b6cf55655ad76e
 export const SESSION_UNAVAILABLE_TITLE = 'Session expired or unavailable';
 export const SESSION_UNAVAILABLE_MESSAGE =
   'This link requires an active session. Return to the page where you started and open a new link.';

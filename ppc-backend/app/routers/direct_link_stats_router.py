@@ -28,6 +28,8 @@ from app.schemas.stats_profile_schema import (
 )
 
 router = APIRouter(prefix="/direct-links", tags=["Direct Link Stats"])
+
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 
@@ -654,6 +656,20 @@ async def get_publisher_domains(
     # Get all redirection domains
     domains_cursor = db.redirection_domains.find({"status": "active"})
     domains = await domains_cursor.to_list(length=1000)
+    
+    # Debug: log how many domains have publisher_ids
+    domains_with_pubs = [d for d in domains if d.get("publisher_ids")]
+    logger.info(
+        f"[DirectLinkStats] Total active domains: {len(domains)}, "
+        f"with publisher_ids: {len(domains_with_pubs)}"
+    )
+    if domains_with_pubs:
+        sample = domains_with_pubs[0]
+        logger.info(
+            f"[DirectLinkStats] Sample domain: {sample.get('domain')} "
+            f"type={sample.get('domain_type')} "
+            f"publisher_ids={sample.get('publisher_ids')}"
+        )
 
     # Get all publishers
     publishers_cursor = db.publishers.find({"role": "publisher"})
@@ -675,21 +691,41 @@ async def get_publisher_domains(
         domain_type = normalize_domain_type(domain.get("domain_type"), default="unknown")
         publisher_ids = domain.get("publisher_ids", [])
         domain_name = domain.get("domain")
+        
+        # Debug: log each domain with publishers
+        if publisher_ids:
+            logger.info(
+                f"[DirectLinkStats] Processing domain {domain_name} ({domain_type}) "
+                f"with publisher_ids: {[str(pid) for pid in publisher_ids]}"
+            )
 
         for pub_id in publisher_ids:
-            if pub_id not in publisher_domains:
-                publisher_domains[pub_id] = {
+            # Normalize publisher_id to string for consistent comparison
+            # (publisher_ids field might contain ObjectId or string)
+            pub_id_str = str(pub_id)
+            
+            if pub_id_str not in publisher_domains:
+                publisher_domains[pub_id_str] = {
                     "anchor": [],
                     "inter": [],
                     "prelander": [],
                 }
 
             if domain_type == DOMAIN_TYPE_ANCHOR:
-                publisher_domains[pub_id]["anchor"].append(domain_name)
+                publisher_domains[pub_id_str]["anchor"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned anchor {domain_name} to publisher {pub_id_str}")
             elif domain_type == DOMAIN_TYPE_INTER:
-                publisher_domains[pub_id]["inter"].append(domain_name)
+                publisher_domains[pub_id_str]["inter"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned inter {domain_name} to publisher {pub_id_str}")
             elif domain_type == DOMAIN_TYPE_PRELANDER:
-                publisher_domains[pub_id]["prelander"].append(domain_name)
+                publisher_domains[pub_id_str]["prelander"].append(domain_name)
+                logger.info(f"[DirectLinkStats] Assigned prelander {domain_name} to publisher {pub_id_str}")
+    
+    # Log summary of assignments
+    logger.info(f"[DirectLinkStats] Total publishers with assigned domains: {len(publisher_domains)}")
+    if publisher_domains:
+        sample_pub_id = list(publisher_domains.keys())[0]
+        logger.info(f"[DirectLinkStats] Sample assignment - Publisher {sample_pub_id}: {publisher_domains[sample_pub_id]}")
 
     # ── Real traffic stats per publisher (one aggregation per metric) ──────
     # clicks: the publisher's smartlink traffic (clicks collection, timestamp).
@@ -723,6 +759,20 @@ async def get_publisher_domains(
     for r in manual_rows:
         pid = str(r["_id"])
         today_conv_map[pid] = today_conv_map.get(pid, 0) + (r.get("total", 0) or 0)
+    
+    # ALL-TIME conversions — direct-link events (all time)…
+    all_conv_rows = await db.direct_link_events.aggregate([
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": 1}}},
+    ]).to_list(length=None)
+    total_conv_map = {str(r["_id"]): r.get("total", 0) for r in all_conv_rows}
+    
+    # …plus ALL admin-entered manual conversions (all dates)
+    all_manual_rows = await db.direct_link_manual_conversions.aggregate([
+        {"$group": {"_id": "$publisher_id", "total": {"$sum": "$conversions"}}},
+    ]).to_list(length=None)
+    for r in all_manual_rows:
+        pid = str(r["_id"])
+        total_conv_map[pid] = total_conv_map.get(pid, 0) + (r.get("total", 0) or 0)
 
     # Build response
     results = []
@@ -733,6 +783,15 @@ async def get_publisher_domains(
             "inter": [],
             "prelander": [],
         })
+
+        # Debug logging for first 2 publishers
+        if len(results) < 2:
+            logger.info(
+                f"[DirectLinkStats] Publisher {pub.get('name')} ({pub_id}): "
+                f"anchor={domains_info.get('anchor', [])}, "
+                f"inter={domains_info.get('inter', [])}, "
+                f"prelander={domains_info.get('prelander', [])}"
+            )
 
         results.append({
             "publisher_id": pub_id,
@@ -755,6 +814,7 @@ async def get_publisher_domains(
                 "total": total_clicks_map.get(pub_id, 0),
                 "today": today_clicks_map.get(pub_id, 0),
                 "today_conversions": today_conv_map.get(pub_id, 0),
+                "total_conversions": total_conv_map.get(pub_id, 0),  # ALL-TIME conversions
             },
         })
 

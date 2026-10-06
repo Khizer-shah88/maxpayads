@@ -41,6 +41,14 @@ async def connect_db():
         await migrate_legacy_domains(db)
     except Exception as e:
         logger.warning("Legacy domain migration skipped: %s", e)
+    
+    # Remove problematic unique indexes from redirect_chains
+    try:
+        from app.migrations.remove_chain_unique_indexes import migrate as remove_chain_indexes
+        await remove_chain_indexes(db)
+    except Exception as e:
+        logger.warning("Chain index migration skipped: %s", e)
+    
     logger.info("Connected to MongoDB")
 
 async def disconnect_db():

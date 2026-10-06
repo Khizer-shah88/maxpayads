@@ -3,7 +3,7 @@
 import PublisherId from '@/components/shared/PublisherId'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { CheckCircle, XCircle, CreditCard, Trash2, Paperclip, ExternalLink, Pencil } from 'lucide-react'
+import { CheckCircle, XCircle, CreditCard, Trash2, Paperclip, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import Sidebar from '@/components/shared/Sidebar'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -14,8 +14,6 @@ import { withdrawalApi } from '@/lib/api'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { Withdrawal } from '@/types'
 import { format } from 'date-fns'
-
-const API_BASE = '/api'
 
 export default function AdminWithdrawalsPage() {
   const { initialize } = useAuth()
@@ -31,10 +29,6 @@ export default function AdminWithdrawalsPage() {
   const [proofFile, setProofFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
-  const [editModal, setEditModal] = useState<Withdrawal | null>(null)
-  const [editForm, setEditForm] = useState({ transaction_id: '', admin_note: '' })
-  const [editProofFile, setEditProofFile] = useState<File | null>(null)
-  const editFileRef = useRef<HTMLInputElement>(null)
 
   // Styled confirmations (replace native confirm())
   const [approveTarget, setApproveTarget] = useState<Withdrawal | null>(null)
@@ -110,28 +104,6 @@ export default function AdminWithdrawalsPage() {
     finally { setDeleting(false) }
   }
 
-  const openEditModal = (w: Withdrawal) => {
-    setEditModal(w)
-    setEditForm({ transaction_id: w.transaction_id || '', admin_note: w.admin_note || '' })
-    setEditProofFile(null)
-  }
-
-  const handleEdit = async () => {
-    if (!editModal) return
-    setSaving(true)
-    try {
-      const fd = new FormData()
-      fd.append('transaction_id', editForm.transaction_id)
-      fd.append('admin_note', editForm.admin_note)
-      if (editProofFile) fd.append('proof_file', editProofFile)
-      await withdrawalApi.editWithdrawal(editModal.id, fd)
-      toast.success('Withdrawal updated')
-      setEditModal(null)
-      load()
-    } catch { toast.error('Failed to update') }
-    finally { setSaving(false) }
-  }
-
   const inputClass = "w-full px-4 py-2.5 border border-gray-200 rounded-xl text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary text-sm"
 
   const columns = [
@@ -141,7 +113,7 @@ export default function AdminWithdrawalsPage() {
     { key: 'status', label: 'Status', render: (w: Withdrawal) => <StatusBadge status={w.status} /> },
     { key: 'transaction_id', label: 'TXN ID', render: (w: Withdrawal) => <span className="font-mono text-xs text-gray-400">{w.transaction_id || '—'}</span> },
     { key: 'proof_url', label: 'Proof', render: (w: Withdrawal) => w.proof_url ? (
-      <a href={`${API_BASE}${w.proof_url}`} target="_blank" rel="noreferrer"
+      <a href={`/api/withdrawals/proof/${w.proof_url.split('/').pop()}`} target="_blank" rel="noreferrer"
         className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
         <Paperclip size={12} /><ExternalLink size={12} />View
       </a>
@@ -168,10 +140,6 @@ export default function AdminWithdrawalsPage() {
               <CreditCard size={15} />
             </button>
           )}
-          <button onClick={() => openEditModal(w)} title="Edit"
-            className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors">
-            <Pencil size={15} />
-          </button>
           <button onClick={() => setDeleteTarget(w)} title="Delete"
             className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
             <Trash2 size={15} />
@@ -283,58 +251,6 @@ export default function AdminWithdrawalsPage() {
             </div>
           </div>
         )}
-        {editModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900 mb-1">Edit Withdrawal</h3>
-              <p className="text-gray-500 text-sm mb-3">
-                {editModal.publisher_name} — <span className="text-red-600 font-bold">${editModal.amount.toFixed(2)}</span>
-                <span className="ml-2 capitalize text-gray-400">({editModal.payment_method.replace(/_/g, ' ')})</span>
-              </p>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Transaction ID</label>
-                  <input value={editForm.transaction_id} onChange={e => setEditForm(p => ({ ...p, transaction_id: e.target.value }))}
-                    placeholder="TX hash / receipt number" className={inputClass} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Replace Proof (image or PDF)</label>
-                  {editModal.proof_url && !editProofFile && (
-                    <div className="mb-2 flex items-center gap-2 text-xs text-blue-600">
-                      <Paperclip size={12} />
-                      <a href={`${API_BASE}${editModal.proof_url}`} target="_blank" rel="noreferrer" className="hover:underline">Current proof</a>
-                    </div>
-                  )}
-                  <div onClick={() => editFileRef.current?.click()}
-                    className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 transition-colors">
-                    {editProofFile ? (
-                      <p className="text-sm text-gray-900 font-medium">{editProofFile.name}</p>
-                    ) : (
-                      <p className="text-sm text-gray-400">Click to upload new image or PDF</p>
-                    )}
-                  </div>
-                  <input ref={editFileRef} type="file" accept="image/*,.pdf" className="hidden"
-                    onChange={e => setEditProofFile(e.target.files?.[0] || null)} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Admin Note</label>
-                  <input value={editForm.admin_note} onChange={e => setEditForm(p => ({ ...p, admin_note: e.target.value }))}
-                    placeholder="Internal note..." className={inputClass} />
-                </div>
-              </div>
-              <div className="flex gap-3 mt-6">
-                <button onClick={handleEdit} disabled={saving}
-                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 disabled:bg-gray-300">
-                  {saving ? <Spinner size={16} /> : <><Pencil size={16} /> Save Changes</>}
-                </button>
-                <button onClick={() => setEditModal(null)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ── Styled approve / delete confirmations ───────────────────────── */}
         <ConfirmDialog
           open={approveTarget !== null}

@@ -3,6 +3,9 @@ const nextConfig = {
   // Enable standalone output for Docker
   output: 'standalone',
   
+  // Explicitly disable production source maps (security: prevent source inspection)
+  productionBrowserSourceMaps: false,
+  
   // NOTE: ENABLE_SOURCE_DETERRENT is deliberately NOT listed under `env`.
   // Next's `env` key inlines values via DefinePlugin at BUILD time, which
   // freezes the flag into the image and makes it unflippable without a
@@ -11,10 +14,45 @@ const nextConfig = {
   // so they read the real runtime env directly. Set it in docker-compose.
   
   webpack: (config, { dev, isServer }) => {
-    // Basic optimization for production
+    // Enhanced production optimizations for source code protection
     if (!dev && !isServer) {
       // Remove source maps completely
       config.devtool = false
+      
+      // Enhanced minification and obfuscation
+      if (config.optimization && config.optimization.minimizer) {
+        config.optimization.minimizer.forEach((minimizer) => {
+          if (minimizer.constructor.name === 'TerserPlugin') {
+            // Enhance Terser options for better obfuscation
+            minimizer.options = {
+              ...minimizer.options,
+              terserOptions: {
+                ...minimizer.options.terserOptions,
+                compress: {
+                  ...minimizer.options.terserOptions?.compress,
+                  drop_console: false, // Keep console for debugging, but minified
+                  drop_debugger: true, // Remove debugger statements
+                  pure_funcs: ['console.log'], // Remove console.log calls
+                  passes: 2, // Multiple compression passes
+                },
+                mangle: {
+                  ...minimizer.options.terserOptions?.mangle,
+                  safari10: true, // Support older browsers
+                  properties: {
+                    // Mangle property names for additional obfuscation
+                    regex: /^_/, // Only mangle properties starting with _
+                  },
+                },
+                format: {
+                  ...minimizer.options.terserOptions?.format,
+                  comments: false, // Remove all comments
+                  ascii_only: true, // Escape unicode characters
+                },
+              },
+            }
+          }
+        })
+      }
     }
     
     return config

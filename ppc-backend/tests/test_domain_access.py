@@ -64,6 +64,28 @@ async def test_paused_or_deleted_domain_loses_access_immediately(domains_db):
     assert await allow_path(domains_db, 'inter.example', '/d/h_ticket') is None
 
 
+async def test_root_inter_domain_reaches_fallback_redirect(domains_db, monkeypatch):
+    from app.middleware import domain_access_middleware as guard
+    from app.middleware import fallback_redirect_middleware as fallback_guard
+
+    monkeypatch.setattr(guard, 'get_database', lambda: domains_db)
+    monkeypatch.setattr(fallback_guard, 'get_database', lambda: domains_db)
+    monkeypatch.setattr(fallback_guard, '_fallback_url', lambda: 'https://fallback.example/')
+
+    app = FastAPI()
+    app.add_middleware(fallback_guard.FallbackRedirectMiddleware)
+    app.add_middleware(guard.DomainAccessMiddleware)
+
+    @app.get('/')
+    async def root():
+        return {'accepted': True}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='https://inter.example') as client:
+        response = await client.get('/', headers={'host': 'inter.example'}, follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers['location'] == 'https://fallback.example/'
+
+
 async def test_domain_roles_cannot_overlap(domains_db):
     for host in ('portal.example', 'anchor.example', 'inter.example', 'prelander.example'):
         with pytest.raises(ValueError):
@@ -90,6 +112,40 @@ async def test_direct_api_cannot_bypass_with_forwarded_or_prelander_host(domains
         })
         assert denied.status_code == 404 and denied.content == b''
         assert (await client.get('/click', headers={'host': 'anchor.example'})).status_code == 200
+
+
+async def test_domain_access_probe_marks_known_vs_unknown(domains_db, monkeypatch):
+    from app.middleware import domain_access_middleware as guard
+    monkeypatch.setattr(guard, 'get_database', lambda: domains_db)
+
+    app = FastAPI()
+    app.add_middleware(guard.DomainAccessMiddleware)
+
+    @app.get('/domain-access')
+    async def domain_access():
+        return {'unexpected': True}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='https://inter.example') as client:
+        known = await client.get('/domain-access?path=/', headers={'host': 'inter.example', 'x-original-uri': '/'})
+        assert known.status_code == 200
+        assert known.headers.get('x-domain-known') == '1'
+
+        unknown = await client.get('/domain-access?path=/', headers={'host': 'unknown.example', 'x-original-uri': '/'})
+        assert unknown.status_code == 403
+        assert unknown.headers.get('x-domain-known') == '0'
+
+
+async def test_portal_hosts_still_resolve_when_database_is_stubbed(monkeypatch):
+    from app.services.domain_access_service import domain_role
+
+    monkeypatch.setattr(settings, 'PORTAL_HOSTNAMES', 'localhost,127.0.0.1,portal.example')
+
+    class StubCollection:
+        async def find_one(self, query):
+            raise RuntimeError('db unavailable')
+
+    db = SimpleNamespace(redirection_domains=StubCollection(), system_settings=Collection(), direct_links=Collection())
+    assert await domain_role(db, '127.0.0.1') == 'portal'
 
 
 async def test_legacy_stats_domain_spelling_is_recognized(domains_db):

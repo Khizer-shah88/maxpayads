@@ -37,8 +37,16 @@ class DomainAccessMiddleware:
             response = Response(status_code=403, headers={'Cache-Control': 'no-store'})
             return await response(scope, receive, send)
         if not role or probe:
-            response = (JSONResponse({'role': role}, headers={'Cache-Control': 'no-store'}) if role
-                        else Response(status_code=403 if probe else 404, headers={'Cache-Control': 'no-store'}))
+            if role:
+                response = JSONResponse(
+                    {'role': role},
+                    headers={'Cache-Control': 'no-store', 'X-Domain-Known': '1'},
+                )
+            else:
+                response = Response(
+                    status_code=403 if probe else 404,
+                    headers={'Cache-Control': 'no-store', 'X-Domain-Known': '0'},
+                )
             # Nginx auth_request must never enter the visitor rate limiter.
             return await response(scope, receive, send)
         await self.app(scope, receive, send)

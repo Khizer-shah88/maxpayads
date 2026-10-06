@@ -16,9 +16,6 @@ export function returnToPreviousPage(): void {
     }
   } catch {}
 
-  // history.length cannot tell us whether Back exits a custom browser tab,
-  // opens a browser-internal page, or replays a consumed redirect ticket.
-  // Resolve the configured fallback server-side, including in fresh/private
-  // browsers with no referrer or storage. Keep this tab open with replace().
+  // No usable referrer: hand off to the server-side fallback route.
   window.location.replace('/prelander-fallback');
 }

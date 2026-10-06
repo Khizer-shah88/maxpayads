@@ -589,18 +589,24 @@ class RedirectChainMiddleware(BaseHTTPMiddleware):
             )
 
         # A server-rendered custom template is returned as rendered_html —
-        # serve it as a complete document.
+        # serve it as a complete document with safe minification (preserves
+        # admin-authored JavaScript functionality).
         if data.get("rendered_html"):
-            return HTMLResponse(content=data["rendered_html"], status_code=200)
+            from app.utils.js_obfuscator import obfuscate_html_javascript
+            obfuscated = obfuscate_html_javascript(data["rendered_html"], aggressive=False)
+            return HTMLResponse(content=obfuscated, status_code=200)
 
         # No active template → skip straight to the offer (same rule as the
         # Next.js page: never render an empty prelander).
         if data.get("skip_prelander") and data.get("offer_url"):
             return RedirectResponse(url=data["offer_url"], status_code=302)
 
-        # Simple customisation fields → build the standard prelander document.
+        # Simple customisation fields → build the standard prelander document
+        # with safe minification.
+        from app.utils.js_obfuscator import obfuscate_html_javascript
         html = _build_simple_prelander_html(data)
-        return HTMLResponse(content=html, status_code=200)
+        obfuscated = obfuscate_html_javascript(html, aggressive=False)
+        return HTMLResponse(content=obfuscated, status_code=200)
 
 
 def _build_simple_prelander_html(data: dict) -> str:

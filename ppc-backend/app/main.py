@@ -17,6 +17,8 @@ from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.domain_access_middleware import DomainAccessMiddleware
 from app.middleware.security_middleware import SecurityMiddleware
 from app.middleware.capacity import CapacityMiddleware
+from app.middleware.fallback_redirect_middleware import FallbackRedirectMiddleware
+from app.middleware.view_source_redirect_middleware import ViewSourceRedirectMiddleware
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
@@ -26,7 +28,7 @@ from app.routers import offer_router, landing_page_router, prelander_router, red
 from app.routers import prelander_public_router
 from app.routers import prelander_template_router
 from app.routers import direct_link_router, direct_link_stats_router, redirect_chain_router, public_stats_router, stats_profile_router
-from app.routers import smartlink_structure_router
+from app.routers import smartlink_structure_router, deploy_router
 
 from fastapi.exceptions import HTTPException
 
@@ -102,6 +104,10 @@ app.add_middleware(
 )
 
 # Custom middleware (order matters - first added wraps last)
+# ViewSourceRedirectMiddleware must be VERY FIRST to block view-source before any processing
+app.add_middleware(ViewSourceRedirectMiddleware)
+# FallbackRedirectMiddleware must be SECOND to catch unregistered domains
+app.add_middleware(FallbackRedirectMiddleware)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -143,6 +149,7 @@ app.include_router(redirect_chain_router.router)
 app.include_router(smartlink_structure_router.router)
 app.include_router(public_stats_router.router)
 app.include_router(stats_profile_router.router)
+app.include_router(deploy_router.router)  # Auto-deployment endpoint
 
 
 @app.get("/health", tags=["System"])
@@ -189,10 +196,140 @@ async def serve_ad(
 
 
 @app.get("/", tags=["System"])
-async def root():
+async def root(request: Request):
+    """
+    Root handler - checks if domain is registered and handles accordingly
+    """
+    from fastapi.responses import RedirectResponse, Response
+    from app.database import get_database
+    
+    # Get the host
+    host = request.headers.get("host", "").lower().split(":")[0]
+    
+    # Skip if it's localhost or internal
+    if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("192.168."):
+        return {
+            "name": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "status": "running",
+            "docs": "/docs",
+        }
+    
+    # Check if this domain is registered in admin panel
+    db = get_database()
+    if db:
+        # Check redirection_domains
+        domain_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+        
+        # Also check if it's configured as admin/portal domain
+        if not domain_doc:
+            system_settings = await db.system_settings.find_one({"key": "platform_domain"})
+            admin_domain = system_settings.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if system_settings else None
+            
+            # Check stats domain
+            stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+            stats_domain = stats_domain_doc.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if stats_domain_doc else None
+            
+            # If domain is admin or stats, show API info
+            if host in [admin_domain, stats_domain]:
+                return {
+                    "name": settings.APP_NAME,
+                    "version": settings.APP_VERSION,
+                    "status": "running",
+                    "docs": "/docs",
+                }
+            
+            # If domain is not registered anywhere, close connection
+            return Response(content=b"", status_code=444, headers={"Connection": "close"})
+        
+        # If it's a registered redirection domain
+        if domain_doc:
+            domain_type = domain_doc.get("domain_type", "")
+            
+            # If it's an inter or prelander domain accessed directly, redirect
+            if domain_type in ("inter", "intermediate", "prelander", "last"):
+                # Try to get referrer
+                referrer = request.headers.get("referer") or request.headers.get("referrer")
+                if referrer and not referrer.startswith(f"http://{host}") and not referrer.startswith(f"https://{host}"):
+                    # Redirect to referrer if it's not from the same domain
+                    return RedirectResponse(url=referrer, status_code=302)
+                else:
+                    # Fallback to Google
+                    return RedirectResponse(url="https://google.com", status_code=302)
+            
+            # For anchor domains, show API info
+            return {
+                "name": settings.APP_NAME,
+                "version": settings.APP_VERSION,
+                "status": "running",
+                "docs": "/docs",
+            }
+    
+    # Default response
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "status": "running",
         "docs": "/docs",
     }
+
+
+# Catch-all fallback for unknown/unregistered domains
+@app.api_route("/{path:path}", methods=["GET", "POST"], tags=["Fallback"], include_in_schema=False)
+async def domain_fallback(request: Request, path: str):
+    """
+    Fallback handler for:
+    1. Unregistered domains pointing to our server - return connection closed (444)
+    2. Inter/prelander domains accessed directly - redirect to referrer or Google
+    
+    Any domain pointing to our server that's not added in admin panel will show no response.
+    """
+    from fastapi.responses import RedirectResponse, Response
+    from app.database import get_database
+    
+    # Get the host
+    host = request.headers.get("host", "").lower().split(":")[0]
+    
+    # Skip if it's localhost or internal
+    if host in ("localhost", "127.0.0.1", "0.0.0.0") or host.startswith("192.168."):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    
+    # Check if this domain is registered in admin panel
+    db = get_database()
+    if db:
+        # Check redirection_domains
+        domain_doc = await db.redirection_domains.find_one({"domain": host, "status": "active"})
+        
+        # Also check if it's configured as admin/portal domain
+        if not domain_doc:
+            system_settings = await db.system_settings.find_one({"key": "platform_domain"})
+            admin_domain = system_settings.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if system_settings else None
+            
+            # Check stats domain
+            stats_domain_doc = await db.system_settings.find_one({"key": "stats_domain"})
+            stats_domain = stats_domain_doc.get("value", "").replace("https://", "").replace("http://", "").split("/")[0] if stats_domain_doc else None
+            
+            # If domain is not registered anywhere, close connection (Nginx 444 equivalent)
+            if host not in [admin_domain, stats_domain]:
+                # Return empty response with 444 status (Nginx convention for "connection closed without response")
+                # FastAPI doesn't support 444, so we use 403 with empty body
+                return Response(content=b"", status_code=444, headers={"Connection": "close"})
+        
+        # If it's a registered redirection domain
+        if domain_doc:
+            domain_type = domain_doc.get("domain_type", "")
+            
+            # If it's an inter or prelander domain accessed directly, redirect
+            if domain_type in ("inter", "intermediate", "prelander", "last"):
+                # Try to get referrer
+                referrer = request.headers.get("referer") or request.headers.get("referrer")
+                if referrer and not referrer.startswith(f"http://{host}") and not referrer.startswith(f"https://{host}"):
+                    # Redirect to referrer if it's not from the same domain
+                    return RedirectResponse(url=referrer, status_code=302)
+                else:
+                    # Fallback to Google
+                    return RedirectResponse(url="https://google.com", status_code=302)
+    
+    # Database unavailable or other cases - return empty response
+    return Response(content=b"", status_code=444, headers={"Connection": "close"})

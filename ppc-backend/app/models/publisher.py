@@ -41,6 +41,9 @@ class Publisher(BaseModel):
     payment_details: Optional[str] = None
     is_admin_created: bool = False  # True if created by admin, False if self-registered
     created_by: Optional[str] = None  # Admin ID who created this publisher (if is_admin_created=True)
+    # Security question for admin password changes (admin accounts only)
+    security_question: Optional[str] = None  # The security question text
+    security_answer_hash: Optional[str] = None  # Hashed answer (NEVER store plain text)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = None

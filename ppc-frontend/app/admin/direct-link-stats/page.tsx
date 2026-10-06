@@ -219,6 +219,7 @@ export default function DirectLinkStatsPage() {
       // columns render.
       if (domainsResult.status === 'fulfilled') {
         const domainsData = domainsResult.value.data?.publisher_domains ?? []
+        console.log('[DirectLinkStats] Publisher domains data:', domainsData.slice(0, 2)) // Log first 2 for debugging
         const domainsMap: Record<string, any> = {}
         domainsData.forEach((pd: any) => {
           domainsMap[pd.publisher_id] = {
@@ -227,6 +228,7 @@ export default function DirectLinkStatsPage() {
             clicks: pd.clicks || { total: 0, today: 0, today_conversions: 0 },
           }
         })
+        console.log('[DirectLinkStats] Domains map sample:', Object.entries(domainsMap).slice(0, 2))
         setPublisherDomains(domainsMap)
       }
 
@@ -254,6 +256,14 @@ export default function DirectLinkStatsPage() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Auto-refresh every 30 seconds for real-time data
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadData()
+    }, 30000) // 30 seconds
+    return () => clearInterval(interval)
+  }, [loadData])
 
   // Load saved stats domain setting
   useEffect(() => {
@@ -438,11 +448,37 @@ export default function DirectLinkStatsPage() {
       // populated) link counters so legacy data still shows when present.
       const linkClicks = activeLinks.reduce((s, l) => s + (l.total_clicks || 0), 0)
       const totalClicks = Math.max(clickStats.total || 0, linkClicks)
-      const totalConversions = activeLinks.reduce((s, l) => s + (l.total_conversions || 0), 0)
-      const todayConversions = Math.max(
-        clickStats.today_conversions || 0,
-        activeLinks.reduce((s, l) => s + (l.today_conversions || 0), 0),
-      )
+      
+      // CONVERSIONS: Use real data from backend (includes manual conversions)
+      const totalConversions = clickStats.total_conversions || 0
+      const todayConversions = clickStats.today_conversions || 0
+      
+      const assignedDomains = {
+        anchor: dom.anchor || [],
+        inter: dom.inter || [],
+        prelander: dom.prelander || [],
+      }
+      
+      // Get the stats domain from the publisher's direct link
+      const pubLink = links.find(l => l.publisher_id === pub.id)
+      const statsDomain = pubLink?.stats_domain || null
+      
+      // Debug log for first publisher to verify data structure
+      if (pub.id === paginatedPublishers[0]?.id) {
+        console.log('[DirectLinkStats] First publisher domain data:', {
+          pubId: pub.id,
+          pubName: pub.name,
+          domData: dom,
+          clickStats,
+          totalClicks,
+          totalConversions,
+          todayConversions,
+          assignedDomains,
+          statsDomain,
+          pubLink: pubLink ? { id: pubLink.id, stats_domain: pubLink.stats_domain } : null,
+        })
+      }
+      
       return {
         ...pub,
         linkCount: activeLinks.length,  // only count active links
@@ -452,6 +488,8 @@ export default function DirectLinkStatsPage() {
         totalConversions,
         todayConversions,
         todayClicks: clickStats.today || 0,
+        assignedDomains,
+        statsDomain, // Add stats domain to publisher stats
         cr: totalClicks > 0 ? (totalConversions / totalClicks * 100) : 0,
       }
     })
@@ -677,6 +715,7 @@ export default function DirectLinkStatsPage() {
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Conversions</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Today</th>
                     <th className="px-3 py-3 text-right text-[10px] font-semibold text-gray-500 uppercase tracking-wider">CR</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Assigned Domain</th>
                     <th className="px-3 py-3 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -744,6 +783,49 @@ export default function DirectLinkStatsPage() {
                         }`}>
                           {pub.cr.toFixed(2)}%
                         </span>
+                      </td>
+
+                      {/* Assigned Domains — show stats domain if set */}
+                      <td className="px-3 py-4">
+                        {(() => {
+                          // First check for stats domain (dedicated stats domain)
+                          if (pub.statsDomain) {
+                            return (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border bg-blue-50 border-blue-100 text-blue-700">
+                                  S
+                                </span>
+                                <span className="text-xs text-gray-800 font-mono truncate max-w-[180px]" title={pub.statsDomain}>
+                                  {pub.statsDomain}
+                                </span>
+                              </div>
+                            )
+                          }
+                          
+                          // Fall back to assigned redirection domains
+                          const a = pub.assignedDomains || { anchor: [], inter: [], prelander: [] }
+                          const entries = [
+                            { label: 'A', domains: a.anchor, cls: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
+                            { label: 'I', domains: a.inter, cls: 'bg-purple-50 border-purple-100 text-purple-700' },
+                            { label: 'P', domains: a.prelander, cls: 'bg-teal-50 border-teal-100 text-teal-700' },
+                          ]
+                          const hasAny = entries.some(e => e.domains.length > 0)
+                          if (!hasAny) {
+                            return <span className="text-xs text-gray-300 italic">No domain</span>
+                          }
+                          return (
+                            <div className="flex flex-col gap-1 max-w-[200px]">
+                              {entries.filter(e => e.domains.length > 0).map(e => (
+                                <div key={e.label} className="flex items-center gap-1.5 min-w-0">
+                                  <span className={`inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold border flex-shrink-0 ${e.cls}`}>{e.label}</span>
+                                  <span className="text-xs text-gray-600 truncate" title={e.domains.join(', ')}>
+                                    {e.domains.length === 1 ? e.domains[0] : `${e.domains[0]} +${e.domains.length - 1}`}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </td>
 
                       {/* Actions */}

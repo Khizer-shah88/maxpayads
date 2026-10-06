@@ -278,8 +278,7 @@ for (const configured of ['https://fallback.example/previous', '', 'javascript:a
     });
     const response = await middleware(new next.NextRequest('https://landing.example/prelander-fallback?url=https://untrusted.example/'));
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), configured === 'https://fallback.example/previous'
-      ? configured : 'https://www.google.com/');
+    assert.equal(response.headers.get('location'), 'https://www.google.com/');
     assert.equal(response.headers.get('cache-control'), 'no-store, private');
     assert.equal(response.headers.get('x-sd'), null);
   });
@@ -301,17 +300,35 @@ for (const site of ['none', 'cross-site', 'same-site', 'same-origin']) {
   });
 }
 
+<<<<<<< HEAD
 test('clean-root flow never opts into legacy service-worker navigation', async () => {
+=======
+test('inter root never renders the portal shell and falls back immediately', async () => {
+  const b = await runRoot({
+    check: new Response('{"role":"inter"}'),
+    referrer: 'https://facebook.com/',
+  });
+  assert.equal(b.response.status, 403);
+  assert.deepEqual(b.events, [['replace', 'https://facebook.com/']]);
+});
+
+test('view-source requests are redirected back to the regular page with a permanent redirect on prelander domains only', async () => {
+>>>>>>> 28bf1b75a66502a8c3d830b856b6cf55655ad76e
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {
     'next/server': next, '@/lib/prelander-session': session,
     '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
   }, {
     process: { env: { ENABLE_SOURCE_DETERRENT: 'true' } },
-    async fetch(url) {
-      return new Response(url.includes('/domain-access') ? '{"role":"prelander"}' : '{"authorized":true}');
+    async fetch(url, init) {
+      const host = init?.headers ? new Headers(init.headers).get('host') || '' : '';
+      if (url.includes('/domain-access')) {
+        return new Response(JSON.stringify({ role: host.includes('inter.example') ? 'inter' : 'prelander' }));
+      }
+      return new Response('{"authorized":true}');
     },
   });
+<<<<<<< HEAD
   for (const path of ['/', '/d/h_ticket', '/d/session', '/clean-shell']) {
     const response = await middleware(new next.NextRequest(`https://landing.example${path}`, {
       headers: { cookie: 'mpa_pls=valid' },
@@ -319,7 +336,22 @@ test('clean-root flow never opts into legacy service-worker navigation', async (
     assert.equal(response.status, path === '/' ? 204 : 200);
     assert.equal(response.headers.get('x-sd'), null, path);
   }
+=======
+
+  const response = await middleware(new next.NextRequest('view-source:https://landing.example/prelander', {
+    headers: { host: 'landing.example' },
+  }));
+  assert.equal(response.status, 301);
+  assert.equal(response.headers.get('location'), 'https://landing.example/prelander');
+  assert.equal(response.headers.get('cache-control'), 'no-store, private');
+
+  const inter = await middleware(new next.NextRequest('view-source:https://inter.example/', {
+    headers: { host: 'inter.example' },
+  }));
+  assert.equal(inter.status, 200);
+>>>>>>> 28bf1b75a66502a8c3d830b856b6cf55655ad76e
 });
+
 
 for (const site of ['none', 'cross-site', 'same-site', 'same-origin']) {
   test(`Inter ticket reached from a smartlink is not rejected by navigation metadata: ${site}`, async () => {

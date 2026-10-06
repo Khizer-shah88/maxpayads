@@ -465,15 +465,43 @@ async def stage_record_click(ctx: RedirectResolutionContext, db) -> bool:
     # The background task will update earnings/CPC but status should be correct from the start
     final_status = "valid" if is_click_valid else ctx.click_status
     
+    # For valid clicks, calculate CPC immediately so Statistics shows accurate values
+    # This adds ~10-20ms to redirect time but ensures real-time accuracy
+    cpc = 0.0
+    earnings = 0.0
+    
+    if is_click_valid:
+        try:
+            from app.services.cpc_engine import calculate_cpc
+            cpc = await calculate_cpc(
+                ctx.publisher_id,
+                ctx.country_code,
+                ctx.device_type,
+                db
+            )
+            # Get publisher revenue share for earnings calculation
+            try:
+                from bson import ObjectId
+                publisher = await db.publishers.find_one({"_id": ObjectId(ctx.publisher_id)})
+            except Exception:
+                publisher = await db.publishers.find_one({"_id": ctx.publisher_id})
+            
+            revenue_share = publisher.get("revenue_share", 1.0) if publisher else 1.0
+            earnings = round(cpc * revenue_share, 6)
+        except Exception as e:
+            logger.warning(f"Immediate CPC calculation failed: {e}, will be retried in background")
+            # Fallback to background task calculation
+            pass
+    
     click_data.update({
         "status": final_status,
         "is_valid": is_click_valid,
         "fraud_reason": ctx.fraud_reason,
         "fraud_score": ctx.fraud_score,
         "traffic_classification": ctx.traffic_classification,
-        "cpc": 0.0,
-        "earnings": 0.0,
-        "processed": ctx.is_blocked or ctx.is_flagged,
+        "cpc": cpc,
+        "earnings": earnings,
+        "processed": ctx.is_blocked or ctx.is_flagged or is_click_valid,  # Mark as processed if CPC was calculated
         "timestamp": ctx.started_at,
     })
     ctx.click_document = click_data
@@ -489,7 +517,17 @@ async def stage_record_click(ctx: RedirectResolutionContext, db) -> bool:
     ctx.record(
         STAGE_RECORD, "recorded",
         click_id=ctx.click_id, status=ctx.click_status, publisher_id=ctx.publisher_id,
+        cpc=cpc, earnings=earnings,
     )
+    
+    # Update publisher balance immediately if CPC was calculated
+    if is_click_valid and cpc > 0:
+        try:
+            from app.services.publisher_service import update_publisher_balance
+            await update_publisher_balance(ctx.publisher_id, cpc, earnings, db)
+        except Exception as e:
+            logger.warning(f"Failed to update publisher balance: {e}")
+    
     return True
 
 

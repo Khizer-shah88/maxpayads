@@ -4,12 +4,12 @@ Public ID Utilities
 Generate and resolve unique human-readable public IDs for publishers and websites.
 
 Format:
-- Publishers: PUB_XXXXXXXX (e.g., PUB_A1B2C3D4)
-- Websites: SITE_XXXXXXXX (e.g., SITE_X7Y8Z9W0)
+- Publishers: XXXXXXXX (e.g., A1B2C3D4, no prefix)
+- Websites: XXXXXXXX (e.g., X7Y8Z9W0, no prefix)
 
 Public IDs are:
 - Unique across their collection
-- URL-safe (uppercase letters + digits)
+- URL-safe (uppercase + lowercase letters + digits)
 - Human-readable
 - 8 characters random part
 """
@@ -26,8 +26,8 @@ from app.cache.kv_cache import cached_json
 logger = logging.getLogger(__name__)
 
 # Constants
-PUB_PREFIX = ""  # Remove prefix - just use random hash
-SITE_PREFIX = "SITE"  # Keep SITE prefix for websites
+PUB_PREFIX = ""  # No prefix - just use random hash
+SITE_PREFIX = ""  # No prefix for websites either - just random hash
 ID_LENGTH = 8
 # Larger alphabet (upper + lower + digits) makes the random part of each public
 # ID far harder to guess/brute-force than the original uppercase-only 36-char
@@ -177,14 +177,15 @@ async def resolve_website_id(db, identifier: str) -> Optional[str]:
     Resolve a website identifier to internal MongoDB _id.
     Accepts:
     - MongoDB ObjectId string
-    - Public ID (SITE_XXXXXXXX)
+    - Public ID (8-character alphanumeric, no prefix)
+    - Legacy Public ID (SITE_XXXXXXXX format)
     
     Returns internal _id string or None if not found.
     """
     from bson import ObjectId
     
-    # Try public_id lookup first
-    if identifier.startswith(SITE_PREFIX):
+    # Try public_id lookup first (both new and legacy formats)
+    if (len(identifier) == ID_LENGTH and identifier.replace('_', '').isalnum()) or identifier.startswith("SITE_"):
         website = await db.websites.find_one({"public_id": identifier})
         if website:
             return str(website["_id"])
@@ -246,14 +247,14 @@ def is_public_id_format(identifier: str, id_type: str = "any") -> bool:
         return False
     
     if id_type == "publisher":
-        # New format: 8-character alphanumeric hash OR legacy PUB_ format
+        # 8-character alphanumeric hash OR legacy PUB_ format
         return (len(identifier) == 8 and identifier.isalnum()) or identifier.startswith("PUB_")
     elif id_type == "website":
-        # Check prefix and minimum reasonable length (at least 7 chars after prefix)
-        return identifier.startswith(f"{SITE_PREFIX}_") and len(identifier) >= len(SITE_PREFIX) + 1 + 7
+        # 8-character alphanumeric hash (no prefix) OR legacy SITE_ format
+        return (len(identifier) == 8 and identifier.isalnum()) or identifier.startswith("SITE_")
     else:  # any
         return (
-            (len(identifier) == 8 and identifier.isalnum()) or  # New publisher format
+            (len(identifier) == 8 and identifier.isalnum()) or  # New format (pub or site)
             identifier.startswith("PUB_") or  # Legacy publisher format
-            identifier.startswith(f"{SITE_PREFIX}_")  # Website format
+            identifier.startswith("SITE_")  # Legacy website format
         )

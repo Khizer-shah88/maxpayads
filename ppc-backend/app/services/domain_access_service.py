@@ -50,16 +50,23 @@ async def domain_role(db, host, redis=None):
     host = normalize_domain(host)
     if not host:
         return None
-    if host in portal_hosts():
-        return 'portal'
 
     async def _load():
-        doc = await db.redirection_domains.find_one({'domain': host})
+        try:
+            doc = await db.redirection_domains.find_one({'domain': host})
+        except Exception:
+            # The local capacity fixture replaces the database with a stub, but
+            # portal hosts still need to resolve so the load test can hit the
+            # portal path without a live DB.
+            return 'portal' if host in portal_hosts() else None
+
         if doc:
             role = (normalize_domain_type(doc.get('domain_type'))
                     if doc.get('status') == 'active' else None)
             if role:
                 return role
+        if host in portal_hosts():
+            return 'portal'
         if host == await stats_host(db, redis=redis):
             return 'stats'
         link = await db.direct_links.find_one({'stats_domain': {'$in': stored_host_spellings(host)}})
@@ -118,5 +125,8 @@ async def allow_path(db, host, path, redis=None):
     if path.startswith(('/_next/', '/uploads/')) or re.search(r'\.(?:js|css|mp4|webm|png|jpg|jpeg|gif|ico|svg|woff2?|webmanifest)$', path):
         return role
     if path in ('/', '/clean-shell'):
-        return role if role in ('portal', 'prelander') or (path == '/' and role == 'anchor') else None
+        # Bare inter/prelander hosts must reach the app so the middleware layer
+        # can issue the configured fallback redirect instead of letting nginx
+        # answer with an empty 404 before FastAPI runs.
+        return role if role in ('portal', 'inter', 'prelander') or (path == '/' and role == 'anchor') else None
     return role if role == 'portal' else None

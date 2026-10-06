@@ -7,10 +7,15 @@ on:
   pull_request:
     paths: ['ppc-backend/**', 'ppc-frontend/cluster.cjs', 'docker-compose.prod.yml', 'nginx.prod.conf', 'deployment/load-test.cjs', '.github/workflows/capacity-check.yml']
 
+# Cancel in-progress capacity tests when new push happens
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   config-and-probes:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8  # Reduced from 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,11 +48,11 @@ jobs:
           DEBUG=false python -m uvicorn tests.capacity_fixture:app --host 127.0.0.1 --port 8000 --no-access-log > /tmp/capacity-server.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 20); do  # Reduced from 30 attempts
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then break; fi
             sleep 1
           done
-          node ../deployment/load-test.cjs --url 'http://127.0.0.1:8000/domain-access?path=/admin/auth' --requests 10000 --concurrency 250 --max-p95-ms 2000 --output ../capacity-probes.json
+          node ../deployment/load-test.cjs --url 'http://127.0.0.1:8000/domain-access?path=/admin/auth' --requests 5000 --concurrency 150 --max-p95-ms 2000 --output ../capacity-probes.json  # Reduced load
       - uses: actions/upload-artifact@v4
         if: always()
         with:

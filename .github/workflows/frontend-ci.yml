@@ -12,9 +12,15 @@ on:
       - 'ppc-frontend/**'
       - '.github/workflows/frontend-ci.yml'
 
+# Cancel in-progress runs when a new push happens
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     defaults:
       run:

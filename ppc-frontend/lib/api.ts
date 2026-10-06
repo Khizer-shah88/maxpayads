@@ -99,8 +99,9 @@ export const adminApi = {
     api.patch(`/admin/redirection-domains/${id}/status`, { status }),
   deleteRedirectionDomain: (id: string) => api.delete(`/admin/redirection-domains/${id}`),
   verifyRedirectionDomainDns: (id: string) => api.post(`/admin/redirection-domains/${id}/verify-dns`),
-  changePassword: (current_password: string, new_password: string) =>
-    api.post('/admin/change-password', { current_password, new_password }),
+  getSecurityQuestion: () => api.get('/admin/security-question'),
+  changePassword: (current_password: string, security_answer: string, new_password: string) =>
+    api.post('/admin/change-password', { current_password, security_answer, new_password }),
   createPublisher: (data: object) => api.post('/admin/publishers', data),
   createManualPublisher: (data: object) => api.post('/admin/publishers/manual', data),
   getPublisherSmartlink: (id: string, structureId?: string) =>

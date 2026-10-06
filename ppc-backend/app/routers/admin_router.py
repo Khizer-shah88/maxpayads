@@ -928,28 +928,98 @@ async def change_password(
     current_user: dict = Depends(get_current_admin),
     db=Depends(get_db),
 ):
-    """Change admin password."""
+    """
+    Change admin password with security question verification.
+    
+    Requires:
+    - current_password: Current admin password
+    - security_answer: Answer to the configured security question
+    - new_password: New password (min 8 characters)
+    
+    Security: Both current password and security answer must be correct.
+    """
     current_password = data.get("current_password", "")
+    security_answer = data.get("security_answer", "")
     new_password = data.get("new_password", "")
+    
+    # Validate required fields
     if not current_password or not new_password:
         raise HTTPException(status_code=400, detail="Current and new password are required")
+    if not security_answer:
+        raise HTTPException(status_code=400, detail="Security question answer is required")
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
 
-    # Re-fetch the full publisher document to get password_hash
-    # (get_current_user strips password_hash before returning)
-    full_user = await db.publishers.find_one(
-        {"_id": ObjectId(current_user["id"]) if not isinstance(current_user["id"], ObjectId) else current_user["id"]}
-    )
+    # Re-fetch the full publisher document to get password_hash and security_answer_hash
+    # (get_current_user strips sensitive fields before returning)
+    admin_id = current_user["id"]
+    # Handle both string IDs (like "admin_001") and ObjectId
+    try:
+        if isinstance(admin_id, str) and len(admin_id) == 24:
+            admin_id = ObjectId(admin_id)
+    except:
+        pass  # Keep as string if conversion fails
+    
+    full_user = await db.publishers.find_one({"_id": admin_id})
     if not full_user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Verify current password
     if not await run_in_threadpool(verify_password, current_password, full_user.get("password_hash", "")):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Password change failed for {full_user.get('email')}: Current password incorrect")
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
+    # Verify security answer
+    security_answer_hash = full_user.get("security_answer_hash")
+    if not security_answer_hash:
+        raise HTTPException(status_code=400, detail="Security question not configured for this account. Please contact administrator.")
+    
+    # Normalize answer: lowercase and strip whitespace for comparison
+    normalized_answer = security_answer.strip().lower()
+    
+    # Log for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Password change attempt for {full_user.get('email')} - answer length: {len(normalized_answer)}")
+    
+    if not await run_in_threadpool(verify_password, normalized_answer, security_answer_hash):
+        logger.warning(f"Password change failed for {full_user.get('email')}: Security answer incorrect")
+        raise HTTPException(status_code=400, detail="Security answer is incorrect")
+
+    # All validations passed - update password
     new_hash = await run_in_threadpool(hash_password, new_password)
     await db.publishers.update_one(
         {"_id": full_user["_id"]},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}},
     )
     return {"success": True, "message": "Password changed successfully"}
+
+
+@router.get("/security-question")
+async def get_security_question(
+    current_user: dict = Depends(get_current_admin),
+    db=Depends(get_db),
+):
+    """
+    Get the security question for the current admin.
+    Returns only the question text, never the answer.
+    """
+    from app.config import settings
+    
+    admin_id = current_user["id"]
+    # Handle both string IDs (like "admin_001") and ObjectId
+    try:
+        if isinstance(admin_id, str) and len(admin_id) == 24:
+            admin_id = ObjectId(admin_id)
+    except:
+        pass  # Keep as string if conversion fails
+    
+    full_user = await db.publishers.find_one({"_id": admin_id})
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Use question from database if set, otherwise use config default
+    security_question = full_user.get("security_question", settings.ADMIN_SECURITY_QUESTION)
+    return {"success": True, "question": security_question}

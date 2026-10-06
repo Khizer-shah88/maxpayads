@@ -290,7 +290,7 @@ export default function PublishersPage() {
     },
     {
       key: 'custom_cpc',
-      label: 'CPL',
+      label: 'CPC',
       render: (p: Publisher) => (
         <span className="font-mono text-gray-700">
           ${(p.custom_cpc != null && p.custom_cpc !== undefined ? Number(p.custom_cpc) : 0.0).toFixed(2)}
@@ -456,7 +456,7 @@ export default function PublishersPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-1">Custom CPL (CPC)</label>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">Custom CPC</label>
                   <input type="number" step="0.001" min="0" value={addForm.custom_cpc}
                     onChange={e => setAddForm(p => ({ ...p, custom_cpc: e.target.value }))}
                     placeholder="0.0" className={inp} />

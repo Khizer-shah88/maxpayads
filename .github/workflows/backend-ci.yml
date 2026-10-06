@@ -12,10 +12,15 @@ on:
       - 'ppc-backend/**'
       - '.github/workflows/backend-ci.yml'
 
+# Cancel in-progress runs when a new push happens
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15          # hard ceiling — kills the job if tests hang
+    timeout-minutes: 10          # Reduced from 15 minutes
 
     defaults:
       run:
@@ -47,7 +52,7 @@ jobs:
           --health-cmd "mongosh --eval 'db.adminCommand({ ping: 1 })'"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 3
 
       redis:
         image: redis:7.2-alpine
@@ -57,7 +62,7 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 3
 
     steps:
       - name: Checkout repository

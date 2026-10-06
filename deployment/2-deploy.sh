@@ -87,6 +87,9 @@ FRONTEND_PROBE_HOST="${PORTAL_HOSTNAMES%%,*}"
 # ── Create uploads directory ─────────────────────────────────────────────────
 mkdir -p "$APP_DIR/ppc-backend/uploads"
 
+# Return to app directory for docker-compose
+cd "$APP_DIR"
+
 # ── Validate Compose ─────────────────────────────────────────────────────────
 echo "Validating Docker Compose configuration..."
 
@@ -228,6 +231,22 @@ else
     echo "Frontend: NOT READY after probing http://${FRONTEND_PROBE_HOST} (and https)"
     exit 1
   fi
+fi
+
+# ── Setup admin security question (inside FastAPI container) ────────────────
+echo ""
+echo "--- Security Question Setup ---"
+echo "Waiting for MongoDB to be fully ready..."
+sleep 5
+if docker exec ppc_fastapi python scripts/auto_setup_security_question.py 2>&1 | tee /tmp/security_setup.log; then
+  echo "Security question setup completed"
+else
+  echo "⚠️  Security question setup failed"
+  echo "Logs:"
+  cat /tmp/security_setup.log
+  echo ""
+  echo "To configure manually after deployment:"
+  echo "  docker exec ppc_fastapi python scripts/auto_setup_security_question.py"
 fi
 
 echo ""
