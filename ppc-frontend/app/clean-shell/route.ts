@@ -67,11 +67,10 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     }
     
     // PREVENT AUTOMATIC DOWNLOADS ON PAGE LOAD/RELOAD
-    // Block window.open, location changes, and link clicks for first 500ms
+    // Block window.open (which triggers downloads) for first 500ms
+    // but allow location.replace (used for legitimate redirects)
     var loadTime = Date.now()
     var originalOpen = window.open
-    var originalAssign = location.assign
-    var originalReplace = location.replace
     
     window.open = function() {
       if (Date.now() - loadTime < 500) {
@@ -79,22 +78,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
         return null
       }
       return originalOpen.apply(window, arguments)
-    }
-    
-    location.assign = function(url) {
-      if (Date.now() - loadTime < 500 && url !== '/') {
-        console.log('[PRELANDER] Blocked automatic location.assign on page load')
-        return
-      }
-      return originalAssign.call(location, url)
-    }
-    
-    location.replace = function(url) {
-      if (Date.now() - loadTime < 500 && url !== '/') {
-        console.log('[PRELANDER] Blocked automatic location.replace on page load')
-        return
-      }
-      return originalReplace.call(location, url)
     }
     
     var deny = (${returnToPreviousPage.toString()})
