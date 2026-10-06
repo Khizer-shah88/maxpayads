@@ -174,6 +174,24 @@ def test_minify_html():
     assert "<h1>Hello</h1>" in minified
 
 
+def test_minify_html_preserves_template_css_and_text_spacing():
+    """Prelander minification must not break CSS selectors or visible copy."""
+    html = """
+    <style>
+      .card h1 { margin: 0 auto; }
+      @media (max-width: 600px) { .card h1 { font-size: 20px; } }
+    </style>
+    <div class="card"><h1>Download Now</h1><p>Choose an option below to continue.</p></div>
+    """
+
+    minified = minify_html(html)
+
+    assert ".card h1{margin:0 auto;}" in minified
+    assert "@media (max-width:600px)" in minified
+    assert "<h1>Download Now</h1>" in minified
+    assert "Choose an option below to continue." in minified
+
+
 def test_obfuscation_preserves_redirect():
     """Test that obfuscation doesn't break redirect functionality."""
     original_js = """

@@ -194,24 +194,22 @@ def obfuscate_html_javascript(html: str, aggressive: bool = True) -> str:
 
 def minify_html(html: str) -> str:
     """
-    Aggressive HTML and CSS minification to make view-source completely unreadable.
-    Removes all whitespace, newlines, titles, and makes CSS/HTML structure unreadable.
+    Minify HTML and CSS without changing rendered content or CSS semantics.
+
+    Whitespace is meaningful in CSS descendant selectors and multi-value
+    declarations, and in HTML text nodes between words. Only whitespace
+    between tags is removed.
     """
     try:
         # Remove all HTML comments (except IE conditional comments)
         html = re.sub(r'<!--(?!\[if).*?-->', '', html, flags=re.DOTALL)
-        
-        # Remove or empty the title tag to hide page purpose
-        html = re.sub(r'<title[^>]*>.*?</title>', '<title></title>', html, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Minify CSS inside <style> tags - remove ALL whitespace and newlines
+
+        # Minify CSS while retaining whitespace required by selectors and
+        # values such as `margin: 0 auto`.
         def minify_css(match):
             css = match.group(1)
-            # Remove all comments
             css = re.sub(r'/\*.*?\*/', '', css, flags=re.DOTALL)
-            # Remove ALL whitespace including newlines
-            css = re.sub(r'\s+', '', css)
-            # Remove spaces around specific CSS characters
+            css = re.sub(r'\s+', ' ', css).strip()
             css = re.sub(r'\s*([{}:;,])\s*', r'\1', css)
             return f'<style>{css}</style>'
         
@@ -219,17 +217,11 @@ def minify_html(html: str) -> str:
         
         # Remove ALL whitespace between tags
         html = re.sub(r'>\s+<', '><', html)
-        
-        # Remove ALL newlines
+
+        # Newlines outside tags are now only formatting whitespace. Do not
+        # collapse text-node spaces: labels and sentences must remain readable.
         html = re.sub(r'\n', '', html)
-        
-        # Collapse ALL multiple spaces to single space
-        html = re.sub(r'\s{2,}', '', html)
-        
-        # Remove spaces around tag boundaries
-        html = re.sub(r'\s*<\s*', '<', html)
-        html = re.sub(r'\s*>\s*', '>', html)
-        
+
         return html.strip()
     
     except Exception as e:
