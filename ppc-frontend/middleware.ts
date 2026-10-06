@@ -239,8 +239,8 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // 0.  PORTAL HOSTNAME GATE — redirection domains must never serve the portal
   // ════════════════════════════════════════════════════════════════════════════
-  # Only the registered Prelander role uses the clean-root/arrival policy.
-  if role === 'prelander' && pathname === '/') {
+  // Only the registered Prelander role uses the clean-root/arrival policy.
+  if (role === 'prelander' && pathname === '/') {
     // The arrival document changes its visible URL to / without fetching it.
     // Later document requests (including view-source and reload) have no new
     // content to commit. Never authorize this root using the shared cookie.
