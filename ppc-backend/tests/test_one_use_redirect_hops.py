@@ -71,7 +71,7 @@ async def test_full_chain_consumes_each_inter_then_final_handoff(monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url='https://last.example', headers={'user-agent': 'Browser'}) as client:
         path = '/prelander' + urlparse(final).path
         arrival = await client.get(path)
-        assert arrival.status_code == 302 and arrival.headers['location'] == '/?_s=1'
+        assert arrival.status_code == 302 and arrival.headers['location'] == '/d/session'
         assert auth.PL_SESSION_COOKIE in arrival.cookies
         assert (await client.get(path)).status_code == 403
         assert (await client.get('/prelander/session-check')).status_code == 200
