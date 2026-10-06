@@ -43,7 +43,9 @@ function browser({ referrer = '', historyLength = 1, marker = null, storageBlock
   const root = { hidden: true, style: {}, addEventListener() {}, replaceChildren(...children) { this.children = children; } };
   const location = { hostname: 'landing.example', pathname: '/', search: '',
     replace(url) { events.push(['replace', url]); } };
-  const history = { length: historyLength, back() { throw Error('Back can close an in-app browser'); } };
+  const history = { length: historyLength,
+    replaceState(_state, _title, url) { location.pathname = url; location.search = ''; },
+    back() { throw Error('Back can close an in-app browser'); } };
   const document = {
     referrer, title: '', getElementById: () => root,
     querySelector: () => null,
@@ -196,7 +198,8 @@ test('concurrent React effects consume one arrival', async () => {
   assert.deepEqual(b.events, [['fetch', '/api/prelander/claim']]);
 });
 
-async function runRoot({ cookie = '', check = new Response('{"authorized":true}'), ...options } = {}) {
+async function runRoot({ cookie = '', path = '/', role = 'prelander', headers = {},
+  check = new Response('{"authorized":true}'), ...options } = {}) {
   const b = browser(options);
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {
@@ -204,13 +207,13 @@ async function runRoot({ cookie = '', check = new Response('{"authorized":true}'
     '@/lib/entry-guard': loadModule('lib/entry-guard.ts'),
   }, {
     async fetch(url) {
-      if (url.includes('/domain-access')) return new Response('{"role":"prelander"}');
+      if (url.includes('/domain-access')) return new Response(JSON.stringify({ role }));
       b.events.push(['server-fetch', url]);
       return check;
     },
   });
-  const response = await middleware(new next.NextRequest('https://landing.example/', {
-    headers: cookie ? { cookie } : {},
+  const response = await middleware(new next.NextRequest(`https://landing.example${path}`, {
+    headers: { ...headers, ...(cookie ? { cookie } : {}) },
   }));
   if (response.status === 503) {
     assert.match(await response.text(), /Session expired or unavailable/);
@@ -226,27 +229,38 @@ async function runRoot({ cookie = '', check = new Response('{"authorized":true}'
   return { ...b, response };
 }
 
-test('incognito root with no cookies uses fallback without a session request or expiry UI', async () => {
-  const b = await runRoot({ historyLength: 2, storageBlocked: true });
-  assert.equal(b.response.status, 403);
-  assert.deepEqual(b.events, [['replace', '/prelander-fallback']]);
+for (const cookie of ['', 'mpa_pls=valid', 'mpa_pls=expired']) {
+  test(`clean root returns empty uncached 204 regardless of session: ${cookie || 'private browser'}`, async () => {
+    const b = await runRoot({ cookie, storageBlocked: true, headers: { 'sec-fetch-site': 'none' } });
+    assert.equal(b.response.status, 204);
+    assert.equal(await b.response.text(), '');
+    assert.equal(b.response.headers.get('location'), null);
+    assert.equal(b.response.headers.get('x-sd'), null);
+    assert.match(b.response.headers.get('content-type'), /text\/html/);
+    assert.match(b.response.headers.get('cache-control'), /no-store/);
+    assert.deepEqual(b.events, []);
+  });
+}
+
+test('portal root remains a normal page', async () => {
+  const b = await runRoot({ role: 'portal' });
+  assert.equal(b.response.status, 200);
+  assert.equal(b.response.headers.get('x-middleware-next'), '1');
 });
 
-test('fresh incognito root with no previous entry uses configured fallback', async () => {
-  const b = await runRoot();
-  assert.deepEqual(b.events, [['replace', '/prelander-fallback']]);
-});
+for (const path of ['/d/session', '/clean-shell']) {
+  test(`entry requires a valid cookie: ${path}`, async () => {
+    assert.equal((await runRoot({ path })).response.status, 403);
+    const expired = await runRoot({ path, cookie: 'mpa_pls=expired', check: new Response('{}', { status: 403 }) });
+    assert.equal(expired.response.status, 403);
+    assert.equal(expired.response.headers.get('x-middleware-rewrite'), null);
+  });
+}
 
-test('expired root cookie takes the same previous-page fallback', async () => {
-  const b = await runRoot({ cookie: 'mpa_pls=expired', historyLength: 2, check: new Response('{}', { status: 403 }) });
-  assert.equal(b.response.status, 403);
-  assert.equal(b.events[0][0], 'server-fetch');
-  assert.deepEqual(b.events[1], ['replace', '/prelander-fallback']);
-});
-
-test('cookie-less root returns to a known previous website without touching history', async () => {
-  const b = await runRoot({ referrer: 'https://previous.example/page', historyLength: 3 });
-  assert.deepEqual(b.events, [['replace', 'https://previous.example/page']]);
+test('authorized clean-shell destination continues without rewriting itself', async () => {
+  const b = await runRoot({ path: '/clean-shell', cookie: 'mpa_pls=valid' });
+  assert.equal(b.response.headers.get('x-middleware-next'), '1');
+  assert.equal(b.response.headers.get('x-middleware-rewrite'), null);
 });
 
 for (const configured of ['https://fallback.example/previous', '', 'javascript:alert(1)',
@@ -272,20 +286,22 @@ for (const configured of ['https://fallback.example/previous', '', 'javascript:a
 }
 
 test('session-check outage does not send visitors back into the redirect chain', async () => {
-  const b = await runRoot({ cookie: 'mpa_pls=valid', check: new Response('{}', { status: 503 }),
+  const b = await runRoot({ path: '/d/session', cookie: 'mpa_pls=valid', check: new Response('{}', { status: 503 }),
     referrer: 'https://inter.example/' });
   assert.equal(b.response.status, 503);
   assert.deepEqual(b.events.map(([event]) => event), ['server-fetch']);
 });
 
-test('authorized root still reaches the clean prelander shell', async () => {
-  const b = await runRoot({ cookie: 'mpa_pls=valid' });
-  assert.equal(b.response.headers.get('x-middleware-rewrite'), 'https://landing.example/clean-shell');
-  assert.equal(b.events.length, 1);
-  assert.equal(b.events[0][0], 'server-fetch');
-});
+for (const site of ['none', 'cross-site', 'same-site', 'same-origin']) {
+  test(`authorized entry reaches the shell with navigation metadata ${site}`, async () => {
+    const b = await runRoot({ path: '/d/session', cookie: 'mpa_pls=valid', headers: { 'sec-fetch-site': site } });
+    assert.equal(b.response.headers.get('x-middleware-rewrite'), 'https://landing.example/clean-shell');
+    assert.equal(b.events.length, 1);
+    assert.equal(b.events[0][0], 'server-fetch');
+  });
+}
 
-test('production source deterrent works on all pages including prelander domains', async () => {
+test('clean-root flow never opts into legacy service-worker navigation', async () => {
   const next = require('next/server');
   const { middleware } = loadModule('middleware.ts', {
     'next/server': next, '@/lib/prelander-session': session,
@@ -300,8 +316,8 @@ test('production source deterrent works on all pages including prelander domains
     const response = await middleware(new next.NextRequest(`https://landing.example${path}`, {
       headers: { cookie: 'mpa_pls=valid' },
     }));
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get('x-sd'), path.startsWith('/d/h_') ? null : '1', path);
+    assert.equal(response.status, path === '/' ? 204 : 200);
+    assert.equal(response.headers.get('x-sd'), null, path);
   }
 });
 
@@ -324,7 +340,7 @@ for (const site of ['none', 'cross-site', 'same-site', 'same-origin']) {
   });
 }
 
-for (const [role, path] of [['prelander', '/d/session'], ['prelander', '/d/copied_slug'],
+for (const [role, path] of [['prelander', '/d/copied_slug'],
   ['prelander', '/d/h_copied_ticket'], ['inter', '/d/copied_slug']]) {
   test(`pasted protected pages still take the fallback: ${role} ${path}`, async () => {
     const next = require('next/server');

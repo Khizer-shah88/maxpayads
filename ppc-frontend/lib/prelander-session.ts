@@ -1,5 +1,21 @@
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
 
+/** The visible root is not an entry point, even for a browser with a session. */
+export function prelanderNoContentResponse(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      // Chrome can treat a service-worker-forwarded response with nosniff
+      // and no MIME type as a download, even for 204. Keep it a document.
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'X-Robots-Tag': 'noindex, nofollow, noarchive',
+    },
+  });
+}
+
 export const SESSION_UNAVAILABLE_TITLE = 'Session expired or unavailable';
 export const SESSION_UNAVAILABLE_MESSAGE =
   'This link requires an active session. Return to the page where you started and open a new link.';

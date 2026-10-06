@@ -1,6 +1,5 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
-import { sourceDeterrentScriptTag } from '@/lib/source-deterrent-script';
 import { createTabGuard } from '@/lib/tab-guard';
 
 export const dynamic = 'force-dynamic';
@@ -11,12 +10,6 @@ export const dynamic = 'force-dynamic';
 const PRELANDER_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; frame-src 'self' https:; media-src 'self' https:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';";
 
-// Source-view deterrent. One shared definition of the page script lives in
-// lib/source-deterrent-script.ts; see SOURCE_DETERRENT.md for the ceiling.
-// Read at module load, which is per container start -- the same moment a
-// docker-compose flip of the flag takes effect.
-const SOURCE_DETERRENT_SCRIPT = sourceDeterrentScriptTag();
-
 // Preserve regex backslashes in the inline script. A cooked template literal
 // turns escaped slashes into // and breaks parsing before any content loads.
 const SHELL_HTML = String.raw`<!DOCTYPE html>
@@ -26,7 +19,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
 <title>Download Ready</title>
-${SOURCE_DETERRENT_SCRIPT}
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantaveil, Cantarell, sans-serif; background: #f0f2f5; }
@@ -74,7 +66,7 @@ ${SOURCE_DETERRENT_SCRIPT}
       var root = d.getElementById('pl-root')
       root.hidden = false
       root.className = 'pl-wrap'
-      root.innerHTML = '<div class="pl-card"><div class="pl-head"><h1 class="pl-title">Temporarily unavailable</h1><p class="pl-sub">Please try loading this page again.</p><p class="pl-sub"><a href="/">Try again</a></p></div></div>'
+      root.innerHTML = '<div class="pl-card"><div class="pl-head"><h1 class="pl-title">Temporarily unavailable</h1><p class="pl-sub">Please try loading this page again.</p><p class="pl-sub"><a href="/d/session">Try again</a></p></div></div>'
     }
     function esc (s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {

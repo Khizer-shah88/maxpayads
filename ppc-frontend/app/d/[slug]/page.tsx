@@ -74,10 +74,6 @@ export default function PrelanderSlugPage() {
       }
 
       if (slug === 'session') {
-        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/d/')) {
-          window.history.replaceState({}, '', '/')
-        }
-
         try {
           const access = await guardTab()
           if (access === 'redirected') { setReturning(true); return }
@@ -100,11 +96,11 @@ export default function PrelanderSlugPage() {
             return
           }
 
-          // The session path resolves AFTER the browser already replaced the
-          // URL — the template favicon (set once per template) still applies.
+          // Keep the entry URL available for retry until content resolves.
           applyFavicon(data?.template?.favicon_url)
 
           setData(data)
+          window.history.replaceState({}, '', '/')
           setLoading(false)
           return
         } catch (error) {

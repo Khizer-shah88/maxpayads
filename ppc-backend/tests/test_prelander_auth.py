@@ -234,6 +234,31 @@ async def test_arrival_claim_distinguishes_new_tab_from_expired_session(session_
 
 
 @pytest.mark.asyncio
+async def test_handoff_enters_session_route_before_cleaning_url(session_api, redis):
+    from httpx import AsyncClient, ASGITransport
+
+    app, content = session_api
+    session = await pas.create_authorization("c1", SLUG, IP, UA, redis, prelander_host="test")
+    handoff = await pas.mint_handoff(session, redis, target_host="test")
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test",
+        headers={"user-agent": UA, "x-real-ip": IP},
+    ) as client:
+        response = await client.get(f"/prelander/_auth/{handoff}")
+        assert response.status_code == 302
+        assert response.headers["location"] == "/d/session"
+        assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert pas.PL_SESSION_COOKIE in response.cookies
+        assert (await client.get("/prelander/session-check")).status_code == 200
+        assert (await client.get("/prelander/claim")).status_code == 200
+        assert (await client.get("/prelander/resolve/session")).json()["success"] is True
+        assert (await client.get("/prelander/claim")).status_code == 403
+        assert (await client.get(f"/prelander/_auth/{handoff}")).status_code == 403
+    content.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_invalid_handoff_shows_message_without_referrer_redirect(session_api):
     from httpx import AsyncClient, ASGITransport
 

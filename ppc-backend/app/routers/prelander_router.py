@@ -843,7 +843,7 @@ async def session_check(request: Request, db=Depends(get_db)):
     """Validate the expiring server-side session before the frontend serves content."""
     from app.services import prelander_auth_service as pas
 
-    # Guarded: the frontend middleware gates the prelander root on this call —
+    # Guarded: the frontend middleware gates the session entry on this call —
     # a 500 here becomes a blank page; an error state (403/503) is handled.
     try:
         redis = get_redis_safe()
@@ -1076,15 +1076,15 @@ async def prelander_bootstrap(
 ):
     """
     Prelander-side bootstrap (STEP 4): exchange the ONE-TIME handoff for a
-    prelander-domain browsing-session cookie, then redirect to the clean
-    prelander URL so no token stays in the address bar.
+    prelander-domain browsing-session cookie, then redirect to /d/session.
+    The rendered document cleans the address bar only after content resolves.
 
       GET /_auth/{opaque-token}
         → validate + CONSUME the handoff (getdel — replay impossible)
         → establish the server-side browsing session
         → flag the arrival (one-time /claim for the tab that just arrived)
         → set the HttpOnly SameSite=Lax prelander-domain cookie
-        → 302 → clean / (token gone from the visible URL)
+        → 302 → /d/session → render → history.replaceState to /
 
     A second use of the same handoff (back button, shared link, retry) finds
     nothing and gets the STEP 6 denied fallback.
@@ -1126,25 +1126,26 @@ async def prelander_bootstrap(
         if not pl_session_id:
             return await _denied_response(request)
 
-        # The redirect flow is complete: the tab that follows this 302 to "/" may
+        # The tab that follows this 302 to the session entry may
         # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
         # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
         await _mark_arrival(redis, pl_session_id, session.expires_at - int(time.time()))
 
-        # CLEAN FINAL URL (spec): the visible prelander URL must be
-        # https://prelander-domain.com/ — no slug, no ids, no routing info, at
-        # every stage including this redirect. The slug param is legacy and
-        # IGNORED: the session's slug binding already pins the route server-side,
-        # so the clean root is the destination whether or not a slug was passed.
-        dest = "/"
+        # Render through the session-checked entry, then let the document use
+        # history.replaceState to display /. Direct root requests return 204;
+        # redirecting there would leave the visitor on the previous hop.
+        # The route contains no click/campaign IDs; binding stays server-side.
+        dest = "/d/session"
         response = RedirectResponse(url=dest, status_code=302)
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Referrer-Policy"] = "no-referrer"
         response.set_cookie(
             key=pas.PL_SESSION_COOKIE,
             value=pl_session_id,
             max_age=max(session.expires_at - int(time.time()), 0),
             **pas.cookie_flags(),
         )
-        logger.info("[PRELANDER-AUTH] Handoff exchanged → clean / served from session (click=%s)", session.click_id)
+        logger.info("[PRELANDER-AUTH] Handoff exchanged → session entry (click=%s)", session.click_id)
         return response
     except Exception:
         logger.exception("[PRELANDER] /_auth exchange failed — serving denied fallback")
