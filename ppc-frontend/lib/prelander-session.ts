@@ -1,4 +1,3 @@
-d
 export const SESSION_UNAVAILABLE_TITLE = 'Session expired or unavailable';
 export const SESSION_UNAVAILABLE_MESSAGE =
   'This link requires an active session. Return to the page where you started and open a new link.';
