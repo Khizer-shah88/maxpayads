@@ -55,18 +55,16 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
   .pl-video video { width: 100%; height: 100%; }
   .pl-foot { text-align: center; font-size: 12px; color: #9ca3af; padding: 0 24px 24px; }
 </style>
-<script>
-// INSTANT URL CLEAN: if arrived at /d/session, immediately replace with /
-if (location.pathname === '/d/session') {
-  location.replace('/');
-}
-</script>
 </head>
 <body>
   <div id="pl-root" hidden></div>
   <script>
   ;(async function () {
     var d = document
+    // CLEAN URL IMMEDIATELY before any async operations
+    if (location.pathname === '/d/session' || location.search) {
+      try { history.replaceState({}, '', '/') } catch (e) {}
+    }
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
       var root = d.getElementById('pl-root')
