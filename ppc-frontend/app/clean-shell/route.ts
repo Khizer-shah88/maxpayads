@@ -62,58 +62,45 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
   ;(async function () {
     var d = document
     
-    // PREVENT AUTOMATIC DOWNLOADS ON RELOAD/REFRESH
-    // Set a flag in sessionStorage to track if this is a reload
-    var isReload = false
-    try {
-      isReload = sessionStorage.getItem('pl_visited') === '1'
-      sessionStorage.setItem('pl_visited', '1')
-    } catch (e) {}
-    
     // CLEAN URL IMMEDIATELY before any async operations
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
     
-    // Block window.open during page load AND on reload
-    var loadTime = Date.now()
-    var originalOpen = window.open
-    var blockDuration = isReload ? 2000 : 500 // Longer block on reload
+    // PREVENT AUTOMATIC DOWNLOADS on page reload
+    // Admin-created full HTML templates may contain scripts that trigger downloads.
+    // This protection blocks those automatic downloads ONLY when the page is reloaded
+    // (not on first visit), using the Navigation Timing API which is reliable and
+    // supported in all modern browsers.
     
-    window.open = function() {
-      var elapsed = Date.now() - loadTime
-      if (elapsed < blockDuration) {
-        console.log('[PRELANDER] Blocked automatic window.open (elapsed: ' + elapsed + 'ms, reload: ' + isReload + ')')
+    // Check if this is a reload: navigation type will be 'reload' or 1 (TYPE_RELOAD)
+    var isReload = false
+    try {
+      // Modern Navigation Timing API Level 2
+      if (window.performance && window.performance.getEntriesByType) {
+        var nav = window.performance.getEntriesByType('navigation')[0]
+        if (nav && nav.type === 'reload') {
+          isReload = true
+        }
+      }
+      // Fallback to Navigation Timing API Level 1
+      else if (window.performance && window.performance.navigation) {
+        if (window.performance.navigation.type === 1) {  // TYPE_RELOAD
+          isReload = true
+        }
+      }
+    } catch (e) {
+      console.log('[PRELANDER] Could not detect reload status:', e)
+    }
+    
+    // Block window.open ONLY on reload to prevent automatic downloads
+    if (isReload) {
+      var originalOpen = window.open
+      window.open = function() {
+        console.log('[PRELANDER] Blocked automatic window.open on page reload')
         return null
       }
-      return originalOpen.apply(window, arguments)
-    }
-    
-    // BFCACHE PROTECTION: Reset on page show event (fires on back/forward/reload)
-    // Only add if window.addEventListener exists (not in test environment)
-    if (typeof window.addEventListener === 'function') {
-      window.addEventListener('pageshow', function(e) {
-        if (e.persisted) {
-          // Page restored from bfcache - reset load time to block downloads
-          loadTime = Date.now()
-          console.log('[PRELANDER] Page restored from bfcache - blocking downloads')
-        }
-      })
-    }
-    
-    // VISIBILITY PROTECTION: Reset timer when page becomes visible
-    // Only add if document.addEventListener exists (not in test environment)
-    if (typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible') {
-          var timeSinceLoad = Date.now() - loadTime
-          if (timeSinceLoad > 60000) {
-            // If more than 1 minute since load, this might be a tab restore
-            loadTime = Date.now()
-            console.log('[PRELANDER] Tab restored - blocking downloads')
-          }
-        }
-      })
+      console.log('[PRELANDER] Reload detected - automatic downloads blocked')
     }
     
     var deny = (${returnToPreviousPage.toString()})
