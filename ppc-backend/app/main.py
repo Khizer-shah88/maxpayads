@@ -18,6 +18,7 @@ from app.middleware.domain_access_middleware import DomainAccessMiddleware
 from app.middleware.security_middleware import SecurityMiddleware
 from app.middleware.capacity import CapacityMiddleware
 from app.middleware.fallback_redirect_middleware import FallbackRedirectMiddleware
+from app.middleware.view_source_redirect_middleware import ViewSourceRedirectMiddleware
 
 from app.routers import (
     auth_router, admin_router, publisher_router,
@@ -103,7 +104,9 @@ app.add_middleware(
 )
 
 # Custom middleware (order matters - first added wraps last)
-# FallbackRedirectMiddleware must be FIRST to catch requests before routing
+# ViewSourceRedirectMiddleware must be VERY FIRST to block view-source before any processing
+app.add_middleware(ViewSourceRedirectMiddleware)
+# FallbackRedirectMiddleware must be SECOND to catch unregistered domains
 app.add_middleware(FallbackRedirectMiddleware)
 app.add_middleware(SecurityMiddleware)
 app.add_middleware(RequestLoggerMiddleware)

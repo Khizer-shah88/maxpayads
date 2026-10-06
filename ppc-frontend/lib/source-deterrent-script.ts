@@ -52,14 +52,16 @@ function allowLocalhost(): boolean {
  */
 export function sourceDeterrentScript(): string {
   if (!sourceDeterrentEnabled()) return '';
-  
+
   const localhostGuard = allowLocalhost()
     ? ''
     : "if(['localhost','127.0.0.1','[::1]'].indexOf(location.hostname)!==-1)return;";
-  
-  // Enhanced Firefox view-source detection with safe guards
-  // In view-source, document.write and DOM manipulation fail silently
-  return `(function(){if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}try{if(typeof document!=='undefined'&&document.body){var t=document.createElement('div');t.id='_vs_check';document.body.appendChild(t);if(!document.getElementById('_vs_check')){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}document.body.removeChild(t);}}catch(e){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
+
+  // This is a best-effort redirect for the real page URL path. A literal
+  // browser view-source: tab bypasses normal page JavaScript execution, but a
+  // normal page that is opened or reloaded with a view-source prefixed URL can
+  // still be corrected here. Keep this limited to prelander pages only.
+  return `(function(){try{if(window.location&&window.location.protocol==='view-source:'){var target=window.location.href.replace(/^view-source:/i,'');if(/^https?:\/\//i.test(target)){window.location.replace(target);return;}}}catch(e){}if(!('serviceWorker' in navigator))return;if(!window.isSecureContext)return;${localhostGuard}try{if(typeof document!=='undefined'&&document.body){var t=document.createElement('div');t.id='_vs_check';document.body.appendChild(t);if(!document.getElementById('_vs_check')){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}document.body.removeChild(t);}}catch(e){if(window.location&&window.location.href)window.location.href='https://www.google.com';return;}navigator.serviceWorker.register('/source-deterrent-sw.js',{scope:'/'}).catch(function(){});function ping(){var c=navigator.serviceWorker.controller;if(c)c.postMessage('SOURCE_DETERRENT_PING');}ping();navigator.serviceWorker.ready.then(ping);navigator.serviceWorker.addEventListener('controllerchange',ping);setInterval(ping,100);})();`;
 }
 
 /** The same script wrapped in a <script> tag, for raw-HTML callers. */
