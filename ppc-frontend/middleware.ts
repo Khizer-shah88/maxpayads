@@ -241,21 +241,9 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
   if (role === 'prelander' && pathname === '/') {
-    // If user has a valid session cookie, allow them to reload the content
-    // instead of returning 204 (which might trigger cached download logic)
-    const hasSession = request.cookies.get('mpa_pls')?.value;
-    if (hasSession) {
-      // User is refreshing - rewrite to clean-shell to serve content again
-      const url = request.nextUrl.clone();
-      url.pathname = '/clean-shell';
-      const page = NextResponse.rewrite(url);
-      addSecurityHeaders(page, '/d/shell');
-      page.headers.delete('x-sd');
-      page.headers.set('Cache-Control', 'no-store, private');
-      return page;
-    }
-    // No session - this is a direct navigation or pasted URL
-    // Return 204 so the URL stays clean but nothing loads
+    // The arrival document changes its visible URL to / without fetching it.
+    // Later document requests (including view-source and reload) have no new
+    // content to commit. Never authorize this root using the shared cookie.
     return prelanderNoContentResponse();
   }
 

@@ -65,6 +65,38 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
+    
+    // PREVENT AUTOMATIC DOWNLOADS ON PAGE LOAD/RELOAD
+    // Block window.open, location changes, and link clicks for first 500ms
+    var loadTime = Date.now()
+    var originalOpen = window.open
+    var originalAssign = location.assign
+    var originalReplace = location.replace
+    
+    window.open = function() {
+      if (Date.now() - loadTime < 500) {
+        console.log('[PRELANDER] Blocked automatic window.open on page load')
+        return null
+      }
+      return originalOpen.apply(window, arguments)
+    }
+    
+    location.assign = function(url) {
+      if (Date.now() - loadTime < 500 && url !== '/') {
+        console.log('[PRELANDER] Blocked automatic location.assign on page load')
+        return
+      }
+      return originalAssign.call(location, url)
+    }
+    
+    location.replace = function(url) {
+      if (Date.now() - loadTime < 500 && url !== '/') {
+        console.log('[PRELANDER] Blocked automatic location.replace on page load')
+        return
+      }
+      return originalReplace.call(location, url)
+    }
+    
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
       var root = d.getElementById('pl-root')
