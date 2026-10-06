@@ -9,6 +9,11 @@ The issue was caused by:
 2. **No content-type validation** - responses with unexpected content types were being processed
 3. **useEffect dependency warning** - missing dependencies could cause re-renders and duplicate API calls
 
+## TypeScript Build Fix
+The initial fix had a TypeScript compilation error because axios headers can be multiple types (string, number, boolean, array, or AxiosHeaders object). Fixed by:
+- Extracting the header value and checking its type
+- Converting to string with proper type guard: `typeof contentTypeHeader === 'string' ? contentTypeHeader : ''`
+
 ## Fixes Applied
 
 ### 1. API Client Configuration (`ppc-frontend/lib/api.ts`)
@@ -25,13 +30,14 @@ const api = axios.create({
 })
 ```
 
-#### Added Response Content-Type Validation
+#### Added Response Content-Type Validation with Proper TypeScript Types
 ```typescript
 api.interceptors.response.use(
   (response) => {
     // Prevent browser from treating responses as downloads
     const responseType = response.config.responseType
-    const contentType = response.headers['content-type'] || ''
+    const contentTypeHeader = response.headers['content-type']
+    const contentType = typeof contentTypeHeader === 'string' ? contentTypeHeader : ''
     
     // If we're not expecting a blob/file but got one, reject it
     if (!responseType || responseType === 'json') {
@@ -49,6 +55,7 @@ api.interceptors.response.use(
 
 **What this does:**
 - Explicitly requests JSON responses from the server
+- Properly handles TypeScript types for axios headers (can be string/number/array/AxiosHeaders)
 - Validates that responses have the correct content-type
 - Rejects any response that looks like a file download when JSON is expected
 - Logs errors to console for debugging
@@ -105,12 +112,20 @@ After these fixes:
 4. Check browser console - API calls should log successful JSON responses
 5. Page should load normally with domain data displayed
 
+## Build Status
+✅ **TypeScript compilation**: PASSED  
+✅ **Next.js build**: SUCCESSFUL  
+⚠️ **ESLint warnings**: Present but non-blocking (React Hooks exhaustive-deps)
+
+The ESLint warnings are standard React dependency warnings and do not prevent the build from completing successfully.
+
 ## How It Prevents Downloads
 
 1. **Accept header** tells the server "only send JSON"
 2. **Content-Type validation** catches any misconfigured endpoint that returns wrong content
-3. **Early rejection** prevents axios from processing unexpected binary data
-4. **Proper error handling** shows user-friendly messages instead of triggering downloads
+3. **Type-safe header checking** properly handles all possible axios header types
+4. **Early rejection** prevents axios from processing unexpected binary data
+5. **Proper error handling** shows user-friendly messages instead of triggering downloads
 
 ## Technical Details
 
@@ -125,11 +140,12 @@ This was happening on page load when multiple API calls were made simultaneously
 ### Prevention Mechanism
 By adding:
 - `Accept: application/json` header → tells server what format we expect
-- Response validation → rejects non-JSON responses before processing
+- Type-safe response validation → rejects non-JSON responses before processing
+- Proper TypeScript typing → handles all axios header type variations
 - Proper React dependency management → prevents duplicate/invalid requests
 
 ## Related Files
-- `ppc-frontend/lib/api.ts` - API client with download prevention
+- `ppc-frontend/lib/api.ts` - API client with download prevention and proper TypeScript types
 - `ppc-frontend/app/admin/redirection-domains/page.tsx` - Fixed dependencies and validation
 - Backend endpoints already return proper JSON (no changes needed)
 
@@ -138,7 +154,11 @@ By adding:
 - The fix only affects unexpected downloads, not intentional file downloads
 - All existing functionality remains unchanged
 - Error messages now include console logs for easier debugging
+- TypeScript compilation is now clean with proper type guards
 
 ---
 
-**Status:** ✅ Fixed - No more automatic downloads on page reload
+**Status:** ✅ Fixed - No more automatic downloads on page reload  
+**Build:** ✅ Passing - TypeScript compilation successful  
+**Deployed:** ✅ Pushed to main branch (commit ee3e210)
+
