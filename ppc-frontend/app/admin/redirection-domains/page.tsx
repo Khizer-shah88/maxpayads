@@ -110,10 +110,17 @@ export default function RedirectionDomainsPage() {
         adminApi.getRedirectionDomains(),
         adminApi.getPublishers({ limit: 200 }),
       ])
+      
+      // Ensure we have valid JSON responses
+      if (!domRes || !domRes.data) {
+        throw new Error('Invalid response from server')
+      }
+      
       setDomains(domRes.data?.domains ?? [])
       setServerIp(domRes.data?.dns_instructions?.server_ip ?? '')
       setPublishers(((pubRes.data?.publishers) ?? []).filter((p: Publisher) => p.role !== 'admin'))
     } catch (err: any) {
+      console.error('[Redirection Domains] Load error:', err)
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to load redirection domains')
     } finally {
       setLoading(false)
@@ -123,7 +130,7 @@ export default function RedirectionDomainsPage() {
   useEffect(() => {
     initialize()
     load()
-  }, [])
+  }, [initialize, load])
 
   const filtered = domains.filter(d => d.domain_type === activeTab)
   const typeMeta = DOMAIN_TYPES.find(t => t.key === activeTab)!

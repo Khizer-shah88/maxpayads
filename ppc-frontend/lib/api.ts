@@ -4,6 +4,10 @@ import Cookies from 'js-cookie'
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  },
 })
 
 // Request interceptor - pick the right token based on current route
@@ -19,9 +23,24 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor - handle 401
+// Response interceptor - handle 401 and prevent unwanted file downloads
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Prevent browser from treating responses as downloads
+    // Only allow explicit blob/file downloads (when responseType is set)
+    const responseType = response.config.responseType
+    const contentType = response.headers['content-type'] || ''
+    
+    // If we're not expecting a blob/file but got one, reject it
+    if (!responseType || responseType === 'json') {
+      if (contentType && !contentType.includes('application/json') && !contentType.includes('text/')) {
+        console.error('[API] Unexpected content-type:', contentType, 'for URL:', response.config.url)
+        return Promise.reject(new Error('Unexpected response type from server'))
+      }
+    }
+    
+    return response
+  },
   async (error) => {
     // Login failures belong to the form; reloading it hides the error and
     // discards the email the user just entered.
