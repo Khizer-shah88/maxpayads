@@ -29,7 +29,8 @@ api.interceptors.response.use(
     // Prevent browser from treating responses as downloads
     // Only allow explicit blob/file downloads (when responseType is set)
     const responseType = response.config.responseType
-    const contentType = response.headers['content-type'] || ''
+    const contentTypeHeader = response.headers['content-type']
+    const contentType = typeof contentTypeHeader === 'string' ? contentTypeHeader : ''
     
     // If we're not expecting a blob/file but got one, reject it
     if (!responseType || responseType === 'json') {
