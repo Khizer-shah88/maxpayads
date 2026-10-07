@@ -53,6 +53,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^20",
     "css-minimizer-webpack-plugin": "^8.0.0",
     "eslint": "^8",
