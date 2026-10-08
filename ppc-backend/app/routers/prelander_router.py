@@ -38,6 +38,7 @@ PASTED-URL PROTECTION (new-tab paste → google.com):
 """
 import logging
 import time
+import re
 from fastapi import APIRouter, Query, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.routing import APIRoute
@@ -48,7 +49,30 @@ from app.core.constants import DOMAIN_TYPE_INTER, DOMAIN_TYPE_PRELANDER
 from app.core.glossary import domain_type_filter, normalize_domain_type
 from app.dependencies import get_db, get_current_admin
 
+
 logger = logging.getLogger(__name__)
+
+
+def _inject_reload_guard(html: str) -> str:
+    """
+    Inject Chrome reload guard script into HTML to prevent automatic downloads on page reload.
+    This is needed for admin-created full HTML templates that replace the entire document.
+    The guard blocks window.open() and anchor.click() on Chrome reloads without user activation.
+    """
+    # Minified guard script - blocks automatic downloads on Chrome reload only
+    guard = '<script>!function(){try{if(/Chrome\\//.test(navigator.userAgent)&&!/Edg|OPR|Brave/.test(navigator.userAgent)){var e=!1;if(performance.getEntriesByType){var n=performance.getEntriesByType("navigation")[0];n&&"reload"===n.type&&(e=!0)}else performance.navigation&&1===performance.navigation.type&&(e=!0);if(e){var t=function(){return!!(navigator.userActivation&&navigator.userActivation.isActive)},a=window.open;window.open=function(){return t()?a.apply(window,arguments):(console.log("[GUARD] Blocked window.open"),null)};var o=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){t()?o.call(this):console.log("[GUARD] Blocked anchor.click")}}}}catch(e){}}();</script>'
+    
+    # Try to inject before </head>
+    if '</head>' in html.lower():
+        return re.sub(r'</head>', guard + '</head>', html, count=1, flags=re.IGNORECASE)
+    
+    # Fallback: inject after <body>
+    if '<body' in html.lower():
+        return re.sub(r'(<body[^>]*>)', r'\1' + guard, html, count=1, flags=re.IGNORECASE)
+    
+    # Last resort: prepend to HTML
+    return guard + html
+
 
 _XOR_KEY = "mxp2026"
 
@@ -1482,6 +1506,8 @@ async def _get_prelander_data(
                 rendered_html = PrelanderTemplateEngine().render(
                     template_doc["full_html_template"], ctx
                 )
+                # Inject Chrome reload guard to prevent automatic downloads on page reload
+                rendered_html = _inject_reload_guard(rendered_html)
                 # Minify JavaScript but preserve functionality (safe mode)
                 # for admin-authored templates, then aggressively minify ALL HTML/CSS
                 obfuscated = obfuscate_html_javascript(rendered_html, aggressive=False)

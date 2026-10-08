@@ -202,9 +202,8 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
         }
       }
       // Admin full-HTML template → replace the whole document exactly as authored.
-      // CRITICAL: Inject the reload guard BEFORE the admin HTML to prevent
-      // automatic downloads on page refresh. The guard must be installed before
-      // any admin scripts execute.
+      // For admin templates, we can't inject scripts because they replace the entire document
+      // The reload guard in the clean-shell above will handle reload protection
       if (data.rendered_html) {
         d.open(); d.write(data.rendered_html); d.close(); return
       }
