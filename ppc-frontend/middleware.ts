@@ -90,11 +90,15 @@ function isChromePrelanderReload(request: NextRequest): boolean {
   const isDocumentNavigation =
     request.headers.get('sec-fetch-mode') === 'navigate' &&
     request.headers.get('sec-fetch-dest') === 'document';
-  const isSameOriginReload = request.headers.get('sec-fetch-site') === 'same-origin';
+  // Chrome marks a toolbar reload as `none` (browser-initiated) in current
+  // versions, while some versions report `same-origin`.
+  const fetchSite = request.headers.get('sec-fetch-site');
+  const isReloadNavigation = fetchSite === 'same-origin' || fetchSite === 'none';
+  const wasUserInitiated = request.headers.get('sec-fetch-user') === '?1';
   const cacheControl = request.headers.get('cache-control') || '';
   const isReload = /(?:max-age\s*=\s*0|no-cache)/i.test(cacheControl);
 
-  return isChrome && isDocumentNavigation && isSameOriginReload && isReload;
+  return isChrome && isDocumentNavigation && isReloadNavigation && wasUserInitiated && isReload;
 }
 
 function viewSourceRedirectTarget(request: NextRequest): URL | null {

@@ -249,7 +249,8 @@ test('Chrome reload of a prelander root returns a script-free inline page', asyn
     'user-agent': 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36',
     'sec-fetch-mode': 'navigate',
     'sec-fetch-dest': 'document',
-    'sec-fetch-site': 'same-origin',
+    'sec-fetch-site': 'none',
+    'sec-fetch-user': '?1',
     'cache-control': 'max-age=0',
   } });
   assert.equal(b.response.status, 200);
@@ -265,7 +266,6 @@ test('Chrome view-source navigation keeps the existing empty response', async ()
     'sec-fetch-mode': 'navigate',
     'sec-fetch-dest': 'document',
     'sec-fetch-site': 'none',
-    'cache-control': 'max-age=0',
   } });
   assert.equal(b.response.status, 204);
   assert.equal(await b.response.text(), '');
