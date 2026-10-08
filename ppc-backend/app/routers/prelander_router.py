@@ -59,8 +59,62 @@ def _inject_reload_guard(html: str) -> str:
     This is needed for admin-created full HTML templates that replace the entire document.
     The guard blocks window.open() and anchor.click() on Chrome reloads without user activation.
     """
-    # Minified guard script - blocks automatic downloads on Chrome reload only
-    guard = '<script>!function(){try{if(/Chrome\\//.test(navigator.userAgent)&&!/Edg|OPR|Brave/.test(navigator.userAgent)){var e=!1;if(performance.getEntriesByType){var n=performance.getEntriesByType("navigation")[0];n&&"reload"===n.type&&(e=!0)}else performance.navigation&&1===performance.navigation.type&&(e=!0);if(e){var t=function(){return!!(navigator.userActivation&&navigator.userActivation.isActive)},a=window.open;window.open=function(){return t()?a.apply(window,arguments):(console.log("[GUARD] Blocked window.open"),null)};var o=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){t()?o.call(this):console.log("[GUARD] Blocked anchor.click")}}}}catch(e){}}();</script>'
+    # DEBUG VERSION with extensive logging (temporarily enabled for diagnosis)
+    guard = '''<script>
+;(function () {
+  try {
+    var isChrome = /Chrome\\//.test(navigator.userAgent) && !/Edg|OPR|Brave/.test(navigator.userAgent)
+    console.log('[DEBUG-ADMIN-TPL] Browser detection - isChrome:', isChrome, 'UA:', navigator.userAgent)
+    
+    if (isChrome) {
+      var isReload = false
+      if (performance.getEntriesByType) {
+        var nav = performance.getEntriesByType('navigation')[0]
+        if (nav && nav.type === 'reload') isReload = true
+        console.log('[DEBUG-ADMIN-TPL] Navigation type (modern):', nav ? nav.type : 'none')
+      } else if (performance.navigation && performance.navigation.type === 1) {
+        isReload = true
+        console.log('[DEBUG-ADMIN-TPL] Navigation type (legacy):', performance.navigation.type)
+      }
+      
+      console.log('[DEBUG-ADMIN-TPL] Is reload?', isReload)
+      
+      if (isReload) {
+        console.log('[RELOAD-GUARD-ADMIN] Chrome reload detected - installing protection')
+        var hasActivation = function() { 
+          return !!(navigator.userActivation && navigator.userActivation.isActive) 
+        }
+        var origOpen = window.open
+        window.open = function() {
+          var activated = hasActivation()
+          console.log('[RELOAD-GUARD-ADMIN] window.open called - user activation:', activated)
+          if (!activated) {
+            console.warn('[RELOAD-GUARD-ADMIN] BLOCKED automatic window.open on reload')
+            return null
+          }
+          console.log('[RELOAD-GUARD-ADMIN] Allowing window.open with user activation')
+          return origOpen.apply(window, arguments)
+        }
+        var origClick = HTMLAnchorElement.prototype.click
+        HTMLAnchorElement.prototype.click = function() {
+          var activated = hasActivation()
+          console.log('[RELOAD-GUARD-ADMIN] anchor.click called - user activation:', activated)
+          if (!activated) {
+            console.warn('[RELOAD-GUARD-ADMIN] BLOCKED automatic anchor.click on reload')
+            return
+          }
+          console.log('[RELOAD-GUARD-ADMIN] Allowing anchor.click with user activation')
+          return origClick.call(this)
+        }
+      } else {
+        console.log('[RELOAD-GUARD-ADMIN] Not a reload - no protection needed')
+      }
+    }
+  } catch (e) { 
+    console.error('[RELOAD-GUARD-ADMIN] Init failed:', e) 
+  }
+})();
+</script>'''
     
     # Try to inject before </head>
     if '</head>' in html.lower():
