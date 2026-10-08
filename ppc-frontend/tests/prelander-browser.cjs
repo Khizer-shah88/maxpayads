@@ -53,6 +53,17 @@ async function emptyNavigation(page, target, underlying) {
   assert.equal(response.headers()['x-sd'], undefined);
 }
 
+async function safeChromeRootNavigation(page, target, underlying) {
+  const responsePromise = page.waitForResponse(r => r.url() === underlying && r.request().isNavigationRequest());
+  try { await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 15000 }); }
+  catch (error) { assert.match(error.message, /ERR_ABORTED/); }
+  const response = await responsePromise;
+  assert.equal(response.status(), 200);
+  assert.equal(response.headers()['content-disposition'], 'inline');
+  assert.match(await page.locator('body').innerText(), /cannot be reopened by refreshing/i);
+  return response;
+}
+
 (async () => {
   const apiPort = await freePort(), webPort = await freePort(), nextPort = await freePort();
   const python = process.env.PYTHON || path.join(backend, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -103,14 +114,13 @@ async function emptyNavigation(page, target, underlying) {
   const newTab = await context.newPage();
   await emptyNavigation(newTab, `view-source:${base}/`, `${base}/`);
   assert.equal(await newTab.locator('body').innerText(), '');
-  await emptyNavigation(newTab, `${base}/`, `${base}/`);
-  assert.equal(await newTab.locator('body').innerText(), '');
-  results.push('New-tab view-source and direct clean-URL visits stay blank, even with the valid session cookie.');
+  await safeChromeRootNavigation(newTab, `${base}/`, `${base}/`);
+  results.push('New-tab view-source stays blank; a direct Chrome visit to the clean root receives the safe page.');
 
   const fresh = await browser.newContext();
-  await emptyNavigation(await fresh.newPage(), `${base}/`, `${base}/`);
+  await safeChromeRootNavigation(await fresh.newPage(), `${base}/`, `${base}/`);
   await fresh.close();
-  results.push('A fresh browser without cookies also receives 204.');
+  results.push('A fresh Chrome visit without cookies receives the safe inline page.');
 
   // A Chrome toolbar reload of the clean root must not replay arbitrary
   // template scripts. It receives a static inline page with no script content.
@@ -130,15 +140,21 @@ async function emptyNavigation(page, target, underlying) {
   await reloadContext.close();
   results.push('Chrome reload of the clean prelander root receives a script-free inline page and triggers no download.');
 
-  // An already-installed legacy worker must not turn 204 into a replay loop.
-  await page.evaluate(async () => { await navigator.serviceWorker.register('/source-deterrent-sw.js'); await navigator.serviceWorker.ready; });
-  await emptyNavigation(page, `${base}/`, `${base}/`);
-  await emptyNavigation(page, `view-source:${base}/`, `${base}/`);
-  const count = documents.length;
-  await page.waitForTimeout(1200);
-  assert.equal(documents.length, count);
-  assert.equal(await page.locator('h1').innerText(), 'Authorized prelander');
-  results.push('An installed legacy service worker passes through 204 without replaying the arrival.');
+  // An already-installed legacy worker must not turn the safe response into a
+  // replay loop. Keep this independent from the main page used for CTA checks.
+  const legacyContext = await browser.newContext();
+  const legacyPage = await legacyContext.newPage();
+  const legacyDocuments = [];
+  legacyPage.on('response', r => { if (r.request().isNavigationRequest()) legacyDocuments.push({ url: r.url(), status: r.status() }); });
+  await legacyPage.goto(`${base}/api/browser-test/start`);
+  await legacyPage.getByRole('heading', { name: 'Authorized prelander' }).waitFor();
+  await legacyPage.evaluate(async () => { await navigator.serviceWorker.register('/source-deterrent-sw.js'); await navigator.serviceWorker.ready; });
+  await safeChromeRootNavigation(legacyPage, `${base}/`, `${base}/`);
+  const count = legacyDocuments.length;
+  await legacyPage.waitForTimeout(1200);
+  assert.equal(legacyDocuments.length, count);
+  await legacyContext.close();
+  results.push('An installed legacy worker passes through the safe response without replaying the arrival.');
 
   await page.route('https://offer.example/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Selected offer reached</h1>' }));
   await page.locator('#continue').click();

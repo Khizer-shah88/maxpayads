@@ -1,7 +1,8 @@
 /**
- * Stop scripts in custom prelander HTML from starting a download on a Chrome
- * reload. This is intentionally limited to reload navigations on the
- * prelander document; normal arrivals and redirect-domain hops are untouched.
+ * Stop scripts in custom prelander HTML from starting an automatic download
+ * after Chrome reopens the cleaned prelander URL. This is intentionally
+ * limited to reload navigations on the prelander document; normal arrivals and
+ * redirect-domain hops are untouched.
  * Keep this function self-contained because the clean shell serializes it.
  */
 export function installChromePrelanderReloadGuard(): void {
@@ -16,11 +17,13 @@ export function installChromePrelanderReloadGuard(): void {
 
     const hasUserActivation = () => !!navigator.userActivation?.isActive;
 
-    // A synthetic click is the common way templates start a download on load.
-    // Preserve real clicks and programmatic clicks made during a user gesture.
+    // A synthetic anchor click is the common way templates start a download on
+    // load. Block background clicks even when the anchor has no download
+    // attribute: a URL can still return a download response. Preserve clicks
+    // made as part of a real user gesture.
     const anchorClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function guardedAnchorClick(this: HTMLAnchorElement) {
-      if (this.hasAttribute('download') && !hasUserActivation()) return;
+      if (!hasUserActivation()) return;
       return anchorClick.call(this);
     };
 
@@ -36,7 +39,7 @@ export function installChromePrelanderReloadGuard(): void {
     window.addEventListener('click', (event) => {
       if (event.isTrusted || hasUserActivation()) return;
       const target = event.target;
-      const anchor = target instanceof Element ? target.closest('a[download]') : null;
+      const anchor = target instanceof Element ? target.closest('a') : null;
       if (anchor) {
         event.preventDefault();
         event.stopImmediatePropagation();
