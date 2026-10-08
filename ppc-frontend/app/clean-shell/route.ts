@@ -1,7 +1,6 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
 import { createTabGuard } from '@/lib/tab-guard';
-import { installChromePrelanderReloadGuard } from '@/lib/chrome-prelander-reload-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,9 +66,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
-    
-    // Guard Chrome reloads before admin-authored HTML or scripts are rendered.
-    (${installChromePrelanderReloadGuard.toString()})();
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
@@ -147,22 +143,7 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       // automatic downloads on page refresh. The guard must be installed before
       // any admin scripts execute.
       if (data.rendered_html) {
-        var guardScript = '<script>(function(){try{var ua=navigator.userAgent||"";var isChrome=/\\bChrome\\//.test(ua)&&!/\\b(Edg|OPR|Brave)\\//.test(ua);if(!isChrome)return;var nav=performance.getEntriesByType?.("navigation")?.[0];var legacyReload=performance.navigation?.type===1;if(nav?.type!=="reload"&&!legacyReload)return;var hasUserActivation=function(){return!!navigator.userActivation?.isActive};var anchorClick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){if(!hasUserActivation())return;return anchorClick.call(this)};var open=window.open;window.open=function(){if(!hasUserActivation())return null;return open.apply(window,arguments)};window.addEventListener("click",function(e){if(e.isTrusted||hasUserActivation())return;var target=e.target;var anchor=target instanceof Element?target.closest("a"):null;if(anchor){e.preventDefault();e.stopImmediatePropagation()}},true);window.addEventListener("submit",function(e){if(!hasUserActivation()){e.preventDefault();e.stopImmediatePropagation()}},true)}catch(e){}})()</script>';
-        var html = String(data.rendered_html);
-        var headEnd = html.search(/<\/head>/i);
-        if (headEnd !== -1) {
-          html = html.slice(0, headEnd) + guardScript + html.slice(headEnd);
-        } else {
-          var bodyStart = html.search(/<body[^>]*>/i);
-          if (bodyStart !== -1) {
-            var match = html.slice(bodyStart).match(/<body[^>]*>/i);
-            var insertPos = bodyStart + (match ? match[0].length : 0);
-            html = html.slice(0, insertPos) + guardScript + html.slice(insertPos);
-          } else {
-            html = guardScript + html;
-          }
-        }
-        d.open(); d.write(html); d.close(); return
+        d.open(); d.write(data.rendered_html); d.close(); return
       }
       var root = d.getElementById('pl-root')
       var t = data.template || {}
