@@ -67,6 +67,43 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
     
+    // CHROME RELOAD FIX: Block automatic downloads on page reload
+    // This ONLY affects Chrome browser on reload - not first visit, not other browsers
+    try {
+      var isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg|OPR|Brave/.test(navigator.userAgent)
+      if (isChrome) {
+        var isReload = false
+        if (performance.getEntriesByType) {
+          var nav = performance.getEntriesByType('navigation')[0]
+          if (nav && nav.type === 'reload') isReload = true
+        } else if (performance.navigation && performance.navigation.type === 1) {
+          isReload = true
+        }
+        
+        if (isReload) {
+          var hasActivation = function() { 
+            return !!(navigator.userActivation && navigator.userActivation.isActive) 
+          }
+          var origOpen = window.open
+          window.open = function() {
+            if (!hasActivation()) {
+              console.log('[RELOAD-GUARD] Blocked automatic window.open on reload')
+              return null
+            }
+            return origOpen.apply(window, arguments)
+          }
+          var origClick = HTMLAnchorElement.prototype.click
+          HTMLAnchorElement.prototype.click = function() {
+            if (!hasActivation()) {
+              console.log('[RELOAD-GUARD] Blocked automatic anchor.click on reload')
+              return
+            }
+            return origClick.call(this)
+          }
+        }
+      }
+    } catch (e) { console.log('[RELOAD-GUARD] Init failed:', e) }
+    
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
       var root = d.getElementById('pl-root')
