@@ -112,12 +112,23 @@ async function emptyNavigation(page, target, underlying) {
   await fresh.close();
   results.push('A fresh browser without cookies also receives 204.');
 
-  // A browser may retain or reconstruct an existing document on Reload.
-  const reloaded = page.waitForResponse(r => r.url() === `${base}/` && r.request().isNavigationRequest());
-  try { await page.reload({ waitUntil: 'domcontentloaded' }); } catch (e) { assert.match(e.message, /ERR_ABORTED/); }
-  assert.equal((await reloaded).status(), 204);
-  assert.equal(await page.locator('h1').innerText(), 'Authorized prelander');
-  results.push('Reload requests the cleaned root, receives 204, and retains the displayed page in Chrome.');
+  // A Chrome toolbar reload of the clean root must not replay arbitrary
+  // template scripts. It receives a static inline page with no script content.
+  const reloadContext = await browser.newContext();
+  const reloadPage = await reloadContext.newPage();
+  const reloadDownloads = [];
+  reloadPage.on('download', download => { reloadDownloads.push(download.url()); void download.cancel(); });
+  await reloadPage.goto(`${base}/api/browser-test/start`);
+  await reloadPage.getByRole('heading', { name: 'Authorized prelander' }).waitFor();
+  const reloaded = reloadPage.waitForResponse(r => r.url() === `${base}/` && r.request().isNavigationRequest());
+  try { await reloadPage.reload({ waitUntil: 'domcontentloaded' }); } catch (e) { assert.match(e.message, /ERR_ABORTED/); }
+  const reloadResponse = await reloaded;
+  assert.equal(reloadResponse.status(), 200);
+  assert.equal(reloadResponse.headers()['content-disposition'], 'inline');
+  assert.match(await reloadPage.locator('body').innerText(), /cannot be reopened by refreshing/i);
+  assert.deepEqual(reloadDownloads, []);
+  await reloadContext.close();
+  results.push('Chrome reload of the clean prelander root receives a script-free inline page and triggers no download.');
 
   // An already-installed legacy worker must not turn 204 into a replay loop.
   await page.evaluate(async () => { await navigator.serviceWorker.register('/source-deterrent-sw.js'); await navigator.serviceWorker.ready; });

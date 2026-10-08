@@ -244,6 +244,33 @@ for (const cookie of ['', 'mpa_pls=valid', 'mpa_pls=expired']) {
   });
 }
 
+test('Chrome reload of a prelander root returns a script-free inline page', async () => {
+  const b = await runRoot({ cookie: 'mpa_pls=valid', headers: {
+    'user-agent': 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-site': 'same-origin',
+    'cache-control': 'max-age=0',
+  } });
+  assert.equal(b.response.status, 200);
+  assert.equal(b.response.headers.get('content-disposition'), 'inline');
+  assert.match(b.response.headers.get('content-security-policy'), /default-src 'none'/);
+  assert.match(await b.response.text(), /Page refreshed/);
+  assert.deepEqual(b.events, []);
+});
+
+test('Chrome view-source navigation keeps the existing empty response', async () => {
+  const b = await runRoot({ cookie: 'mpa_pls=valid', headers: {
+    'user-agent': 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-site': 'none',
+    'cache-control': 'max-age=0',
+  } });
+  assert.equal(b.response.status, 204);
+  assert.equal(await b.response.text(), '');
+});
+
 test('portal root remains a normal page', async () => {
   const b = await runRoot({ role: 'portal' });
   assert.equal(b.response.status, 200);

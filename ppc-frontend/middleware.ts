@@ -18,7 +18,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { prelanderFallbackResponse, prelanderNoContentResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
+import { prelanderFallbackResponse, prelanderNoContentResponse, prelanderChromeReloadResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
 import type { NextRequest } from 'next/server';
 import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
@@ -82,6 +82,19 @@ function referrerHostname(referrer: string | undefined): string {
   } catch {
     return '(malformed)';
   }
+}
+
+function isChromePrelanderReload(request: NextRequest): boolean {
+  const userAgent = request.headers.get('user-agent') || '';
+  const isChrome = /\bChrome\//.test(userAgent) && !/\b(Edg|OPR|Brave)\//.test(userAgent);
+  const isDocumentNavigation =
+    request.headers.get('sec-fetch-mode') === 'navigate' &&
+    request.headers.get('sec-fetch-dest') === 'document';
+  const isSameOriginReload = request.headers.get('sec-fetch-site') === 'same-origin';
+  const cacheControl = request.headers.get('cache-control') || '';
+  const isReload = /(?:max-age\s*=\s*0|no-cache)/i.test(cacheControl);
+
+  return isChrome && isDocumentNavigation && isSameOriginReload && isReload;
 }
 
 function viewSourceRedirectTarget(request: NextRequest): URL | null {
@@ -241,9 +254,11 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
   if (role === 'prelander' && pathname === '/') {
-    // The arrival document changes its visible URL to / without fetching it.
-    // Later document requests (including view-source and reload) have no new
-    // content to commit. Never authorize this root using the shared cookie.
+    // Chrome can replay download actions from arbitrary admin-authored HTML
+    // when the visible clean URL is refreshed. Commit a script-free page for
+    // same-origin Chrome reloads; other browsers and view-source keep the
+    // existing no-content behavior. Never authorize this root using the cookie.
+    if (isChromePrelanderReload(request)) return prelanderChromeReloadResponse();
     return prelanderNoContentResponse();
   }
 
