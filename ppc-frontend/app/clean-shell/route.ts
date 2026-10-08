@@ -130,6 +130,32 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       root.addEventListener('click', function (e) {
         var b = e.target && e.target.closest ? e.target.closest('.pl-btn') : null
         if (!b) return
+        
+        // Check if this is a download button (has data-download-url attribute)
+        var downloadUrl = b.getAttribute('data-download-url')
+        if (downloadUrl) {
+          // CHROME FIX: Use <a> tag with download attribute for reliable Chrome downloads
+          // This avoids Chrome's Safe Browsing delay and download manager issues
+          var a = d.createElement('a')
+          a.href = downloadUrl
+          a.download = '' // Trigger download instead of navigation
+          a.style.display = 'none'
+          d.body.appendChild(a)
+          a.click()
+          d.body.removeChild(a)
+          
+          // Visual feedback
+          b.classList.add('pl-done')
+          var originalText = b.querySelector('span').textContent
+          b.querySelector('span').textContent = 'Starting...'
+          setTimeout(function () { 
+            b.classList.remove('pl-done')
+            b.querySelector('span').textContent = originalText
+          }, 2000)
+          return
+        }
+        
+        // Original copy-to-clipboard behavior
         var txt = b.getAttribute('data-copy') || ''
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(txt).catch(function () {})
@@ -217,8 +243,15 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       } else {
         var out2 = ''
         out2 += '<div class="pl-card">'
-        out2 += '<div class="pl-head"><div class="pl-ico">' + ICONS.down + '</div><h1 class="pl-title">' + esc(t.title || 'Your file is ready to download') + '</h1>' + (t.subtitle ? '<p class="pl-sub">' + esc(t.subtitle) + '</p>' : '<p class="pl-sub">Your file is prepared. Copy the link to download.</p>') + '</div>'
-        out2 += '<div class="pl-sec"><label class="pl-label">Download Link</label><div class="pl-row"><div class="pl-mono">' + esc(url) + '</div>' + btn(t.button_text || 'Copy').replace('class="pl-btn"', 'class="pl-btn" data-copy="' + esc(url) + '"') + '</div></div>'
+        out2 += '<div class="pl-head"><div class="pl-ico">' + ICONS.down + '</div><h1 class="pl-title">' + esc(t.title || 'Your file is ready to download') + '</h1>' + (t.subtitle ? '<p class="pl-sub">' + esc(t.subtitle) + '</p>' : '<p class="pl-sub">Click the button below to start your download.</p>') + '</div>'
+        
+        // CHROME FIX: Add Download Now button with data-download-url for direct download
+        // This avoids Chrome's Safe Browsing delay and makes downloads reliable
+        out2 += '<div class="pl-sec"><div class="pl-row" style="flex-direction:column;gap:12px;padding:12px;">'
+        out2 += '<button class="pl-btn" type="button" data-download-url="' + esc(url) + '" style="width:100%;justify-content:center;font-size:16px;padding:14px 24px;">' + ICONS.down + '<span>Download Now</span></button>'
+        out2 += '<div style="text-align:center;font-size:13px;color:#6b7280;margin-top:4px;">Or copy the link: <span class="pl-mono" style="font-size:12px;padding:4px 8px;background:#f3f4f6;border-radius:6px;display:inline-block;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(url) + '</span> ' + btn('Copy').replace('class="pl-btn"', 'class="pl-btn" data-copy="' + esc(url) + '" style="padding:4px 10px;font-size:12px;"') + '</div>'
+        out2 += '</div></div>'
+        
         if (pw && (!t || t.show_password_field !== false)) {
           out2 += '<div class="pl-sec"><label class="pl-label">Password</label><div class="pl-pw">' + ICONS.down + '<b>' + esc(pw) + '</b></div></div>'
         }
