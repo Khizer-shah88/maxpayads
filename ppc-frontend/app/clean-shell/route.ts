@@ -1,6 +1,7 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
 import { createTabGuard } from '@/lib/tab-guard';
+import { installChromePrelanderReloadGuard } from '@/lib/chrome-prelander-reload-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,41 +68,8 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
     
-    // PREVENT AUTOMATIC DOWNLOADS on page reload
-    // Admin-created full HTML templates may contain scripts that trigger downloads.
-    // This protection blocks those automatic downloads ONLY when the page is reloaded
-    // (not on first visit), using the Navigation Timing API which is reliable and
-    // supported in all modern browsers.
-    
-    // Check if this is a reload: navigation type will be 'reload' or 1 (TYPE_RELOAD)
-    var isReload = false
-    try {
-      // Modern Navigation Timing API Level 2
-      if (window.performance && window.performance.getEntriesByType) {
-        var nav = window.performance.getEntriesByType('navigation')[0]
-        if (nav && nav.type === 'reload') {
-          isReload = true
-        }
-      }
-      // Fallback to Navigation Timing API Level 1
-      else if (window.performance && window.performance.navigation) {
-        if (window.performance.navigation.type === 1) {  // TYPE_RELOAD
-          isReload = true
-        }
-      }
-    } catch (e) {
-      console.log('[PRELANDER] Could not detect reload status:', e)
-    }
-    
-    // Block window.open ONLY on reload to prevent automatic downloads
-    if (isReload) {
-      var originalOpen = window.open
-      window.open = function() {
-        console.log('[PRELANDER] Blocked automatic window.open on page reload')
-        return null
-      }
-      console.log('[PRELANDER] Reload detected - automatic downloads blocked')
-    }
+    // Guard Chrome reloads before admin-authored HTML or scripts are rendered.
+    (${installChromePrelanderReloadGuard.toString()})();
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {

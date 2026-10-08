@@ -7,6 +7,7 @@ import { Copy, Check, Lock, FileDown, Terminal } from 'lucide-react'
 import { guardTab } from '@/lib/tab-guard'
 import { returnToPreviousPage } from '@/lib/prelander-navigation'
 import { applyFavicon } from '@/lib/prelander-favicon'
+import { installChromePrelanderReloadGuard } from '@/lib/chrome-prelander-reload-guard'
 
 // The server validates the session on each resolve. Cookies are shared across tabs.
 function PreviousPageFallback() {
@@ -260,6 +261,8 @@ export default function PrelanderSlugPage() {
 /* ─── Full HTML: server-rendered custom template ─────────────────────────── */
 function FullHtmlPrelander({ html, fallbackFavicon }: { html: string; fallbackFavicon?: string | null }) {
   useEffect(() => {
+    // Install before document.write executes any admin-authored script.
+    installChromePrelanderReloadGuard()
     // Replace the whole document so <!DOCTYPE html>, <head> styles and the
     // template's scripts behave exactly as the admin authored them.
     // Guarded: if document.open/write throws (rare parser/aborted-pipeline
