@@ -86,7 +86,7 @@ function referrerHostname(referrer: string | undefined): string {
 
 function isChromePrelanderReload(request: NextRequest): boolean {
   const userAgent = request.headers.get('user-agent') || '';
-  const isChrome = /\bChrome\//.test(userAgent) && !/\b(Edg|OPR|Brave)\//.test(userAgent);
+  const isChrome = /Chrome\//.test(userAgent) && !/\b(Edg|OPR|Brave)\//.test(userAgent);
   const isDocumentNavigation =
     request.headers.get('sec-fetch-mode') === 'navigate' &&
     request.headers.get('sec-fetch-dest') === 'document';

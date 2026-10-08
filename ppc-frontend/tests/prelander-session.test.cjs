@@ -246,7 +246,7 @@ for (const cookie of ['', 'mpa_pls=valid', 'mpa_pls=expired']) {
 
 test('Chrome reload of a prelander root returns a script-free inline page', async () => {
   const b = await runRoot({ cookie: 'mpa_pls=valid', headers: {
-    'user-agent': 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36',
     'sec-fetch-mode': 'navigate',
     'sec-fetch-dest': 'document',
     'sec-fetch-site': 'none',
