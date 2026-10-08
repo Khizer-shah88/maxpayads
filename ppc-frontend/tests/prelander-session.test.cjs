@@ -26,6 +26,7 @@ const navigation = loadModule('lib/prelander-navigation.ts');
 const navigationImports = { '@/lib/prelander-navigation': navigation };
 const tab = loadModule('lib/tab-guard.ts', navigationImports);
 const session = loadModule('lib/prelander-session.ts', navigationImports);
+const chromeReloadGuard = function installChromePrelanderReloadGuard() {};
 // PRELANDER_TEST_BUILD=1 also checks serialization after Next's minification.
 const shell = process.env.PRELANDER_TEST_BUILD === '1'
   ? require('../.next/server/app/clean-shell/route.js').routeModule.userland
@@ -33,6 +34,7 @@ const shell = process.env.PRELANDER_TEST_BUILD === '1'
   ...navigationImports,
   '@/lib/tab-guard': tab,
   '@/lib/prelander-session': session,
+  '@/lib/chrome-prelander-reload-guard': { installChromePrelanderReloadGuard: chromeReloadGuard },
   '@/lib/source-deterrent-script': { sourceDeterrentScriptTag: () => '' },
 });
 
@@ -424,6 +426,9 @@ function slugPage({ slug = 'session', ...options } = {}) {
     '@/lib/prelander-navigation': browserNavigation,
     '@/lib/prelander-favicon': loadModule('lib/prelander-favicon.ts', {}, b.context),
     '@/lib/tab-guard': loadModule('lib/tab-guard.ts', { '@/lib/prelander-navigation': browserNavigation }, b.context),
+    // Reload protection is installed only when custom HTML is rendered; these
+    // state-transition tests do not emulate a browser navigation lifecycle.
+    '@/lib/chrome-prelander-reload-guard': { installChromePrelanderReloadGuard: chromeReloadGuard },
   }, b.context).default;
   return {
     ...b,
