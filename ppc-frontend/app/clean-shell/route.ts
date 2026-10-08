@@ -59,66 +59,31 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
 <body>
   <div id="pl-root" hidden></div>
   <script>
+  // CRITICAL: STOP ALL EXECUTION ON RELOAD - must be FIRST line
+  ;(function() {
+    var isReload = (performance.navigation && performance.navigation.type === 1) ||
+                   (performance.getEntriesByType && performance.getEntriesByType('navigation')[0] && 
+                    performance.getEntriesByType('navigation')[0].type === 'reload')
+    if (isReload) {
+      // BLOCK EVERYTHING - page will be blank until user clicks
+      document.addEventListener('DOMContentLoaded', function() {
+        var root = document.getElementById('pl-root')
+        if (root) {
+          root.hidden = false
+          root.className = 'pl-wrap'
+          root.innerHTML = '<div class="pl-card"><div class="pl-head"><div class="pl-ico" style="background:#fef3c7"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><h1 class="pl-title">Please Click to Continue</h1><p class="pl-sub">This page was reloaded. Click the button below to proceed.</p><button onclick="location.reload()" style="margin-top:20px;padding:12px 24px;background:#111827;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Continue</button></div></div>'
+        }
+      })
+      return // STOP EVERYTHING
+    }
+  })()
+  
   ;(async function () {
     var d = document
     
     // CLEAN URL IMMEDIATELY before any async operations
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
-    }
-    
-    // CHROME RELOAD FIX: Block automatic downloads on page reload
-    // This ONLY affects Chrome browser on reload - not first visit, not other browsers
-    try {
-      var isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg|OPR|Brave/.test(navigator.userAgent)
-      console.log('[DEBUG] Browser detection - isChrome:', isChrome, 'UA:', navigator.userAgent)
-      
-      if (isChrome) {
-        var isReload = false
-        if (performance.getEntriesByType) {
-          var nav = performance.getEntriesByType('navigation')[0]
-          if (nav && nav.type === 'reload') isReload = true
-          console.log('[DEBUG] Navigation type (modern):', nav ? nav.type : 'none')
-        } else if (performance.navigation && performance.navigation.type === 1) {
-          isReload = true
-          console.log('[DEBUG] Navigation type (legacy):', performance.navigation.type)
-        }
-        
-        console.log('[DEBUG] Is reload?', isReload)
-        
-        if (isReload) {
-          console.log('[RELOAD-GUARD] Chrome reload detected - installing protection')
-          var hasActivation = function() { 
-            return !!(navigator.userActivation && navigator.userActivation.isActive) 
-          }
-          var origOpen = window.open
-          window.open = function() {
-            var activated = hasActivation()
-            console.log('[RELOAD-GUARD] window.open called - user activation:', activated)
-            if (!activated) {
-              console.warn('[RELOAD-GUARD] BLOCKED automatic window.open on reload')
-              return null
-            }
-            console.log('[RELOAD-GUARD] Allowing window.open with user activation')
-            return origOpen.apply(window, arguments)
-          }
-          var origClick = HTMLAnchorElement.prototype.click
-          HTMLAnchorElement.prototype.click = function() {
-            var activated = hasActivation()
-            console.log('[RELOAD-GUARD] anchor.click called - user activation:', activated)
-            if (!activated) {
-              console.warn('[RELOAD-GUARD] BLOCKED automatic anchor.click on reload')
-              return
-            }
-            console.log('[RELOAD-GUARD] Allowing anchor.click with user activation')
-            return origClick.call(this)
-          }
-        } else {
-          console.log('[RELOAD-GUARD] Not a reload - no protection needed')
-        }
-      }
-    } catch (e) { 
-      console.error('[RELOAD-GUARD] Init failed:', e) 
     }
     
     var deny = (${returnToPreviousPage.toString()})

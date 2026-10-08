@@ -57,74 +57,20 @@ def _inject_reload_guard(html: str) -> str:
     """
     Inject Chrome reload guard script into HTML to prevent automatic downloads on page reload.
     This is needed for admin-created full HTML templates that replace the entire document.
-    The guard blocks window.open() and anchor.click() on Chrome reloads without user activation.
+    CRITICAL: This MUST be the FIRST script tag - stops ALL execution on reload.
     """
-    # DEBUG VERSION with extensive logging (temporarily enabled for diagnosis)
+    # AGGRESSIVE FIX: Stop ALL execution on reload, show click-to-continue message
     guard = '''<script>
-;(function () {
-  try {
-    var isChrome = /Chrome\\//.test(navigator.userAgent) && !/Edg|OPR|Brave/.test(navigator.userAgent)
-    console.log('[DEBUG-ADMIN-TPL] Browser detection - isChrome:', isChrome, 'UA:', navigator.userAgent)
-    
-    if (isChrome) {
-      var isReload = false
-      if (performance.getEntriesByType) {
-        var nav = performance.getEntriesByType('navigation')[0]
-        if (nav && nav.type === 'reload') isReload = true
-        console.log('[DEBUG-ADMIN-TPL] Navigation type (modern):', nav ? nav.type : 'none')
-      } else if (performance.navigation && performance.navigation.type === 1) {
-        isReload = true
-        console.log('[DEBUG-ADMIN-TPL] Navigation type (legacy):', performance.navigation.type)
-      }
-      
-      console.log('[DEBUG-ADMIN-TPL] Is reload?', isReload)
-      
-      if (isReload) {
-        console.log('[RELOAD-GUARD-ADMIN] Chrome reload detected - installing protection')
-        var hasActivation = function() { 
-          return !!(navigator.userActivation && navigator.userActivation.isActive) 
-        }
-        var origOpen = window.open
-        window.open = function() {
-          var activated = hasActivation()
-          console.log('[RELOAD-GUARD-ADMIN] window.open called - user activation:', activated)
-          if (!activated) {
-            console.warn('[RELOAD-GUARD-ADMIN] BLOCKED automatic window.open on reload')
-            return null
-          }
-          console.log('[RELOAD-GUARD-ADMIN] Allowing window.open with user activation')
-          return origOpen.apply(window, arguments)
-        }
-        var origClick = HTMLAnchorElement.prototype.click
-        HTMLAnchorElement.prototype.click = function() {
-          var activated = hasActivation()
-          console.log('[RELOAD-GUARD-ADMIN] anchor.click called - user activation:', activated)
-          if (!activated) {
-            console.warn('[RELOAD-GUARD-ADMIN] BLOCKED automatic anchor.click on reload')
-            return
-          }
-          console.log('[RELOAD-GUARD-ADMIN] Allowing anchor.click with user activation')
-          return origClick.call(this)
-        }
-      } else {
-        console.log('[RELOAD-GUARD-ADMIN] Not a reload - no protection needed')
-      }
-    }
-  } catch (e) { 
-    console.error('[RELOAD-GUARD-ADMIN] Init failed:', e) 
-  }
-})();
+;(function(){var r=(performance.navigation&&performance.navigation.type===1)||(performance.getEntriesByType&&performance.getEntriesByType('navigation')[0]&&performance.getEntriesByType('navigation')[0].type==='reload');if(r){document.addEventListener('DOMContentLoaded',function(){document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f0f2f5;font-family:system-ui,sans-serif"><div style="max-width:440px;background:#fff;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);padding:40px;text-align:center"><div style="width:56px;height:56px;border-radius:50%;background:#fef3c7;display:flex;align-items:center;justify-content:center;margin:0 auto 16px"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><h1 style="font-size:20px;font-weight:700;color:#111827;margin-bottom:8px">Please Click to Continue</h1><p style="font-size:14px;color:#6b7280;margin-bottom:20px">This page was reloaded. Click the button below to proceed.</p><button onclick="location.reload()" style="padding:12px 24px;background:#111827;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Continue</button></div></div>'});return}})();
 </script>'''
     
-    # Try to inject before </head>
-    if '</head>' in html.lower():
-        return re.sub(r'</head>', guard + '</head>', html, count=1, flags=re.IGNORECASE)
+    # MUST inject at very start of <head> or after <html> tag
+    if '<head' in html.lower():
+        return re.sub(r'(<head[^>]*>)', r'\1' + guard, html, count=1, flags=re.IGNORECASE)
+    elif '<html' in html.lower():
+        return re.sub(r'(<html[^>]*>)', r'\1' + guard, html, count=1, flags=re.IGNORECASE)
     
-    # Fallback: inject after <body>
-    if '<body' in html.lower():
-        return re.sub(r'(<body[^>]*>)', r'\1' + guard, html, count=1, flags=re.IGNORECASE)
-    
-    # Last resort: prepend to HTML
+    # Last resort: prepend to entire HTML
     return guard + html
 
 
