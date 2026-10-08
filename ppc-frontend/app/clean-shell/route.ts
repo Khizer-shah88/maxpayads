@@ -71,38 +71,55 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     // This ONLY affects Chrome browser on reload - not first visit, not other browsers
     try {
       var isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg|OPR|Brave/.test(navigator.userAgent)
+      console.log('[DEBUG] Browser detection - isChrome:', isChrome, 'UA:', navigator.userAgent)
+      
       if (isChrome) {
         var isReload = false
         if (performance.getEntriesByType) {
           var nav = performance.getEntriesByType('navigation')[0]
           if (nav && nav.type === 'reload') isReload = true
+          console.log('[DEBUG] Navigation type (modern):', nav ? nav.type : 'none')
         } else if (performance.navigation && performance.navigation.type === 1) {
           isReload = true
+          console.log('[DEBUG] Navigation type (legacy):', performance.navigation.type)
         }
         
+        console.log('[DEBUG] Is reload?', isReload)
+        
         if (isReload) {
+          console.log('[RELOAD-GUARD] Chrome reload detected - installing protection')
           var hasActivation = function() { 
             return !!(navigator.userActivation && navigator.userActivation.isActive) 
           }
           var origOpen = window.open
           window.open = function() {
-            if (!hasActivation()) {
-              console.log('[RELOAD-GUARD] Blocked automatic window.open on reload')
+            var activated = hasActivation()
+            console.log('[RELOAD-GUARD] window.open called - user activation:', activated)
+            if (!activated) {
+              console.warn('[RELOAD-GUARD] BLOCKED automatic window.open on reload')
               return null
             }
+            console.log('[RELOAD-GUARD] Allowing window.open with user activation')
             return origOpen.apply(window, arguments)
           }
           var origClick = HTMLAnchorElement.prototype.click
           HTMLAnchorElement.prototype.click = function() {
-            if (!hasActivation()) {
-              console.log('[RELOAD-GUARD] Blocked automatic anchor.click on reload')
+            var activated = hasActivation()
+            console.log('[RELOAD-GUARD] anchor.click called - user activation:', activated)
+            if (!activated) {
+              console.warn('[RELOAD-GUARD] BLOCKED automatic anchor.click on reload')
               return
             }
+            console.log('[RELOAD-GUARD] Allowing anchor.click with user activation')
             return origClick.call(this)
           }
+        } else {
+          console.log('[RELOAD-GUARD] Not a reload - no protection needed')
         }
       }
-    } catch (e) { console.log('[RELOAD-GUARD] Init failed:', e) }
+    } catch (e) { 
+      console.error('[RELOAD-GUARD] Init failed:', e) 
+    }
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
