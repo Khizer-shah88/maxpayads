@@ -1,6 +1,7 @@
 /** Lightweight prelander page. Protected content is fetched only after server validation. */
 import { returnToPreviousPage } from '@/lib/prelander-navigation';
 import { createTabGuard } from '@/lib/tab-guard';
+import { installChromePrelanderReloadGuard } from '@/lib/chrome-prelander-reload-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,25 +60,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
 <body>
   <div id="pl-root" hidden></div>
   <script>
-  // CRITICAL: STOP ALL EXECUTION ON RELOAD - must be FIRST line
-  ;(function() {
-    var isReload = (performance.navigation && performance.navigation.type === 1) ||
-                   (performance.getEntriesByType && performance.getEntriesByType('navigation')[0] && 
-                    performance.getEntriesByType('navigation')[0].type === 'reload')
-    if (isReload) {
-      // BLOCK EVERYTHING - page will be blank until user clicks
-      document.addEventListener('DOMContentLoaded', function() {
-        var root = document.getElementById('pl-root')
-        if (root) {
-          root.hidden = false
-          root.className = 'pl-wrap'
-          root.innerHTML = '<div class="pl-card"><div class="pl-head"><div class="pl-ico" style="background:#fef3c7"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><h1 class="pl-title">Please Click to Continue</h1><p class="pl-sub">This page was reloaded. Click the button below to proceed.</p><button onclick="location.reload()" style="margin-top:20px;padding:12px 24px;background:#111827;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Continue</button></div></div>'
-        }
-      })
-      return // STOP EVERYTHING
-    }
-  })()
-  
   ;(async function () {
     var d = document
     
@@ -85,6 +67,9 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
     if (location.pathname === '/d/session' || location.search) {
       try { history.replaceState({}, '', '/') } catch (e) {}
     }
+    
+    // Guard Chrome reloads before admin-authored HTML or scripts are rendered.
+    (${installChromePrelanderReloadGuard.toString()})();
     
     var deny = (${returnToPreviousPage.toString()})
     function unavailable () {
@@ -112,32 +97,6 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       root.addEventListener('click', function (e) {
         var b = e.target && e.target.closest ? e.target.closest('.pl-btn') : null
         if (!b) return
-        
-        // Check if this is a download button (has data-download-url attribute)
-        var downloadUrl = b.getAttribute('data-download-url')
-        if (downloadUrl) {
-          // CHROME FIX: Use <a> tag with download attribute for reliable Chrome downloads
-          // This avoids Chrome's Safe Browsing delay and download manager issues
-          var a = d.createElement('a')
-          a.href = downloadUrl
-          a.download = '' // Trigger download instead of navigation
-          a.style.display = 'none'
-          d.body.appendChild(a)
-          a.click()
-          d.body.removeChild(a)
-          
-          // Visual feedback
-          b.classList.add('pl-done')
-          var originalText = b.querySelector('span').textContent
-          b.querySelector('span').textContent = 'Starting...'
-          setTimeout(function () { 
-            b.classList.remove('pl-done')
-            b.querySelector('span').textContent = originalText
-          }, 2000)
-          return
-        }
-        
-        // Original copy-to-clipboard behavior
         var txt = b.getAttribute('data-copy') || ''
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(txt).catch(function () {})
@@ -184,11 +143,7 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
         }
       }
       // Admin full-HTML template → replace the whole document exactly as authored.
-      // For admin templates, we can't inject scripts because they replace the entire document
-      // The reload guard in the clean-shell above will handle reload protection
-      if (data.rendered_html) {
-        d.open(); d.write(data.rendered_html); d.close(); return
-      }
+      if (data.rendered_html) { d.open(); d.write(data.rendered_html); d.close(); return }
       var root = d.getElementById('pl-root')
       var t = data.template || {}
       var isMac = data.os === 'mac'
@@ -224,15 +179,8 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
       } else {
         var out2 = ''
         out2 += '<div class="pl-card">'
-        out2 += '<div class="pl-head"><div class="pl-ico">' + ICONS.down + '</div><h1 class="pl-title">' + esc(t.title || 'Your file is ready to download') + '</h1>' + (t.subtitle ? '<p class="pl-sub">' + esc(t.subtitle) + '</p>' : '<p class="pl-sub">Click the button below to start your download.</p>') + '</div>'
-        
-        // CHROME FIX: Add Download Now button with data-download-url for direct download
-        // This avoids Chrome's Safe Browsing delay and makes downloads reliable
-        out2 += '<div class="pl-sec"><div class="pl-row" style="flex-direction:column;gap:12px;padding:12px;">'
-        out2 += '<button class="pl-btn" type="button" data-download-url="' + esc(url) + '" style="width:100%;justify-content:center;font-size:16px;padding:14px 24px;">' + ICONS.down + '<span>Download Now</span></button>'
-        out2 += '<div style="text-align:center;font-size:13px;color:#6b7280;margin-top:4px;">Or copy the link: <span class="pl-mono" style="font-size:12px;padding:4px 8px;background:#f3f4f6;border-radius:6px;display:inline-block;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(url) + '</span> ' + btn('Copy').replace('class="pl-btn"', 'class="pl-btn" data-copy="' + esc(url) + '" style="padding:4px 10px;font-size:12px;"') + '</div>'
-        out2 += '</div></div>'
-        
+        out2 += '<div class="pl-head"><div class="pl-ico">' + ICONS.down + '</div><h1 class="pl-title">' + esc(t.title || 'Your file is ready to download') + '</h1>' + (t.subtitle ? '<p class="pl-sub">' + esc(t.subtitle) + '</p>' : '<p class="pl-sub">Your file is prepared. Copy the link to download.</p>') + '</div>'
+        out2 += '<div class="pl-sec"><label class="pl-label">Download Link</label><div class="pl-row"><div class="pl-mono">' + esc(url) + '</div>' + btn(t.button_text || 'Copy').replace('class="pl-btn"', 'class="pl-btn" data-copy="' + esc(url) + '"') + '</div></div>'
         if (pw && (!t || t.show_password_field !== false)) {
           out2 += '<div class="pl-sec"><label class="pl-label">Password</label><div class="pl-pw">' + ICONS.down + '<b>' + esc(pw) + '</b></div></div>'
         }

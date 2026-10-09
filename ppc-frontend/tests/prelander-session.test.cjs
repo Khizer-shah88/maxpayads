@@ -73,15 +73,6 @@ function browser({ referrer = '', historyLength = 1, marker = null, storageBlock
       if (context.setTimeoutOverride) return context.setTimeoutOverride(...args);
       throw Error('Navigation must not depend on timers');
     },
-    // Mock performance API for reload detection
-    performance: {
-      navigation: { type: 0 }, // 0 = navigate, 1 = reload
-      getEntriesByType: (type) => type === 'navigation' ? [{ type: 'navigate' }] : [],
-    },
-    navigator: {
-      userAgent: 'Mozilla/5.0 (Test)',
-      userActivation: { isActive: false },
-    },
   };
   return { context, events, root, document };
 }
