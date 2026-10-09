@@ -18,7 +18,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { prelanderFallbackResponse, prelanderNoContentResponse, prelanderChromeReloadResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
+import { prelanderFallbackResponse, prelanderNoContentResponse, sessionUnavailableResponse } from '@/lib/prelander-session';
 import type { NextRequest } from 'next/server';
 import { evaluateEntryAccess, getAllowedHostnames, getSessionSecret, getSessionTtl, isReferrerAllowed, validateSessionToken } from '@/lib/entry-guard';
 
@@ -82,18 +82,6 @@ function referrerHostname(referrer: string | undefined): string {
   } catch {
     return '(malformed)';
   }
-}
-
-function isChromePrelanderDocument(request: NextRequest): boolean {
-  const userAgent = request.headers.get('user-agent') || '';
-  const isChrome = /Chrome\//.test(userAgent) && !/\b(Edg|OPR|Brave)\//.test(userAgent);
-  const isDocumentNavigation = request.headers.get('sec-fetch-mode') === 'navigate' &&
-    request.headers.get('sec-fetch-dest') === 'document';
-
-  // Do not depend on reload-specific cache/fetch metadata: Chrome versions
-  // and proxies omit or alter those headers. The arrival flow never requests
-  // the clean root; it reaches /_auth and changes the visible URL with history.
-  return isChrome && isDocumentNavigation;
 }
 
 function viewSourceRedirectTarget(request: NextRequest): URL | null {
@@ -253,11 +241,9 @@ export async function middleware(request: NextRequest) {
   // ════════════════════════════════════════════════════════════════════════════
   // Only the registered Prelander role uses the clean-root/arrival policy.
   if (role === 'prelander' && pathname === '/') {
-    // Chrome may keep the previous document alive after a 204, allowing its
-    // template scripts to continue triggering downloads. Any real document
-    // navigation to this root gets a script-free response; view-source is
-    // handled above, and the authorized arrival does not request this URL.
-    if (isChromePrelanderDocument(request)) return prelanderChromeReloadResponse();
+    // The arrival document changes its visible URL to / without fetching it.
+    // Later document requests (including view-source and reload) have no new
+    // content to commit. Never authorize this root using the shared cookie.
     return prelanderNoContentResponse();
   }
 

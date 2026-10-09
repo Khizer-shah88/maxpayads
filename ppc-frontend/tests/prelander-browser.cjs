@@ -53,17 +53,6 @@ async function emptyNavigation(page, target, underlying) {
   assert.equal(response.headers()['x-sd'], undefined);
 }
 
-async function safeChromeRootNavigation(page, target, underlying) {
-  const responsePromise = page.waitForResponse(r => r.url() === underlying && r.request().isNavigationRequest());
-  try { await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 15000 }); }
-  catch (error) { assert.match(error.message, /ERR_ABORTED/); }
-  const response = await responsePromise;
-  assert.equal(response.status(), 200);
-  assert.equal(response.headers()['content-disposition'], 'inline');
-  assert.match(await page.locator('body').innerText(), /cannot be reopened by refreshing/i);
-  return response;
-}
-
 (async () => {
   const apiPort = await freePort(), webPort = await freePort(), nextPort = await freePort();
   const python = process.env.PYTHON || path.join(backend, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -114,47 +103,31 @@ async function safeChromeRootNavigation(page, target, underlying) {
   const newTab = await context.newPage();
   await emptyNavigation(newTab, `view-source:${base}/`, `${base}/`);
   assert.equal(await newTab.locator('body').innerText(), '');
-  await safeChromeRootNavigation(newTab, `${base}/`, `${base}/`);
-  results.push('New-tab view-source stays blank; a direct Chrome visit to the clean root receives the safe page.');
+  await emptyNavigation(newTab, `${base}/`, `${base}/`);
+  assert.equal(await newTab.locator('body').innerText(), '');
+  results.push('New-tab view-source and direct clean-URL visits stay blank, even with the valid session cookie.');
 
   const fresh = await browser.newContext();
-  await safeChromeRootNavigation(await fresh.newPage(), `${base}/`, `${base}/`);
+  await emptyNavigation(await fresh.newPage(), `${base}/`, `${base}/`);
   await fresh.close();
-  results.push('A fresh Chrome visit without cookies receives the safe inline page.');
+  results.push('A fresh browser without cookies also receives 204.');
 
-  // A Chrome toolbar reload of the clean root must not replay arbitrary
-  // template scripts. It receives a static inline page with no script content.
-  const reloadContext = await browser.newContext();
-  const reloadPage = await reloadContext.newPage();
-  const reloadDownloads = [];
-  reloadPage.on('download', download => { reloadDownloads.push(download.url()); void download.cancel(); });
-  await reloadPage.goto(`${base}/api/browser-test/start`);
-  await reloadPage.getByRole('heading', { name: 'Authorized prelander' }).waitFor();
-  const reloaded = reloadPage.waitForResponse(r => r.url() === `${base}/` && r.request().isNavigationRequest());
-  try { await reloadPage.reload({ waitUntil: 'domcontentloaded' }); } catch (e) { assert.match(e.message, /ERR_ABORTED/); }
-  const reloadResponse = await reloaded;
-  assert.equal(reloadResponse.status(), 200);
-  assert.equal(reloadResponse.headers()['content-disposition'], 'inline');
-  assert.match(await reloadPage.locator('body').innerText(), /cannot be reopened by refreshing/i);
-  assert.deepEqual(reloadDownloads, []);
-  await reloadContext.close();
-  results.push('Chrome reload of the clean prelander root receives a script-free inline page and triggers no download.');
+  // A browser may retain or reconstruct an existing document on Reload.
+  const reloaded = page.waitForResponse(r => r.url() === `${base}/` && r.request().isNavigationRequest());
+  try { await page.reload({ waitUntil: 'domcontentloaded' }); } catch (e) { assert.match(e.message, /ERR_ABORTED/); }
+  assert.equal((await reloaded).status(), 204);
+  assert.equal(await page.locator('h1').innerText(), 'Authorized prelander');
+  results.push('Reload requests the cleaned root, receives 204, and retains the displayed page in Chrome.');
 
-  // An already-installed legacy worker must not turn the safe response into a
-  // replay loop. Keep this independent from the main page used for CTA checks.
-  const legacyContext = await browser.newContext();
-  const legacyPage = await legacyContext.newPage();
-  const legacyDocuments = [];
-  legacyPage.on('response', r => { if (r.request().isNavigationRequest()) legacyDocuments.push({ url: r.url(), status: r.status() }); });
-  await legacyPage.goto(`${base}/api/browser-test/start`);
-  await legacyPage.getByRole('heading', { name: 'Authorized prelander' }).waitFor();
-  await legacyPage.evaluate(async () => { await navigator.serviceWorker.register('/source-deterrent-sw.js'); await navigator.serviceWorker.ready; });
-  await safeChromeRootNavigation(legacyPage, `${base}/`, `${base}/`);
-  const count = legacyDocuments.length;
-  await legacyPage.waitForTimeout(1200);
-  assert.equal(legacyDocuments.length, count);
-  await legacyContext.close();
-  results.push('An installed legacy worker passes through the safe response without replaying the arrival.');
+  // An already-installed legacy worker must not turn 204 into a replay loop.
+  await page.evaluate(async () => { await navigator.serviceWorker.register('/source-deterrent-sw.js'); await navigator.serviceWorker.ready; });
+  await emptyNavigation(page, `${base}/`, `${base}/`);
+  await emptyNavigation(page, `view-source:${base}/`, `${base}/`);
+  const count = documents.length;
+  await page.waitForTimeout(1200);
+  assert.equal(documents.length, count);
+  assert.equal(await page.locator('h1').innerText(), 'Authorized prelander');
+  results.push('An installed legacy service worker passes through 204 without replaying the arrival.');
 
   await page.route('https://offer.example/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Selected offer reached</h1>' }));
   await page.locator('#continue').click();
