@@ -1164,6 +1164,36 @@ async def test_concurrent_consume_does_not_lose_uses(redis):
 
 
 # STEP 13 — cookie flags come from config.
+@pytest.mark.asyncio
+async def test_25_simultaneous_clicks_keep_independent_prelander_authorization(redis):
+    """Regression: same-second clicks must not overwrite each other's slug session.
+
+    This mirrors 25 visitors with identical IP/UA/targeting arriving together.
+    Each click needs a distinct route-bound authorization; otherwise all but the
+    last Redis slug index entry are denied and sent to the fallback page.
+    """
+    import asyncio
+    from app.services.traffic_router import build_prelander_slug
+
+    async def issue(index):
+        slug = build_prelander_slug("windows", "campaign-1", "offer-1", "US")
+        session = await pas.create_authorization(
+            f"click-{index}", slug, IP, UA, redis, prelander_host="prelander.example",
+        )
+        return slug, session
+
+    issued = await asyncio.gather(*(issue(index) for index in range(25)))
+    slugs = [slug for slug, _ in issued]
+    assert len(set(slugs)) == 25
+    assert all(session is not None for _, session in issued)
+
+    authorized = await asyncio.gather(*(
+        pas.validate_authorization(slug, IP, UA, redis) for slug in slugs
+    ))
+    assert all(session is not None for session in authorized)
+    assert {session.click_id for session in authorized} == {f"click-{index}" for index in range(25)}
+
+
 def test_cookie_flags_default():
     flags = pas.cookie_flags()
     assert flags["httponly"] is True

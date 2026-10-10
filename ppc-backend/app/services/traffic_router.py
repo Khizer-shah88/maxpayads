@@ -6,6 +6,7 @@ from app.models.redirect_chain import chain_inter_domain, chain_prelander_pool
 import logging
 import time
 import base64
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -110,16 +111,27 @@ def build_prelander_slug(
     campaign_id,
     offer_id: str = "",
     country_code: Optional[str] = None,
+    request_nonce: Optional[str] = None,
 ) -> str:
     """
-    Encrypted slug carrying {os, timestamp, offer_id, campaign_id, country}.
+    Encrypted slug carrying {os, timestamp, offer_id, campaign_id, country,
+    request nonce}.
 
     The Intermediate domain's /d/[slug] page decodes it (prelander_router) to
     decide the next hop: bypass OFF → Prelander landing page, bypass ON →
     Campaign URL. Same XOR recipe the prelander side decrypts with.
     """
     ts = str(int(time.time()))
-    raw = f"{os_param}:{ts}:{offer_id or ''}:{campaign_id or ''}:{country_code or ''}"
+    # The timestamp has one-second resolution. Without an opaque request
+    # value, simultaneous visitors with the same targeting result receive the
+    # same slug. Authorization is slug-bound, so the newest session then
+    # overwrites the earlier visitors' authorization in Redis.
+    #
+    # Keep this value random rather than exposing a click/database id. It is a
+    # sixth field, which preserves compatibility with older decoders that read
+    # the first five fields only.
+    nonce = request_nonce or secrets.token_urlsafe(12)
+    raw = f"{os_param}:{ts}:{offer_id or ''}:{campaign_id or ''}:{country_code or ''}:{nonce}"
     key = "mxp2026"
     xored = bytes(ord(c) ^ ord(key[i % len(key)]) for i, c in enumerate(raw))
     return base64.urlsafe_b64encode(xored).decode().rstrip("=")
