@@ -90,7 +90,7 @@ async function emptyNavigation(page, target, underlying) {
   assert.equal(page.url(), `${base}/`);
   assert.equal(await page.evaluate(() => window.templateScriptRan), true);
   assert.equal(await page.locator('#continue').getAttribute('href'), 'https://offer.example/selected?click=browser-test');
-  assert.ok(documents.some(d => d.url === `${base}/d/session` && d.status === 200));
+  assert.ok(documents.some(d => d.url.startsWith(`${base}/d/session?t=t_`) && d.status === 200));
   results.push('Authorized handoff renders the assigned HTML template, runs its script, preserves the offer URL, and cleans the address bar.');
 
   await emptyNavigation(page, `view-source:${base}/`, `${base}/`);

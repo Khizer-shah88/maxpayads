@@ -75,12 +75,18 @@ export default function PrelanderSlugPage() {
 
       if (slug === 'session') {
         try {
-          const access = await guardTab()
+          // The entry token exists only during the first navigation. It maps
+          // this tab to its click before the shared prelander cookie can be
+          // overwritten by another simultaneous redirect.
+          const tabToken = new URLSearchParams(window.location.search).get('t') || ''
+          const headers: Record<string, string> = { 'X-Prelander-Host': hostname }
+          if (tabToken) headers['X-Prelander-Tab'] = tabToken
+          const access = await guardTab(tabToken)
           if (access === 'redirected') { setReturning(true); return }
           
           const res = await fetch('/api/prelander/resolve/session', {
             credentials: "include",
-            headers: { 'X-Prelander-Host': hostname },
+            headers,
           });
           if (res.status >= 500 || res.status === 429) throw new Error('Prelander temporarily unavailable')
           

@@ -5,7 +5,7 @@ export function createTabGuard(onBlocked: () => void) {
   // Keep this function self-contained: the clean shell inlines its JS body.
   let pending: Promise<'allowed' | 'redirected'> | null = null;
 
-  return function guardTab(): Promise<'allowed' | 'redirected'> {
+  return function guardTab(tabToken = ''): Promise<'allowed' | 'redirected'> {
     if (pending) return pending;
     pending = (async () => {
       try {
@@ -17,6 +17,7 @@ export function createTabGuard(onBlocked: () => void) {
 
         const response = await fetch('/api/prelander/claim', {
           credentials: 'include', cache: 'no-store',
+          headers: tabToken ? { 'X-Prelander-Tab': tabToken } : undefined,
         });
         if (response.ok) {
           try { sessionStorage.setItem('pl_tab_ok', '1'); } catch {}

@@ -626,11 +626,10 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
 
     # ── CLEAN URL MODE (spec: final prelander shows https://prelander-domain.com/
     #    with NO slug/ids — the server associates the request internally) ──────
-    # slug == "session" is a sentinel meaning "no route in the URL": identity
-    # and campaign context come ENTIRELY from the prelander-domain browsing
-    # session cookie (mpa_pls) minted at the /_auth exchange. Cookies are
-    # shared across tabs; a missing or expired session is denied. (Tab-level
-    # protection — new-tab paste — is enforced by the one-time /claim below.)
+    # slug == "session" is a sentinel meaning "no route in the URL". The first
+    # resolve after an exchange may carry a per-tab entry token because mpa_pls
+    # is shared across browser tabs and can be overwritten during a burst.
+    # Later/reload compatibility requests use the browsing-session cookie.
     if slug == "session":
         from app.services import prelander_auth_service as pas
 
@@ -638,8 +637,14 @@ async def _resolve_slug_impl(slug: str, request: Request, db):
         if redis is None:
             return pas.build_session_unavailable_response(503, as_json=True)
 
-        pl_session_cookie = request.cookies.get(pas.PL_SESSION_COOKIE)
-        session = await pas.validate_prelander_session(pl_session_cookie, redis)
+        headers = dict(request.headers)
+        from app.utils.ip_utils import get_client_ip
+        ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+        tab_token = headers.get("x-prelander-tab", "").strip()
+        if tab_token:
+            session = await pas.validate_tab_entry(tab_token, ip, headers.get("user-agent", ""), redis)
+        else:
+            session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
         if session is None or session.prelander_host != prelander_host:
             return pas.build_session_unavailable_response(as_json=True)
 
@@ -864,7 +869,14 @@ async def session_check(request: Request, db=Depends(get_db)):
         if redis is None:
             return pas.build_session_unavailable_response(503, as_json=True)
 
-        session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
+        headers = dict(request.headers)
+        from app.utils.ip_utils import get_client_ip
+        ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+        tab_token = headers.get("x-prelander-tab", "").strip()
+        if tab_token:
+            session = await pas.validate_tab_entry(tab_token, ip, headers.get("user-agent", ""), redis)
+        else:
+            session = await pas.validate_prelander_session(request.cookies.get(pas.PL_SESSION_COOKIE), redis)
         from app.services.domain_service import normalize_domain
         if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
             return pas.build_session_unavailable_response(as_json=True)
@@ -889,8 +901,8 @@ async def claim_arrival(request: Request):
       • Other failures → show the session-unavailable message, including
         cookie-free private browsing and expired sessions.
 
-    Cookies are shared by every tab of the browser, so the cookie alone cannot
-    tell tabs apart; the consumed flag + per-tab sessionStorage can.
+    Initial arrivals use a short-lived, opaque per-tab token. Cookie-only
+    requests remain a compatibility fallback for existing sessions.
     """
     from app.services import prelander_auth_service as pas
 
@@ -906,19 +918,29 @@ async def claim_arrival(request: Request):
         if redis is None:
             return JSONResponse(status_code=503, content={"ok": False})
 
-        sid = request.cookies.get(pas.PL_SESSION_COOKIE)
-        if not sid:
-            return JSONResponse(status_code=403, content={"ok": False})
+        headers = dict(request.headers)
+        tab_token = headers.get("x-prelander-tab", "").strip()
+        from app.utils.ip_utils import get_client_ip
+        ip = get_client_ip(headers, request.client.host if request.client else "0.0.0.0")
+        if tab_token:
+            session = await pas.validate_tab_entry(tab_token, ip, headers.get("user-agent", ""), redis)
+            arrival_id = f"tab:{tab_token}"
+        else:
+            sid = request.cookies.get(pas.PL_SESSION_COOKIE)
+            if not sid:
+                return JSONResponse(status_code=403, content={"ok": False})
+            session = await pas.validate_prelander_session(sid, redis)
+            arrival_id = sid
 
-        # Session must still be a valid, unexpired browsing session.
-        session = await pas.validate_prelander_session(sid, redis)
+        # Session must still be a valid, unexpired browsing session and must
+        # belong to this prelander host.
         from app.services.domain_service import normalize_domain
         if session is None or session.prelander_host != normalize_domain(request.headers.get("host", "")):
             return JSONResponse(status_code=403, content={"ok": False})
 
         # getdel = atomic read + delete → only the FIRST caller wins.
         try:
-            claimed = await redis.getdel(_ARRIVAL_KEY.format(sid))
+            claimed = await redis.getdel(_ARRIVAL_KEY.format(arrival_id))
         except Exception as e:
             logger.error("[PRELANDER] Arrival claim failed (denying): %s", e)
             return JSONResponse(status_code=503, content={"ok": False})
@@ -1141,15 +1163,18 @@ async def prelander_bootstrap(
         if not pl_session_id:
             return await _denied_response(request)
 
-        # The tab that follows this 302 to the session entry may
-        # claim its one-time arrival (GET /prelander/claim). Any tab opened later by
-        # pasting the URL finds the flag consumed and is sent to PASTE_REDIRECT_URL.
-        await _mark_arrival(redis, pl_session_id, session.expires_at - int(time.time()))
+        # Use a capability that belongs to this browser tab, not the shared
+        # prelander cookie. Concurrent exchanges from the same Chrome profile
+        # can overwrite mpa_pls in arbitrary order.
+        tab_token = await pas.mint_tab_entry(session, redis)
+        if not tab_token:
+            return await _denied_response(request)
+        await _mark_arrival(redis, f"tab:{tab_token}", session.expires_at - int(time.time()))
 
         # Redirect to /d/session - middleware will rewrite this to /clean-shell
         # and JavaScript will clean the URL to just / via history.replaceState.
         # The route contains no click/campaign IDs; binding stays server-side.
-        dest = "/d/session"
+        dest = f"/d/session?t={tab_token}"
         response = RedirectResponse(url=dest, status_code=302)
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Referrer-Policy"] = "no-referrer"

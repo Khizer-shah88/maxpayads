@@ -218,7 +218,20 @@ export async function middleware(request: NextRequest) {
         // redirect to /d/session (clean URL flow). The prelander entry
         // will rewrite to /clean-shell and JavaScript will clean URL to /.
         const setCookies = exchangeRes.headers.getSetCookie?.() ?? [];
-        const redirectRes = NextResponse.redirect(new URL('/d/session', request.nextUrl.origin), 302);
+        const exchangeLocation = exchangeRes.headers.get('location') || '/d/session';
+        // The backend only returns a relative /d/session URL here. Keep its
+        // per-tab query capability while refusing any unexpected target.
+        // `nextUrl.origin` can be the internal Next listener behind nginx.
+        // Redirecting there bypasses the public proxy and loses the original
+        // Host during the subsequent API calls, so derive the public origin
+        // from the forwarded request instead.
+        const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() || request.nextUrl.protocol.replace(':', '');
+        const publicOrigin = `${forwardedProto}://${request.headers.get('host') || request.nextUrl.host}`;
+        const entryUrl = new URL(exchangeLocation, publicOrigin);
+        if (entryUrl.origin !== publicOrigin || entryUrl.pathname !== '/d/session') {
+          return sessionUnavailableResponse(503);
+        }
+        const redirectRes = NextResponse.redirect(entryUrl, 302);
         redirectRes.headers.set('Cache-Control', 'no-store, private');
         redirectRes.headers.set('Referrer-Policy', 'no-referrer');
         for (const cookie of setCookies) {
@@ -248,8 +261,10 @@ export async function middleware(request: NextRequest) {
   }
 
   if (isPrelanderEntry) {
-      // Only the handoff's session entry can render the prelander shell.
-      if (!request.cookies.get('mpa_pls')?.value) {
+      const tabEntry = request.nextUrl.searchParams.get('t') || '';
+      // A first arrival is authenticated by its tab capability. Older/reload
+      // flows still require the browsing cookie.
+      if (!tabEntry && !request.cookies.get('mpa_pls')?.value) {
         return prelanderFallbackResponse();
       }
       // Ask the backend to validate the browsing-session cookie. The edge
@@ -258,8 +273,15 @@ export async function middleware(request: NextRequest) {
       try {
         const backendUrl = process.env.NEXT_BACKEND_URL || 'http://localhost:8000';
         const cookieHeader = request.headers.get('cookie') || '';
+        const checkHeaders: Record<string, string> = {
+          cookie: cookieHeader,
+          host: request.headers.get('host') || host,
+          'x-real-ip': request.headers.get('x-real-ip') || '',
+          'user-agent': request.headers.get('user-agent') || '',
+        };
+        if (tabEntry) checkHeaders['x-prelander-tab'] = tabEntry;
         const checkRes = await fetch(`${backendUrl}/prelander/session-check`, {
-          headers: { cookie: cookieHeader, host: request.headers.get('host') || host, 'x-real-ip': request.headers.get('x-real-ip') || '' },
+          headers: checkHeaders,
           redirect: 'manual',
           cache: 'no-store',
         });

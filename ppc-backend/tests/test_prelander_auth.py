@@ -246,14 +246,17 @@ async def test_handoff_enters_session_route_before_cleaning_url(session_api, red
     ) as client:
         response = await client.get(f"/prelander/_auth/{handoff}")
         assert response.status_code == 302
-        assert response.headers["location"] == "/d/session"
+        tab_token = response.headers["location"].removeprefix("/d/session?t=")
+        assert response.headers["location"] == f"/d/session?t={tab_token}"
+        assert tab_token.startswith("t_")
         assert response.headers["cache-control"] == "no-store, private"
         assert response.headers["referrer-policy"] == "no-referrer"
         assert pas.PL_SESSION_COOKIE in response.cookies
-        assert (await client.get("/prelander/session-check")).status_code == 200
-        assert (await client.get("/prelander/claim")).status_code == 200
-        assert (await client.get("/prelander/resolve/session")).json()["success"] is True
-        assert (await client.get("/prelander/claim")).status_code == 403
+        tab_headers = {"x-prelander-tab": tab_token}
+        assert (await client.get("/prelander/session-check", headers=tab_headers)).status_code == 200
+        assert (await client.get("/prelander/claim", headers=tab_headers)).status_code == 200
+        assert (await client.get("/prelander/resolve/session", headers=tab_headers)).json()["success"] is True
+        assert (await client.get("/prelander/claim", headers=tab_headers)).status_code == 403
         assert (await client.get(f"/prelander/_auth/{handoff}")).status_code == 403
     content.assert_awaited_once()
 
@@ -1192,6 +1195,72 @@ async def test_25_simultaneous_clicks_keep_independent_prelander_authorization(r
     ))
     assert all(session is not None for session in authorized)
     assert {session.click_id for session in authorized} == {f"click-{index}" for index in range(25)}
+
+
+@pytest.mark.asyncio
+async def test_25_simultaneous_tab_entries_resolve_their_own_click(redis):
+    """A shared mpa_pls cookie cannot mix up concurrent browser tabs."""
+    import asyncio
+
+    sessions = await asyncio.gather(*(
+        pas.create_authorization(
+            f"tab-click-{index}", SLUG, IP, UA, redis,
+            prelander_host="prelander.example.com",
+        )
+        for index in range(25)
+    ))
+    entries = await asyncio.gather(*(pas.mint_tab_entry(session, redis) for session in sessions))
+    assert len(set(entries)) == 25
+    assert all(entry.startswith("t_") for entry in entries)
+
+    resolved = await asyncio.gather(*(
+        pas.validate_tab_entry(entry, IP, UA, redis) for entry in entries
+    ))
+    assert {session.click_id for session in resolved if session} == {
+        f"tab-click-{index}" for index in range(25)
+    }
+    assert await pas.validate_tab_entry(entries[0], IP, "different-browser", redis) is None
+
+
+@pytest.mark.asyncio
+async def test_25_simultaneous_handoffs_claim_and_resolve_without_cookie_race(session_api, redis):
+    """Load regression: 25 same-browser entries all reach their own content."""
+    import asyncio
+    from urllib.parse import parse_qs, urlparse
+    from httpx import ASGITransport, AsyncClient
+
+    app, _ = session_api
+    sessions = await asyncio.gather(*(
+        pas.create_authorization(
+            f"load-click-{index}", SLUG, IP, UA, redis, prelander_host="test",
+        )
+        for index in range(25)
+    ))
+    handoffs = await asyncio.gather(*(
+        pas.mint_handoff(session, redis, target_host="test") for session in sessions
+    ))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test",
+        headers={"user-agent": UA, "x-real-ip": IP},
+    ) as client:
+        exchanges = await asyncio.gather(*(
+            client.get(f"/prelander/_auth/{handoff}") for handoff in handoffs
+        ))
+        assert all(response.status_code == 302 for response in exchanges)
+        entries = [parse_qs(urlparse(response.headers["location"]).query)["t"][0] for response in exchanges]
+        assert len(set(entries)) == 25
+
+        headers = [{"x-prelander-tab": entry} for entry in entries]
+        claims = await asyncio.gather(*(
+            client.get("/prelander/claim", headers=header) for header in headers
+        ))
+        assert [response.status_code for response in claims] == [200] * 25
+
+        resolves = await asyncio.gather(*(
+            client.get("/prelander/resolve/session", headers=header) for header in headers
+        ))
+        assert all(response.status_code == 200 and response.json()["success"] is True for response in resolves)
 
 
 def test_cookie_flags_default():

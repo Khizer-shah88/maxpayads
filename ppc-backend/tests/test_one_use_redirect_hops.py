@@ -3,7 +3,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from bson import ObjectId
@@ -71,7 +71,7 @@ async def test_full_chain_consumes_each_inter_then_final_handoff(monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url='https://last.example', headers={'user-agent': 'Browser'}) as client:
         path = '/prelander' + urlparse(final).path
         arrival = await client.get(path)
-        assert arrival.status_code == 302 and arrival.headers['location'] == '/d/session'
+        assert arrival.status_code == 302 and arrival.headers['location'].startswith('/d/session?t=t_')
         assert auth.PL_SESSION_COOKIE in arrival.cookies
         assert (await client.get(path)).status_code == 403
         assert (await client.get('/prelander/session-check')).status_code == 200
@@ -145,15 +145,17 @@ async def test_delayed_arrival_renders_selected_destination_and_template(monkeyp
             destination = hop.json()['next_url']
         arrival = await client.get('https://last.example/prelander' + urlparse(destination).path)
         assert arrival.status_code == 302
-        assert arrival.headers['location'] == '/d/session'
+        assert arrival.headers['location'].startswith('/d/session?t=t_')
+        tab_token = parse_qs(urlparse(arrival.headers['location']).query)['t'][0]
+        tab_headers = {'x-prelander-tab': tab_token}
         # Backgrounded tabs and slower networks can take over 20 seconds.
         now = time.time()
         monkeypatch.setattr(time, 'time', lambda: now + 30)
-        claim = await client.get('https://last.example/prelander/claim')
+        claim = await client.get('https://last.example/prelander/claim', headers=tab_headers)
         assert claim.status_code == 200
         assert claim.headers['cache-control'] == 'no-store, private'
         for _ in range(3):
-            response = await client.get('https://last.example/prelander/resolve/session')
+            response = await client.get('https://last.example/prelander/resolve/session', headers=tab_headers)
             assert response.status_code == 200
             data = response.json()
             assert data['offer_url'] == selected_url
@@ -162,4 +164,4 @@ async def test_delayed_arrival_renders_selected_destination_and_template(monkeyp
             assert selected_url in data['rendered_html']
             assert 'wrong.example' not in data['rendered_html']
         # Refreshing uses the cookie; neither handoffs nor arrivals become reusable.
-        assert (await client.get('https://last.example/prelander/claim')).status_code == 403
+        assert (await client.get('https://last.example/prelander/claim', headers=tab_headers)).status_code == 403

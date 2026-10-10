@@ -165,6 +165,9 @@ _FP_PREFIX = "prelander_auth_fp:"    # fingerprint -> token (string)
 _SH_PREFIX = "prelander_auth_sh:"    # slug-hash  -> token (string)
 _HANDOFF_PREFIX = "prelander_handoff:"   # one-time handoff token -> session token
 _PL_SESSION_PREFIX = "prelander_plsess:"  # prelander-domain browsing session id -> session token
+# A short-lived, per-tab entry capability. Browsers share cookies between tabs,
+# so the initial post-handoff resolve must not identify a tab by mpa_pls.
+_TAB_ENTRY_PREFIX = "prelander_tab:"
 
 # Cookie carrying the authorization reference. HttpOnly + SameSite=Lax.
 COOKIE_NAME = "mpa_pla"
@@ -252,6 +255,10 @@ def _handoff_key(handoff_token: str) -> str:
 
 def _pl_session_key(pl_session_id: str) -> str:
     return f"{_PL_SESSION_PREFIX}{pl_session_id}"
+
+
+def _tab_entry_key(tab_token: str) -> str:
+    return f"{_TAB_ENTRY_PREFIX}{tab_token}"
 
 
 # ── STEP 12 — IP-usage policy ────────────────────────────────────────────────────
@@ -968,6 +975,54 @@ async def validate_prelander_session(
         return session
     except Exception as e:
         logger.warning("[PRELANDER-AUTH] Prelander session validation failed: %s", e)
+        return None
+
+
+async def mint_tab_entry(session: AuthorizationSession, redis) -> str:
+    """Create an opaque, browser-bound entry token for one redirected tab.
+
+    A prelander-domain cookie is shared by all Chrome tabs. A burst of Smartlink
+    opens can therefore overwrite that cookie before earlier tabs load
+    ``/d/session``. This token is carried only during the first navigation and
+    lets each tab resolve the exact session created for its own click.
+    """
+    if redis is None or session is None or not session.is_usable():
+        return ""
+    try:
+        remaining = session.expires_at - int(time.time())
+        if remaining <= 0:
+            return ""
+        token = "t_" + secrets.token_urlsafe(32)
+        await redis.setex(_tab_entry_key(token), remaining, session.token)
+        return token
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Tab entry mint failed: %s", e)
+        return ""
+
+
+async def validate_tab_entry(
+    tab_token: str,
+    ip: str,
+    user_agent: str,
+    redis,
+) -> Optional[AuthorizationSession]:
+    """Resolve a tab entry without trusting a shared browser cookie."""
+    if not tab_token or not tab_token.startswith("t_") or redis is None:
+        return None
+    try:
+        session_token = await redis.get(_tab_entry_key(tab_token))
+        if not session_token:
+            return None
+        session = await get_session(session_token, redis)
+        if session is None or not session.is_usable():
+            return None
+        if not hmac.compare_digest(session.user_agent, (user_agent or "")[:500]):
+            return None
+        if _ip_mode() == "strict" and session.fingerprint != _fingerprint(ip, user_agent):
+            return None
+        return session
+    except Exception as e:
+        logger.warning("[PRELANDER-AUTH] Tab entry validation failed: %s", e)
         return None
 
 

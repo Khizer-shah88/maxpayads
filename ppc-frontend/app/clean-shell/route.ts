@@ -61,6 +61,10 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
   <script>
   ;(async function () {
     var d = document
+    // Capture the short-lived tab entry token before cleaning the visible URL.
+    // Unlike mpa_pls, it is not shared by tabs opened at the same time.
+    var tabEntry = ''
+    try { tabEntry = new URLSearchParams(location.search).get('t') || '' } catch (e) {}
     
     // CLEAN URL IMMEDIATELY before any async operations
     if (location.pathname === '/d/session' || location.search) {
@@ -141,12 +145,14 @@ const SHELL_HTML = String.raw`<!DOCTYPE html>
 
     try {
       // Reject another tab before resolving templates or campaign content.
-      var access = await guardTab()
+      var access = await guardTab(tabEntry)
       if (access === 'redirected') return
+      var headers = { 'X-Prelander-Host': location.hostname }
+      if (tabEntry) headers['X-Prelander-Tab'] = tabEntry
       var res = await fetch('/api/prelander/resolve/session', {
         cache: 'no-store',
         credentials: 'same-origin',
-        headers: { 'X-Prelander-Host': location.hostname }
+        headers: headers
       })
       // Handle both current denials and legacy empty responses during rollout.
       if (res.status === 204 || res.status === 401 || res.status === 403) return deny()
