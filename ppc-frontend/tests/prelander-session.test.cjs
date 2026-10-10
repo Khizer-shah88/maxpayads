@@ -13,7 +13,7 @@ function loadModule(file, imports = {}, globals = {}) {
   });
   const exports = {};
   vm.runInNewContext(outputText, {
-    exports, Response, URL, process, ...globals,
+    exports, Response, URL, URLSearchParams, process, ...globals,
     require(name) {
       assert.ok(name in imports, `Unexpected import: ${name}`);
       return imports[name];
